@@ -618,14 +618,15 @@ export default function FundingTierProfitabilityBalancer() {
           </p>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "360px 1fr",
-            gap: 20,
-            alignItems: "start",
-          }}
-        >
+<div
+  data-main-grid
+  style={{
+    display: "grid",
+    gridTemplateColumns: "360px 1fr",
+    gap: 20,
+    alignItems: "start",
+  }}
+>
           <div style={{ display: "grid", gap: 20 }}>
             <div style={cardStyle()}>
               <SectionTitle>Deal Inputs</SectionTitle>
