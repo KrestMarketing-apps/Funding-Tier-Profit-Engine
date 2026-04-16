@@ -211,88 +211,257 @@ function TabBar({tabs,active,onSelect}){
 }
 
 // ─── LEVEL DEBT TAB ─────────────────────────────────────
+
+function fmtRaw(n){ return n>0?n.toLocaleString("en-US"):""; }
+
+function CurrencyField({value, onChange, label, sublabel, color, min=0}){
+  const [focused, setFocused] = useState(false);
+  const [raw, setRaw] = useState("");
+  const onFocus = () => { setFocused(true); setRaw(value>0?String(value):""); };
+  const onBlur  = () => { setFocused(false); const n=Number(raw.replace(/[^0-9]/g,"")); onChange(Math.max(min,n||0)); };
+  const onChg   = e  => { const r=e.target.value.replace(/[^0-9]/g,""); setRaw(r); onChange(Number(r)||0); };
+  return(
+    <div>
+      {label&&<Lbl>{label}</Lbl>}
+      {sublabel&&<div style={{fontSize:12,color:"#64748b",marginBottom:8,fontWeight:600,lineHeight:1.5}}>{sublabel}</div>}
+      <div style={{position:"relative"}}>
+        <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",
+          fontSize:18,fontWeight:900,color:color||"#94a3b8",pointerEvents:"none",zIndex:1}}>$</span>
+        <input type="text" inputMode="numeric"
+          value={focused?raw:fmtRaw(value)}
+          onFocus={onFocus} onBlur={onBlur} onChange={onChg}
+          placeholder="0"
+          style={{width:"100%",padding:"13px 14px 13px 28px",borderRadius:10,
+            border:`2px solid ${color||BORDER}`,fontSize:19,fontWeight:900,
+            color:DARK,background:"#fff",boxSizing:"border-box",outline:"none",
+            transition:"border-color 0.2s"}}/>
+      </div>
+    </div>
+  );
+}
+
+function getTierForVol(vol){
+  if(vol>=2000000) return LD_TIERS[2];
+  if(vol>=1000000) return LD_TIERS[1];
+  return LD_TIERS[0];
+}
+
 function LevelDebtTab(){
-  const [ldTier,setLdTier]=useState(1);
-  const [debt,setDebt]=useState(18000);
-  const tier=LD_TIERS.find(t=>t.id===ldTier);
-  const comm=Math.round(debt*tier.rate);
+  const [monthVol, setMonthVol] = useState(850000);
+  const [newDeal,  setNewDeal]  = useState(20000);
+
+  const totalVol    = monthVol + newDeal;
+  const tierBefore  = getTierForVol(monthVol);
+  const tierAfter   = getTierForVol(totalVol);
+  const crossed     = tierAfter.id > tierBefore.id;
+  const validDeal   = newDeal >= 7000;
+
+  // Commissions
+  const commTotal   = Math.round(totalVol * tierAfter.rate);
+  const commBefore  = Math.round(monthVol * tierBefore.rate);
+  const dealComm    = Math.round(newDeal  * tierAfter.rate);
+  const netGain     = commTotal - commBefore;
+  const tierBonus   = crossed ? Math.round(monthVol*(tierAfter.rate-tierBefore.rate)) : 0;
+
+  // Next tier gap
+  const thresholds  = [0, 1000000, 2000000];
+  const nextThresh  = [1000000, 2000000, Infinity][tierAfter.id-1];
+  const nextTierObj = tierAfter.id < 3 ? LD_TIERS[tierAfter.id] : null;
+  const gapToNext   = nextTierObj ? nextThresh - totalVol : 0;
+  const progress    = nextTierObj ? Math.min(100,(totalVol/nextThresh)*100) : 100;
+
+  const tierColors  = [G, BLUE, PURPLE];
+  const tc          = tierColors[tierAfter.id-1];
 
   return(
     <div style={{display:"grid",gap:16}}>
       <Card>
-        <SectionHead logo={LD_LOGO} color={G}>Level Debt — Debt Settlement</SectionHead>
+        <SectionHead logo={LD_LOGO} color={G}>Level Debt — Monthly Commission Simulator</SectionHead>
 
-        {/* Tier selector */}
-        <div style={{marginBottom:22}}>
-          <Lbl>Your Current Commission Tier</Lbl>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
-            {LD_TIERS.map(t=>(
-              <button key={t.id} onClick={()=>setLdTier(t.id)} style={{
-                padding:"14px 10px",borderRadius:12,cursor:"pointer",
-                border:ldTier===t.id?`2px solid ${G}`:`1px solid ${BORDER}`,
-                background:ldTier===t.id?G+"12":"#fff",textAlign:"center",transition:"all 0.15s",
-              }}>
-                <div style={{fontWeight:900,fontSize:22,color:ldTier===t.id?GD:DARK}}>{t.rateLabel}</div>
-                <div style={{fontSize:13,fontWeight:800,color:ldTier===t.id?G:"#64748b",marginTop:4}}>{t.label}</div>
-                <div style={{fontSize:12,color:"#94a3b8",marginTop:3,lineHeight:1.4}}>{t.range}</div>
-              </button>
-            ))}
+        {/* TWO INPUTS */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+          <CurrencyField
+            value={monthVol} onChange={setMonthVol}
+            label="Enrolled Debt Already This Month"
+            sublabel="Total debt you have already enrolled with Level Debt this month — before this new deal"
+            color={G}/>
+          <CurrencyField
+            value={newDeal} onChange={setNewDeal} min={0}
+            label="New Deal — Enrolled Debt"
+            sublabel="The enrolled debt on the new deal you are simulating. Level Debt requires $7,000 minimum."
+            color={validDeal?BLUE:newDeal>0?RED:BORDER}/>
+        </div>
+        {newDeal>0&&!validDeal&&(
+          <div style={{background:"#fef2f2",borderRadius:10,padding:"10px 14px",
+            color:RED,fontWeight:700,fontSize:13,marginBottom:16}}>
+            ⚠ Level Debt requires a minimum of $7,000 enrolled debt per deal.
           </div>
-          <div style={{fontSize:13,color:"#64748b",marginTop:10,fontWeight:500,lineHeight:1.6,
-            background:"#f8fafc",borderRadius:8,padding:"8px 12px",border:`1px solid ${BORDER}`}}>
-            Your tier is based on <strong style={{color:DARK}}>your total monthly enrolled debt volume</strong>. Check with your manager if you are unsure which tier applies to you.
+        )}
+
+        {/* TIER STATUS — before and after */}
+        <div style={{marginBottom:20}}>
+          <Lbl>Your Commission Tier</Lbl>
+          <div style={{display:"grid",gridTemplateColumns:"1fr auto 1fr",gap:12,alignItems:"center"}}>
+            {/* Before */}
+            <div style={{borderRadius:14,padding:"14px 16px",textAlign:"center",
+              background:tierColors[tierBefore.id-1]+"14",
+              border:`1px solid ${tierColors[tierBefore.id-1]}44`}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",
+                letterSpacing:0.5,marginBottom:5}}>Before This Deal</div>
+              <div style={{fontSize:28,fontWeight:900,color:tierColors[tierBefore.id-1]}}>{tierBefore.rateLabel}</div>
+              <div style={{fontSize:13,fontWeight:800,color:"#64748b",marginTop:4}}>{tierBefore.label}</div>
+              <div style={{fontSize:12,color:"#94a3b8",marginTop:3}}>{fmtRaw(monthVol)||"0"} enrolled</div>
+            </div>
+
+            {/* Arrow / tier up badge */}
+            <div style={{textAlign:"center"}}>
+              {crossed?(
+                <div style={{background:AMBER,borderRadius:99,padding:"8px 14px",
+                  fontSize:12,fontWeight:900,color:"#fff",whiteSpace:"nowrap",
+                  boxShadow:"0 4px 12px rgba(245,158,11,0.4)"}}>
+                  🎉 TIER UP!
+                </div>
+              ):(
+                <div style={{fontSize:24,color:"#94a3b8",fontWeight:300}}>→</div>
+              )}
+            </div>
+
+            {/* After */}
+            <div style={{borderRadius:14,padding:"14px 16px",textAlign:"center",
+              background:tc+"18",
+              border:`2px solid ${tc}`,
+              boxShadow:crossed?`0 0 0 4px ${AMBER}33`:undefined}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",
+                letterSpacing:0.5,marginBottom:5}}>After This Deal</div>
+              <div style={{fontSize:28,fontWeight:900,color:tc}}>{tierAfter.rateLabel}</div>
+              <div style={{fontSize:13,fontWeight:800,color:"#64748b",marginTop:4}}>{tierAfter.label}</div>
+              <div style={{fontSize:12,color:"#94a3b8",marginTop:3}}>${fmtRaw(totalVol)} total</div>
+              {crossed&&<div style={{fontSize:11,fontWeight:800,color:AMBER,marginTop:5}}>↑ TIER UPGRADE</div>}
+            </div>
           </div>
         </div>
 
-        {/* Debt input */}
-        <div style={{marginBottom:22}}>
-          <Lbl>Total Enrolled Debt ($)</Lbl>
-          <input type="number" value={debt} min={7000} step={500}
-            onChange={e=>setDebt(Number(e.target.value))}
-            style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1px solid ${BORDER}`,
-              fontSize:17,fontWeight:800,color:DARK,background:"#fff",boxSizing:"border-box"}}/>
-          {debt<7000&&<div style={{color:RED,fontWeight:700,fontSize:13,marginTop:7}}>⚠ Minimum $7,000 enrolled debt required for Level Debt enrollment.</div>}
+        {/* COMMISSION BREAKDOWN */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
+          <MetricCard title="Commission — This Deal"
+            value={validDeal?fmt(dealComm):"—"}
+            sub={validDeal?`${fmt(newDeal)} × ${tierAfter.rateLabel}`:"Deal below $7k minimum"}
+            accent={BLUE} large/>
+          <MetricCard title={crossed?"Tier Upgrade Bonus":"Monthly Commission Total"}
+            value={crossed?`+${fmt(tierBonus)}`:fmt(commTotal)}
+            sub={crossed
+              ?`Extra on ${fmt(monthVol)} already enrolled — you hit ${tierAfter.label}!`
+              :`${fmt(totalVol)} total enrolled × ${tierAfter.rateLabel}`}
+            accent={crossed?AMBER:G}/>
+          <MetricCard title="Total Earned This Month"
+            value={fmt(commTotal)}
+            sub={`Net gain from closing this deal: ${fmt(netGain)}`}
+            accent={GD}/>
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
-          <MetricCard title="Your Commission" value={debt>=7000?fmt(comm):"—"}
-            sub={`${tier.rateLabel} of Total Cleared Enrolled Debt`} accent={G} large/>
-          <MetricCard title="When You Get Paid" value="20th of Month 3"
-            sub="After 2 successful program payments clear" accent={G}/>
-          <MetricCard title="Commission Formula"
-            value={`${fmt(debt)} × ${tier.rateLabel}`}
-            sub={`= ${fmt(comm)} total commission`} accent="#94a3b8"/>
-        </div>
+        {/* TIER UP CALLOUT */}
+        {crossed&&(
+          <div style={{background:`linear-gradient(135deg,${AMBER}18,${G}18)`,
+            border:`1px solid ${AMBER}55`,borderRadius:12,padding:"14px 18px",marginBottom:12}}>
+            <div style={{fontWeight:900,fontSize:15,color:"#92400e",marginBottom:6}}>
+              🎉 This deal pushed you into {tierAfter.label} ({tierAfter.rateLabel})
+            </div>
+            <div style={{fontSize:14,color:"#374151",lineHeight:1.85,fontWeight:500}}>
+              Your entire month's volume is now paid at <strong>{tierAfter.rateLabel}</strong> instead of <strong>{tierBefore.rateLabel}</strong>.
+              That's an extra <strong style={{color:GD}}>{fmt(tierBonus)}</strong> on your existing {fmt(monthVol)} already enrolled — plus <strong style={{color:BLUE}}>{fmt(dealComm)}</strong> on this new deal.
+              Total gain from closing this deal: <strong style={{color:GD,fontSize:16}}>{fmt(netGain)}</strong>.
+            </div>
+          </div>
+        )}
+
+        {/* NEXT TIER PROGRESS */}
+        {nextTierObj&&(
+          <div style={{background:G+"0a",border:`1px solid ${G}33`,borderRadius:12,padding:"14px 18px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <div style={{fontWeight:800,fontSize:14,color:GD}}>
+                Progress to {nextTierObj.label} — {nextTierObj.rateLabel}
+              </div>
+              <div style={{fontSize:13,fontWeight:700,color:"#64748b"}}>
+                {fmt(gapToNext)} more to go
+              </div>
+            </div>
+            <div style={{height:12,background:"#e2e8f0",borderRadius:99,overflow:"hidden",marginBottom:8}}>
+              <div style={{height:"100%",borderRadius:99,background:`linear-gradient(90deg,${G},${GD})`,
+                width:`${progress}%`,transition:"width 0.4s"}}/>
+            </div>
+            <div style={{fontSize:13,color:"#64748b",fontWeight:600,lineHeight:1.6}}>
+              Enroll <strong style={{color:GD}}>{fmt(gapToNext)}</strong> more debt this month to unlock {nextTierObj.rateLabel}.
+              On a {fmt(newDeal)} deal that would be worth an extra <strong style={{color:GD}}>{fmt(Math.round(newDeal*(nextTierObj.rate-tierAfter.rate)))}</strong> per deal.
+            </div>
+          </div>
+        )}
       </Card>
 
-      {/* Tier table */}
+      {/* ALL TIER SCENARIOS TABLE */}
       <Card>
-        <div style={{fontWeight:800,fontSize:16,color:DARK,marginBottom:14}}>All Commission Rate Tiers</div>
+        <div style={{fontWeight:800,fontSize:16,color:DARK,marginBottom:6}}>All Tier Scenarios — Based on Your Monthly Total</div>
+        <div style={{fontSize:13,color:"#64748b",marginBottom:14,fontWeight:500,lineHeight:1.6}}>
+          Your current month total is <strong style={{color:DARK}}>{fmt(totalVol)}</strong>. The table below shows what your total monthly commission and commission on this deal would be at each tier. Enroll more debt each month to unlock higher tiers and earn more on every deal.
+        </div>
         <div style={{overflowX:"auto",borderRadius:12,border:`1px solid ${BORDER}`}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:14}}>
             <thead>
               <tr style={{background:DARK}}>
-                {["Tier","Monthly Enrolled Debt Volume","Your Rate","Example — $20k Deal","Example — $50k Deal"].map(h=>(
-                  <th key={h} style={{padding:"11px 14px",color:"#fff",fontWeight:700,fontSize:13,
+                {["Tier","Monthly Volume Needed","Rate",`Commission on This Deal (${fmt(newDeal)})`,`Total Monthly Commission (${fmt(totalVol)})`,"Status"].map(h=>(
+                  <th key={h} style={{padding:"11px 14px",color:"#fff",fontWeight:700,fontSize:12,
                     textAlign:"left",borderRight:"1px solid rgba(255,255,255,0.15)"}}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {LD_TIERS.map((t,i)=>{
-                const isActive=ldTier===t.id;
+                const isActive = tierAfter.id===t.id;
+                const dealC = validDeal ? fmt(Math.round(newDeal*t.rate)) : "—";
+                const totalC = fmt(Math.round(totalVol*t.rate));
+                const locked = totalVol < [0,1000000,2000000][t.id-1];
+                const tColor = tierColors[t.id-1];
                 return(
-                  <tr key={t.id} style={{background:isActive?G+"10":i%2?"#f8fafc":"#fff",
-                    borderLeft:isActive?`3px solid ${G}`:"3px solid transparent"}}>
-                    <td style={{padding:"11px 14px",fontWeight:900,fontSize:15,color:isActive?GD:DARK,
+                  <tr key={t.id} style={{
+                    background:isActive?tColor+"14":i%2?"#f8fafc":"#fff",
+                    borderLeft:isActive?`4px solid ${tColor}`:"4px solid transparent",
+                    opacity:locked?0.5:1}}>
+                    <td style={{padding:"12px 14px",fontWeight:900,color:isActive?tColor:DARK,
                       borderRight:`1px solid ${BORDER}`}}>
-                      {t.label} {isActive&&<span style={{fontSize:11,background:G+"22",color:G,
-                        padding:"1px 7px",borderRadius:99,marginLeft:6,fontWeight:700}}>current</span>}
+                      {t.label}
                     </td>
-                    <td style={{padding:"11px 14px",color:"#475569",fontWeight:600,borderRight:`1px solid ${BORDER}`}}>{t.range}</td>
-                    <td style={{padding:"11px 14px",fontWeight:900,fontSize:18,color:G,borderRight:`1px solid ${BORDER}`}}>{t.rateLabel}</td>
-                    <td style={{padding:"11px 14px",fontWeight:700,color:GD,borderRight:`1px solid ${BORDER}`}}>{fmt(Math.round(20000*t.rate))}</td>
-                    <td style={{padding:"11px 14px",fontWeight:700,color:GD}}>{fmt(Math.round(50000*t.rate))}</td>
+                    <td style={{padding:"12px 14px",color:"#475569",fontWeight:600,
+                      borderRight:`1px solid ${BORDER}`}}>{t.range}</td>
+                    <td style={{padding:"12px 14px",fontWeight:900,fontSize:20,color:tColor,
+                      borderRight:`1px solid ${BORDER}`}}>{t.rateLabel}</td>
+                    <td style={{padding:"12px 14px",fontWeight:800,fontSize:15,
+                      color:isActive?tColor:"#64748b",borderRight:`1px solid ${BORDER}`}}>
+                      {dealC}
+                      {isActive&&validDeal&&(
+                        <span style={{display:"block",fontSize:11,color:tColor,fontWeight:700,marginTop:2}}>← your earn</span>
+                      )}
+                      {!isActive&&!locked&&validDeal&&(
+                        <span style={{display:"block",fontSize:11,color:G,fontWeight:700,marginTop:2}}>
+                          {t.id>tierAfter.id?`+${fmt(Math.round(newDeal*(t.rate-tierAfter.rate)))} more`:`${fmt(Math.round(newDeal*(tierAfter.rate-t.rate)))} less`}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{padding:"12px 14px",fontWeight:800,fontSize:15,
+                      color:isActive?tColor:"#64748b",borderRight:`1px solid ${BORDER}`}}>
+                      {totalC}
+                      {isActive&&(
+                        <span style={{display:"block",fontSize:11,color:tColor,fontWeight:700,marginTop:2}}>← your total</span>
+                      )}
+                    </td>
+                    <td style={{padding:"12px 14px"}}>
+                      {isActive?(
+                        <span style={{fontWeight:800,fontSize:12,color:"#fff",background:tColor,
+                          padding:"3px 10px",borderRadius:99}}>✓ ACTIVE</span>
+                      ):locked?(
+                        <span style={{fontWeight:700,fontSize:12,color:"#94a3b8"}}>🔒 {fmt([0,1000000,2000000][t.id-1]-totalVol)} away</span>
+                      ):(
+                        <span style={{fontWeight:700,fontSize:12,color:"#94a3b8"}}>Below</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -599,6 +768,84 @@ function CSTab(){
   );
 }
 
+
+// ─── BALANCE BONUS COMPONENT ────────────────────────────
+function BalanceBonus(){
+  const [ldDeals,  setLdDeals]  = useState(8);
+  const [csDeals,  setCsDeals]  = useState(6);
+  const balData = getBalanceBonus(ldDeals, csDeals);
+  const total = ldDeals + csDeals;
+
+  return(
+    <div style={{display:"grid",gap:14}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div>
+          <Lbl>Level Debt Deals This Month</Lbl>
+          <input type="range" min={0} max={40} step={1} value={ldDeals}
+            onChange={e=>setLdDeals(Number(e.target.value))}
+            style={{width:"100%",accentColor:G}}/>
+          <div style={{textAlign:"center",fontWeight:800,color:G,fontSize:15,marginTop:4}}>{ldDeals} deals</div>
+        </div>
+        <div>
+          <Lbl>CS Debt Validation Deals This Month</Lbl>
+          <input type="range" min={0} max={40} step={1} value={csDeals}
+            onChange={e=>setCsDeals(Number(e.target.value))}
+            style={{width:"100%",accentColor:BLUE}}/>
+          <div style={{textAlign:"center",fontWeight:800,color:BLUE,fontSize:15,marginTop:4}}>{csDeals} deals</div>
+        </div>
+      </div>
+
+      <div style={{background:"#6d28d911",border:`2px solid ${balData.bonus>0?"#8b5cf6":"#e2e8f0"}`,
+        borderRadius:14,padding:"16px 18px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+          <div>
+            <div style={{fontWeight:900,fontSize:16,color:"#4c1d95"}}>Balanced Book Bonus</div>
+            <div style={{fontSize:13,color:"#64748b",marginTop:3,fontWeight:600}}>{balData.label}</div>
+            <div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>
+              {total} total deals — {ldDeals} LD / {csDeals} CS
+            </div>
+          </div>
+          <div style={{fontSize:32,fontWeight:900,color:PURPLE,lineHeight:1}}>
+            {balData.bonus>0?fmt(balData.bonus):"—"}
+          </div>
+        </div>
+        <div style={{height:12,background:"#ede9fe",borderRadius:99,overflow:"hidden",marginBottom:8}}>
+          <div style={{height:"100%",borderRadius:99,
+            width:`${Math.min(100,balData.pct*100)}%`,
+            background:"linear-gradient(90deg,#8b5cf6,#7c3aed)",transition:"width 0.4s"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:12,
+          color:"#94a3b8",fontWeight:600,marginBottom:10}}>
+          <span>All one product — $0</span>
+          <span>35/65 mix — +$250</span>
+          <span>50/50 — +$500</span>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+          {[
+            {label:"Any mix (30%+)",bonus:100,pct:0.3},
+            {label:"Mixed (50%+)",bonus:250,pct:0.5},
+            {label:"Balanced (70%+)",bonus:500,pct:0.7},
+          ].map((tier,i)=>{
+            const achieved = balData.pct>=tier.pct;
+            return(
+              <div key={i} style={{background:achieved?"#7c3aed18":"#f8fafc",
+                border:`1px solid ${achieved?"#8b5cf6":"#e2e8f0"}`,
+                borderRadius:10,padding:"10px",textAlign:"center"}}>
+                <div style={{fontSize:12,fontWeight:700,color:achieved?"#4c1d95":"#94a3b8"}}>{tier.label}</div>
+                <div style={{fontSize:18,fontWeight:900,color:achieved?PURPLE:"#94a3b8",marginTop:4}}>{fmt(tier.bonus)}</div>
+                {achieved&&<div style={{fontSize:10,color:"#7c3aed",fontWeight:800,marginTop:3}}>✓ EARNED</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{fontSize:12,color:"#94a3b8",fontWeight:600,lineHeight:1.6}}>
+        Paid monthly. Requires minimum 5 total deals (LD + CS combined). Enroll in both products to qualify.
+      </div>
+    </div>
+  );
+}
+
 // ─── SPIFF TAB ──────────────────────────────────────────
 function SpiffTab(){
   const [dealsToday,setDealsToday]=useState(3);
@@ -690,6 +937,15 @@ function SpiffTab(){
           );
         })}
       </Card>
+
+      {/* Balanced Book Bonus */}
+      <Card>
+        <SectionHead color={PURPLE}>Balanced Book Bonus — Monthly</SectionHead>
+        <div style={{fontSize:14,color:"#475569",marginBottom:18,lineHeight:1.7,fontWeight:500}}>
+          Earn a monthly bonus for enrolling clients in <strong>both</strong> Level Debt and Consumer Shield. The more balanced your book, the bigger the bonus. Requires a minimum of 5 total deals (LD + CS combined) to qualify. Paid monthly.
+        </div>
+        <BalanceBonus/>
+      </Card>
     </div>
   );
 }
@@ -710,8 +966,7 @@ function ForecastTab(){
   const csDeals=csBreakdown.reduce((s,p)=>s+p.count,0);
   const csComm=csBreakdown.reduce((s,p)=>s+p.comm,0);
   const monthBonus=getMonthlyBonus(csDeals);
-  const balData=getBalanceBonus(ldDeals,csDeals);
-  const total=ldComm+csComm+monthBonus+balData.bonus;
+  const total=ldComm+csComm+monthBonus;
   const totalDeals=ldDeals+csDeals;
   const next=getNextBonus(csDeals);
 
@@ -719,7 +974,6 @@ function ForecastTab(){
     {label:"Level Debt commissions",value:ldComm,color:G},
     {label:"CS Debt Validation commissions",value:csComm,color:BLUE},
     {label:"CS monthly volume bonus",value:monthBonus,color:AMBER},
-    {label:"Balanced book bonus",value:balData.bonus,color:PURPLE},
   ].filter(b=>b.value>0);
   const maxBar=Math.max(...breakdown.map(b=>b.value),1);
 
@@ -844,29 +1098,6 @@ function ForecastTab(){
           </div>
         )}
 
-        {/* Balance meter */}
-        <div style={{background:"#6d28d911",border:"1px solid #8b5cf633",borderRadius:12,padding:"16px 18px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-            <div>
-              <div style={{fontWeight:900,fontSize:15,color:"#4c1d95"}}>Balanced Book Bonus</div>
-              <div style={{fontSize:13,color:"#64748b",marginTop:3,fontWeight:600}}>{balData.label}</div>
-            </div>
-            <div style={{fontSize:24,fontWeight:900,color:PURPLE}}>{balData.bonus>0?fmt(balData.bonus):"—"}</div>
-          </div>
-          <div style={{height:10,background:"#ede9fe",borderRadius:99,overflow:"hidden",marginBottom:6}}>
-            <div style={{height:"100%",borderRadius:99,
-              width:`${Math.min(100,balData.pct*100)}%`,background:PURPLE,transition:"width 0.4s"}}/>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#94a3b8",
-            marginTop:4,fontWeight:600}}>
-            <span>All one product</span>
-            <span>35/65 mix → +$250</span>
-            <span>50/50 → +$500</span>
-          </div>
-          <div style={{fontSize:13,color:"#7c3aed",marginTop:10,lineHeight:1.7,fontWeight:600}}>
-            Enroll in <strong>both</strong> Level Debt and Consumer Shield to earn this bonus. A healthy mix earns you up to <strong>$500/month</strong> on top of everything else.
-          </div>
-        </div>
       </Card>
     </div>
   );
