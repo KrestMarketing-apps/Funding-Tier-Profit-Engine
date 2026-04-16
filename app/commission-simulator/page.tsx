@@ -1,11 +1,5 @@
 "use client";
-
-import dynamic from "next/dynamic";
-
-const FundingTierCommissionSimulator = dynamic(
-  () => import("../../components/FundingTierCommissionSimulator"),
-  { ssr: false }
-);
+import FundingTierCommissionSimulator from "../../components/FundingTierCommissionSimulator";
 
 export default function CommissionSimulatorPage() {
   return <FundingTierCommissionSimulator />;
