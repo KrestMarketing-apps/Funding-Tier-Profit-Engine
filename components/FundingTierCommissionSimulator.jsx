@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useMemo, useRef } from "react";
 
 // ─── BRAND ──────────────────────────────────────────────
@@ -879,32 +877,77 @@ export default function App(){
   const [tab,setTab]=useState("ld");
 
   const tabs=[
-    {id:"ld",      label:"Level Debt",          tip:"Debt Settlement Deals $7k+"},
-    {id:"cs",      label:"CS Debt Validation",   tip:"Debt Validation Deals $4k+"},
+    {id:"ld",      label:"Level Debt",        tip:"Debt Settlement Deals $7k+"},
+    {id:"cs",      label:"CS Debt Validation", tip:"Debt Validation Deals $4k+"},
     {id:"spiff",   label:"SPIFFs & Bonuses"},
     {id:"forecast",label:"Monthly Forecast"},
   ];
 
   return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:'"DM Sans","Helvetica Neue",Arial,sans-serif'}}>
-      <div style={{position:"sticky",top:0,zIndex:50,background:"rgba(248,250,252,0.97)",
-        backdropFilter:"blur(10px)",borderBottom:`1px solid ${BORDER}`}}>
-        <div style={{maxWidth:980,margin:"0 auto",padding:"8px 20px"}}>
-          <div style={{background:`linear-gradient(135deg,${DARK} 0%,#0b3b50 45%,#0f766e 100%)`,
-            borderRadius:16,padding:"13px 22px",boxShadow:"0 8px 24px rgba(15,23,42,0.18)"}}>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <img src={FT_LOGO} alt="Funding Tier" style={{height:28,width:"auto"}}/>
-              <div>
-                <div style={{fontSize:18,fontWeight:900,color:"#fff",letterSpacing:"-0.5px"}}>Commission Simulator</div>
-                <div style={{fontSize:12,color:"rgba(255,255,255,0.5)",marginTop:1,fontWeight:600}}>Agent Earnings Calculator</div>
+
+      {/* STICKY HEADER WITH TABS BUILT IN */}
+      <div style={{position:"sticky",top:0,zIndex:50,
+        background:`linear-gradient(135deg,${DARK} 0%,#0b3b50 45%,#0f766e 100%)`,
+        boxShadow:"0 4px 24px rgba(15,23,42,0.22)"}}>
+        <div style={{maxWidth:980,margin:"0 auto",padding:"12px 20px 0"}}>
+
+          {/* Logo + title row */}
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
+            <img src={FT_LOGO} alt="Funding Tier" style={{height:28,width:"auto"}}/>
+            <div>
+              <div style={{fontSize:18,fontWeight:900,color:"#fff",letterSpacing:"-0.5px",lineHeight:1}}>
+                Commission Simulator
+              </div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,0.45)",marginTop:2,fontWeight:600,letterSpacing:"0.3px"}}>
+                Agent Earnings Calculator
               </div>
             </div>
+          </div>
+
+          {/* Tab bar inside header */}
+          <div style={{display:"flex",gap:2}}>
+            {tabs.map(t=>{
+              const isActive=tab===t.id;
+              const btn=(
+                <button
+                  key={t.id}
+                  onClick={()=>setTab(t.id)}
+                  style={{
+                    flex:1,
+                    padding:"10px 8px",
+                    border:"none",
+                    cursor:"pointer",
+                    fontWeight:800,
+                    fontSize:13,
+                    letterSpacing:"-0.2px",
+                    borderRadius:"10px 10px 0 0",
+                    transition:"all 0.15s",
+                    background:isActive?"#fff":"transparent",
+                    color:isActive?DARK:"rgba(255,255,255,0.6)",
+                    boxShadow:isActive?"0 -2px 0 0 "+G+" inset":undefined,
+                    borderBottom:isActive?`3px solid ${G}`:"3px solid transparent",
+                    position:"relative",
+                  }}
+                >
+                  {isActive&&(
+                    <span style={{
+                      position:"absolute",bottom:0,left:0,right:0,height:3,
+                      background:G,borderRadius:"3px 3px 0 0",
+                    }}/>
+                  )}
+                  {t.label}
+                </button>
+              );
+              return t.tip
+                ? <Tip key={t.id} tip={t.tip}>{btn}</Tip>
+                : <div key={t.id} style={{flex:1}}>{btn}</div>;
+            })}
           </div>
         </div>
       </div>
 
       <div style={{maxWidth:980,margin:"0 auto",padding:"20px 20px 60px"}}>
-        <TabBar tabs={tabs} active={tab} onSelect={setTab}/>
         {tab==="ld"       &&<LevelDebtTab/>}
         {tab==="cs"       &&<CSTab/>}
         {tab==="spiff"    &&<SpiffTab/>}
