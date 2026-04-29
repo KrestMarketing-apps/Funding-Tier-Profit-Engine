@@ -648,6 +648,414 @@ function CSTab(){
   );
 }
 
+// ─── LEGACY CAPITAL REVENUE MODEL SIMULATOR ────────────
+// Deduction rules (applied before tier rate):
+//   Monthly  — Payments 1-2: -$4   | Payments 3-48: -$84  | Payments 49+: -$84
+//   Split    — Payments 1-2: -$4×2 | Payments 3-48: -$44×2| Payments 49+: -$44×2
+//   "Split" = client drafts half the monthly amount twice per month
+
+const LC_REV = {
+  minDebt: 6000,
+  minMonthlyPayment: 250,
+  maxTerm: 60,
+  billable:     { tier1: 0.60, tier2: 0.65, volThreshold: 100 },
+  accelerated:  { minTerm: 18, firstRate: 0.90, secondRate: 0.25, maxMonths: 24, firstWindow: 7 },
+
+  draftFee:        4,    // every payment (both schedules)
+  monthlyBackout:  80,   // payments 3+ monthly only
+  splitBackout:    40,   // payments 3+ per installment (occurs twice)
+
+  // Net revenue-eligible amount for a single monthly period
+  netMonthly(monthlyPayment, periodIndex, isMonthly) {
+    // periodIndex is 1-based (payment number in monthly terms)
+    const early = periodIndex <= 2;
+    if (isMonthly) {
+      return monthlyPayment - this.draftFee - (early ? 0 : this.monthlyBackout);
+    } else {
+      // split: two installments per month, each backs out $4 + (if late) $40
+      const perInstallment = monthlyPayment / 2;
+      const installmentNet = perInstallment - this.draftFee - (early ? 0 : this.splitBackout);
+      return installmentNet * 2; // two installments = one monthly equivalent
+    }
+  },
+
+  tierRate(monthlyFiles, model) {
+    if (model === 'accelerated') return null; // accelerated has its own rates
+    return monthlyFiles >= this.billable.volThreshold
+      ? this.billable.tier2
+      : this.billable.tier1;
+  },
+
+  buildSchedule(totalDebt, termMonths, payoutModel, monthlyFiles, isMonthly) {
+    const mp = totalDebt / termMonths;
+    const rows = [];
+    let cumRev = 0;
+
+    if (payoutModel === 'billable') {
+      const rate = this.tierRate(monthlyFiles, 'billable');
+      for (let mo = 1; mo <= termMonths; mo++) {
+        const net = this.netMonthly(mp, mo, isMonthly);
+        const rev = net * rate;
+        cumRev += rev;
+        rows.push({ mo, mp, net, rate, rev, cumRev,
+          deduction: mp - net,
+          window: mo <= 2 ? 'draft-only' : mo <= 48 ? 'full-backout' : 'continued' });
+      }
+    } else {
+      // Accelerated: months 1-7 at 90%, months 8-24 at 25%, month 25+ earns nothing
+      for (let mo = 1; mo <= termMonths; mo++) {
+        const net = this.netMonthly(mp, mo, isMonthly);
+        const rate = mo <= this.accelerated.firstWindow
+          ? this.accelerated.firstRate
+          : mo <= this.accelerated.maxMonths
+            ? this.accelerated.secondRate
+            : 0;
+        const rev = net * rate;
+        cumRev += rev;
+        rows.push({ mo, mp, net, rate, rev, cumRev,
+          deduction: mp - net,
+          window: mo <= this.accelerated.firstWindow ? 'first'
+            : mo <= this.accelerated.maxMonths ? 'second' : 'none' });
+      }
+    }
+    return rows;
+  },
+
+  summary(schedule, payoutModel, isMonthly) {
+    const eligible = schedule.filter(r => r.rev > 0);
+    const totalRev = schedule.reduce((s, r) => s + r.rev, 0);
+    const totalDeductions = schedule.reduce((s, r) => s + r.deduction, 0);
+    const totalGross = schedule.reduce((s, r) => s + r.mp, 0);
+    return { totalRev, totalDeductions, totalGross, eligibleMonths: eligible.length };
+  }
+};
+
+function LCRevenueSimulator({ debt }) {
+  const [termMonths,    setTermMonths]    = useState(36);
+  const [payoutModel,   setPayoutModel]   = useState('billable');
+  const [isMonthly,     setIsMonthly]     = useState(true);
+  const [monthlyFiles,  setMonthlyFiles]  = useState(1);
+  const [showTable,     setShowTable]     = useState(false);
+
+  const validDebt = debt >= LC_REV.minDebt;
+  const mp        = validDebt ? debt / termMonths : 0;
+  const mpValid   = mp >= LC_REV.minMonthlyPayment;
+  const maxTerm   = validDebt ? LC_REV.getMaxAllowedTerm ? LC_REV.maxTerm : Math.min(LC_REV.maxTerm, Math.floor(debt / LC_REV.minMonthlyPayment)) : LC_REV.maxTerm;
+  const accValid  = termMonths >= LC_REV.accelerated.minTerm;
+
+  const schedule  = validDebt && mpValid
+    ? LC_REV.buildSchedule(debt, termMonths, payoutModel, monthlyFiles, isMonthly)
+    : [];
+  const sum       = schedule.length ? LC_REV.summary(schedule, payoutModel, isMonthly) : null;
+
+  const tierRate  = LC_REV.tierRate(monthlyFiles, payoutModel);
+  const fmtPct    = v => (v * 100).toFixed(0) + '%';
+  const fmtD      = v => '$' + v.toFixed(2);
+
+  // Window colors for accelerated
+  const windowColor = w => w === 'first' ? G : w === 'second' ? BLUE : w === 'draft-only' ? AMBER : w === 'full-backout' ? LC : '#94a3b8';
+  const windowLabel = w => w === 'first' ? 'Window 1 — 90%' : w === 'second' ? 'Window 2 — 25%' : w === 'draft-only' ? 'Draft fee only' : w === 'full-backout' ? 'Full backout' : 'No revenue';
+
+  return (
+    <Card>
+      <SectionHead logo={LC_LOGO} color={LC}>Legacy Capital — Revenue Model Simulator</SectionHead>
+
+      {!validDebt ? (
+        <div style={{background:'#fef2f2',borderRadius:10,padding:'12px 14px',color:RED,fontWeight:700,fontSize:13}}>
+          Enter a valid debt amount ($6,000+) above to use the revenue simulator.
+        </div>
+      ) : (
+        <>
+          {/* Controls row */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+
+            {/* Left — model + frequency */}
+            <div style={{display:'grid',gap:12}}>
+
+              {/* Payout model toggle */}
+              <div>
+                <Lbl>Payout Model</Lbl>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                  {[
+                    {id:'billable',    label:'Billable',    sub:'60–65% · up to 60 months'},
+                    {id:'accelerated', label:'Accelerated', sub:'90%/25% · up to 24 months'},
+                  ].map(m=>{
+                    const active = payoutModel === m.id;
+                    const disabled = m.id === 'accelerated' && !accValid;
+                    return(
+                      <button key={m.id}
+                        onClick={()=>{ if(!disabled){ setPayoutModel(m.id); }}}
+                        style={{padding:'10px 10px',borderRadius:10,border:`2px solid ${active?LC:BORDER}`,
+                          background:active?LC+'14':'#fff',cursor:disabled?'not-allowed':'pointer',
+                          textAlign:'left',opacity:disabled?0.4:1}}>
+                        <div style={{fontWeight:900,fontSize:13,color:active?LCD:DARK}}>{m.label}</div>
+                        <div style={{fontSize:11,color:'#64748b',marginTop:2}}>{m.sub}</div>
+                        {disabled&&<div style={{fontSize:10,color:RED,fontWeight:700,marginTop:2}}>Needs {LC_REV.accelerated.minTerm}+ month term</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Payment frequency toggle */}
+              <div>
+                <Lbl>Payment Frequency</Lbl>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                  {[
+                    {id:true,  label:'Monthly',           sub:'−$4 P1–2  ·  −$84 P3+'},
+                    {id:false, label:'Split (Bi-Weekly)', sub:'−$8 P1–2  ·  −$88 P3+ (×2 drafts)'},
+                  ].map(f=>{
+                    const active = isMonthly === f.id;
+                    return(
+                      <button key={String(f.id)}
+                        onClick={()=>setIsMonthly(f.id)}
+                        style={{padding:'10px 10px',borderRadius:10,border:`2px solid ${active?AMBER:BORDER}`,
+                          background:active?AMBER+'14':'#fff',cursor:'pointer',textAlign:'left'}}>
+                        <div style={{fontWeight:900,fontSize:13,color:active?'#92400e':DARK}}>{f.label}</div>
+                        <div style={{fontSize:11,color:'#64748b',marginTop:2}}>{f.sub}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Right — term + volume tier */}
+            <div style={{display:'grid',gap:12}}>
+
+              {/* Term slider */}
+              <div>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                  <Lbl>Program Term</Lbl>
+                  <span style={{fontSize:12,color:'#64748b',fontWeight:600}}>Max: {maxTerm} months ($250/mo floor)</span>
+                </div>
+                <input type='range' min={6} max={maxTerm} step={1} value={Math.min(termMonths,maxTerm)}
+                  onChange={e=>setTermMonths(Number(e.target.value))}
+                  style={{width:'100%',accentColor:LC}}/>
+                <div style={{display:'flex',justifyContent:'space-between',marginTop:4}}>
+                  <span style={{fontSize:13,fontWeight:900,color:LC}}>{termMonths} months</span>
+                  <span style={{fontSize:13,fontWeight:700,color:mpValid?GD:RED}}>
+                    {fmtD(mp)}/mo {mpValid?'✓':'⚠ below $250 floor'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Monthly files volume tier (billable only) */}
+              {payoutModel === 'billable' && (
+                <div>
+                  <Lbl>Monthly Files Volume Tier</Lbl>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6}}>
+                    {[
+                      {label:'Tier 1 — 60%', sub:'< 100 files/month',  val:1,   rate:0.60},
+                      {label:'Tier 2 — 65%', sub:'100+ files/month',   val:100, rate:0.65},
+                    ].map(t=>{
+                      const active = (monthlyFiles >= 100) === (t.val >= 100);
+                      return(
+                        <button key={t.val}
+                          onClick={()=>setMonthlyFiles(t.val)}
+                          style={{padding:'10px 10px',borderRadius:10,border:`2px solid ${active?G:BORDER}`,
+                            background:active?G+'14':'#fff',cursor:'pointer',textAlign:'left'}}>
+                          <div style={{fontWeight:900,fontSize:13,color:active?GD:DARK}}>{t.label}</div>
+                          <div style={{fontSize:11,color:'#64748b',marginTop:2}}>{t.sub}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Accelerated window info */}
+              {payoutModel === 'accelerated' && (
+                <div style={{background:G+'0a',border:`1px solid ${G}33`,borderRadius:10,padding:'12px 14px'}}>
+                  <div style={{fontWeight:800,fontSize:13,color:GD,marginBottom:8}}>Accelerated Window Structure</div>
+                  <div style={{display:'grid',gap:6}}>
+                    {[
+                      {label:'Months 1–7',  rate:'90%', color:G,    desc:'First window — high front payout'},
+                      {label:'Months 8–24', rate:'25%', color:BLUE, desc:'Second window — tail rate'},
+                      {label:'Month 25+',   rate:'0%',  color:RED,  desc:'No revenue after month 24'},
+                    ].map((w,i)=>(
+                      <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                        padding:'6px 10px',borderRadius:8,background:w.color+'10',border:`1px solid ${w.color}33`}}>
+                        <div>
+                          <span style={{fontWeight:800,fontSize:12,color:w.color}}>{w.label}</span>
+                          <span style={{fontSize:11,color:'#64748b',marginLeft:8}}>{w.desc}</span>
+                        </div>
+                        <span style={{fontWeight:900,fontSize:16,color:w.color}}>{w.rate}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Deduction breakdown callout */}
+          <div style={{background:AMBER+'0d',border:`1px solid ${AMBER}33`,borderRadius:10,
+            padding:'10px 16px',marginBottom:16,fontSize:13}}>
+            <div style={{fontWeight:800,color:'#92400e',marginBottom:6}}>Active Deduction Schedule — {isMonthly?'Monthly':'Split / Bi-Weekly'} Program</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div style={{background:'#fff',borderRadius:8,padding:'8px 12px',border:`1px solid ${AMBER}33`}}>
+                <div style={{fontSize:11,fontWeight:700,color:'#64748b',marginBottom:3}}>PAYMENTS 1–2</div>
+                {isMonthly?(
+                  <><div style={{fontWeight:800,color:DARK}}>−$4 draft fee</div>
+                  <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Net eligible: {fmtD(mp - 4)} × {fmtPct(tierRate||LC_REV.accelerated.firstRate)}</div></>
+                ):(
+                  <><div style={{fontWeight:800,color:DARK}}>−$4 × 2 drafts = −$8/mo</div>
+                  <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Net eligible: {fmtD(mp - 8)} × {fmtPct(tierRate||LC_REV.accelerated.firstRate)}</div></>
+                )}
+              </div>
+              <div style={{background:'#fff',borderRadius:8,padding:'8px 12px',border:`1px solid ${AMBER}33`}}>
+                <div style={{fontSize:11,fontWeight:700,color:'#64748b',marginBottom:3}}>PAYMENTS 3–48</div>
+                {isMonthly?(
+                  <><div style={{fontWeight:800,color:DARK}}>−$4 draft + −$80 backout = −$84/mo</div>
+                  <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Net eligible: {fmtD(mp - 84)} × {fmtPct(tierRate||LC_REV.accelerated.secondRate)}</div></>
+                ):(
+                  <><div style={{fontWeight:800,color:DARK}}>−$44 × 2 drafts = −$88/mo</div>
+                  <div style={{fontSize:11,color:'#64748b',marginTop:2}}>Net eligible: {fmtD(mp - 88)} × {fmtPct(tierRate||LC_REV.accelerated.secondRate)}</div></>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {!mpValid ? (
+            <div style={{background:'#fef2f2',borderRadius:10,padding:'12px 14px',color:RED,fontWeight:700,fontSize:13}}>
+              ⚠ Monthly payment of {fmtD(mp)} is below the $250 minimum. Shorten the term or increase enrolled debt.
+            </div>
+          ) : (
+            <>
+              {/* Summary metrics */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:16}}>
+                <MetricCard title="Total Revenue" value={fmt(sum.totalRev)}
+                  sub={`${termMonths}-month term · ${isMonthly?'monthly':'split'} · ${payoutModel}`}
+                  accent={LC} large/>
+                <MetricCard title="Gross Client Payments" value={fmt(sum.totalGross)}
+                  sub={`${termMonths} × ${fmtD(mp)}/mo`} accent={DARK}/>
+                <MetricCard title="Total Deductions" value={fmt(sum.totalDeductions)}
+                  sub={`Draft fees + backouts across ${termMonths} payments`} accent={AMBER}/>
+                <MetricCard title={payoutModel==='billable'?`Tier Rate (${fmtPct(tierRate||0)})`:'Revenue Rate'}
+                  value={payoutModel==='billable'
+                    ? (monthlyFiles>=100?'Tier 2 — 65%':'Tier 1 — 60%')
+                    : '90% → 25%'}
+                  sub={payoutModel==='billable'
+                    ? (monthlyFiles>=100?'100+ monthly files':'< 100 monthly files')
+                    : `Months 1–7 then 8–${LC_REV.accelerated.maxMonths}`}
+                  accent={G}/>
+              </div>
+
+              {/* Mini revenue curve */}
+              {(()=>{
+                const W=860, H=140, PL=64, PB=28, PT=14, PR=20;
+                const maxRev=Math.max(...schedule.map(r=>r.cumRev),1);
+                const gx=i=>PL+(i/(schedule.length-1||1))*(W-PL-PR);
+                const gy=v=>H-PB-(v/maxRev)*(H-PT-PB);
+                const pts=schedule.map((r,i)=>`${gx(i)},${gy(r.cumRev)}`).join(' ');
+                const milestones=[2,7,24,47].filter(m=>m<schedule.length);
+                return(
+                  <div style={{background:'#f8fafc',border:`1px solid ${BORDER}`,borderRadius:12,padding:'12px 10px 8px',marginBottom:16,overflowX:'auto'}}>
+                    <div style={{fontSize:12,fontWeight:800,color:'#64748b',textTransform:'uppercase',letterSpacing:0.5,marginBottom:8,paddingLeft:8}}>
+                      Cumulative Revenue Curve — {termMonths} months
+                    </div>
+                    <svg width={W} height={H} style={{minWidth:W,display:'block'}}>
+                      {[0,0.25,0.5,0.75,1].map((t,i)=>{
+                        const yv=H-PB-t*(H-PT-PB);
+                        return <g key={i}>
+                          <line x1={PL} y1={yv} x2={W-PR} y2={yv} stroke={t===0?'#94a3b8':'#e2e8f0'} strokeWidth={t===0?1.5:1}/>
+                          <text x={PL-6} y={yv+4} fontSize="10" fill={LC} textAnchor="end" fontWeight="600">{fmt(maxRev*t)}</text>
+                        </g>;
+                      })}
+                      <polyline fill={LC+'18'} stroke="none"
+                        points={`${gx(0)},${H-PB} ${pts} ${gx(schedule.length-1)},${H-PB}`}/>
+                      <polyline fill="none" stroke={LC} strokeWidth="2.5"
+                        strokeLinejoin="round" strokeLinecap="round" points={pts}/>
+                      {/* Kink at payment 3 where backout kicks in */}
+                      {schedule.length>2&&(()=>{
+                        const x=gx(2),y=gy(schedule[2].cumRev);
+                        return <g>
+                          <line x1={x} y1={PT} x2={x} y2={H-PB} stroke={AMBER} strokeWidth="1.5" strokeDasharray="4 3"/>
+                          <text x={x+3} y={PT+10} fontSize="9" fill={AMBER} fontWeight="800">P3 backout kicks in</text>
+                        </g>;
+                      })()}
+                      {/* Payment 48 marker */}
+                      {schedule.length>=48&&(()=>{
+                        const x=gx(47),y=gy(schedule[47].cumRev);
+                        return <g>
+                          <line x1={x} y1={PT} x2={x} y2={H-PB} stroke={PURPLE} strokeWidth="1.5" strokeDasharray="4 3"/>
+                          <text x={x+3} y={PT+10} fontSize="9" fill={PURPLE} fontWeight="800">P48</text>
+                        </g>;
+                      })()}
+                      {/* End label */}
+                      {schedule.length>0&&(()=>{
+                        const last=schedule[schedule.length-1];
+                        const x=gx(schedule.length-1),y=gy(last.cumRev);
+                        return <text x={x} y={y-10} textAnchor="end" fontSize="11" fill={LCD} fontWeight="900">{fmt(last.cumRev)}</text>;
+                      })()}
+                    </svg>
+                  </div>
+                );
+              })()}
+
+              {/* Payment schedule table toggle */}
+              <button onClick={()=>setShowTable(t=>!t)}
+                style={{width:'100%',padding:'11px 16px',borderRadius:10,
+                  border:`1px solid ${LC}44`,background:LC+'0a',cursor:'pointer',
+                  fontWeight:800,fontSize:13,color:LCD,display:'flex',
+                  justifyContent:'space-between',alignItems:'center',marginBottom:showTable?12:0}}>
+                <span>Payment-by-Payment Breakdown — {termMonths} rows</span>
+                <span style={{fontSize:18,fontWeight:900,color:LC}}>{showTable?'−':'+'}</span>
+              </button>
+
+              {showTable&&(
+                <div style={{overflowX:'auto',borderRadius:12,border:`1px solid ${BORDER}`,maxHeight:420,overflowY:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                    <thead style={{position:'sticky',top:0,zIndex:10}}>
+                      <tr style={{background:DARK}}>
+                        {['Mo','Schedule','Gross Payment','Deduction','Net Eligible','Rate','Monthly Revenue','Cumulative'].map(h=>(
+                          <th key={h} style={{padding:'8px 10px',color:'#fff',fontWeight:700,fontSize:11,
+                            textAlign:'left',borderRight:'1px solid rgba(255,255,255,0.15)',whiteSpace:'nowrap'}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {schedule.map((r,i)=>{
+                        const wc = windowColor(r.window);
+                        const wl = windowLabel(r.window);
+                        const isKink = r.mo === 3;
+                        const is48  = r.mo === 48;
+                        return(
+                          <tr key={r.mo} style={{
+                            background: isKink ? AMBER+'18' : is48 ? PURPLE+'14' : r.window==='none'?'#f8fafc':i%2?'#f8fafc':'#fff',
+                            borderLeft: isKink?`3px solid ${AMBER}`:is48?`3px solid ${PURPLE}`:`3px solid transparent`}}>
+                            <td style={{padding:'6px 10px',fontWeight:800,color:isKink?AMBER:is48?PURPLE:DARK,
+                              borderRight:`1px solid ${BORDER}`,whiteSpace:'nowrap'}}>
+                              {r.mo}
+                              {isKink&&<span style={{fontSize:9,color:AMBER,display:'block',fontWeight:700}}>backout starts</span>}
+                              {is48&&<span style={{fontSize:9,color:PURPLE,display:'block',fontWeight:700}}>backout continues</span>}
+                            </td>
+                            <td style={{padding:'6px 10px',borderRight:`1px solid ${BORDER}`}}>
+                              <span style={{fontSize:10,fontWeight:700,color:wc,background:wc+'18',
+                                padding:'2px 6px',borderRadius:99,whiteSpace:'nowrap'}}>{wl}</span>
+                            </td>
+                            <td style={{padding:'6px 10px',color:'#475569',borderRight:`1px solid ${BORDER}`}}>{fmtD(r.mp)}</td>
+                            <td style={{padding:'6px 10px',color:r.deduction>4?RED:'#94a3b8',fontWeight:700,borderRight:`1px solid ${BORDER}`}}>−{fmtD(r.deduction)}</td>
+                            <td style={{padding:'6px 10px',fontWeight:700,color:DARK,borderRight:`1px solid ${BORDER}`}}>{fmtD(r.net)}</td>
+                            <td style={{padding:'6px 10px',fontWeight:800,color:wc,borderRight:`1px solid ${BORDER}`}}>{fmtPct(r.rate)}</td>
+                            <td style={{padding:'6px 10px',fontWeight:800,color:r.rev>0?LC:'#94a3b8',borderRight:`1px solid ${BORDER}`}}>{fmtD(r.rev)}</td>
+                            <td style={{padding:'6px 10px',fontWeight:900,color:LCD}}>{fmt(r.cumRev)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 // ─── LEGACY CAPITAL SERVICES TAB ────────────────────────
 function LegacyCapitalTab(){
   const [debt,setDebt]=useState(20000);
@@ -758,6 +1166,9 @@ function LegacyCapitalTab(){
         </div>
         <div style={{fontSize:13,color:"#64748b",marginTop:10,fontWeight:600}}>* Band L1 ($6,000–$9,999): $150 flat, paid in full at Payment 2. No split.</div>
       </Card>
+
+      {/* Revenue Model Simulator */}
+      <LCRevenueSimulator debt={debt}/>
 
       {/* Compliance card */}
       <Card>
