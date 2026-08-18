@@ -375,7 +375,7 @@ function ExpenseStatement({ row, month, setMonth, horizon, assumptions }: {
             <div style={{ fontWeight: 700, color: "#334155", fontVariantNumeric: "tabular-nums" }}>{money.format(cb.labor)}</div>
           </div>
           <div style={{ marginTop: 6, paddingLeft: 14, display: "grid", gap: 3 }}>
-            <LedgerSubline label={`US Closers (${row.concurrentSeats} seat${row.concurrentSeats === 1 ? "" : "s"} × ${a.headcount.scheduledHoursPerWeek} hrs/wk × ${money.format(a.costs.laborRatePerHour)}/hr${a.headcount.scheduledHoursPerWeek > a.headcount.overtimeThresholdHoursPerWeek ? `, incl. ${a.headcount.overtimeMultiplier}× OT beyond ${a.headcount.overtimeThresholdHoursPerWeek}hrs` : ""})`} amount={cb.usLabor} />
+            <LedgerSubline label={`US Closers — ${Math.max(0, row.concurrentSeats - Math.min(a.headcount.commissionOnlySeats, row.concurrentSeats))} hourly-paid seat${Math.max(0, row.concurrentSeats - Math.min(a.headcount.commissionOnlySeats, row.concurrentSeats)) === 1 ? "" : "s"}${a.headcount.commissionOnlySeats > 0 ? ` (+ ${Math.min(a.headcount.commissionOnlySeats, row.concurrentSeats)} commission-only, $0 labor)` : ""} × ${a.headcount.scheduledHoursPerWeek} hrs/wk × ${money.format(a.costs.laborRatePerHour)}/hr${a.headcount.scheduledHoursPerWeek > a.headcount.overtimeThresholdHoursPerWeek ? `, incl. ${a.headcount.overtimeMultiplier}× OT beyond ${a.headcount.overtimeThresholdHoursPerWeek}hrs` : ""}`} amount={cb.usLabor} />
             {isHybrid && (
               <LedgerSubline label={`Overseas Qualifiers (${row.overseasSeats} seat${row.overseasSeats === 1 ? "" : "s"} × ${a.headcount.overseasScheduledHoursPerWeek} hrs/wk × ${money.format(a.headcount.overseasRatePerHour)}/hr)`} amount={cb.overseasLabor} />
             )}
@@ -403,16 +403,23 @@ function StaffingComparison({ usOnlyLabor, hybridLabor, currentMode, horizon }: 
   const savings = usOnlyLabor - hybridLabor;
   return (
     <div style={{ marginTop: 16, border: "1px solid #e2e8f0", borderRadius: 12, padding: 14, background: "#faf5ff" }}>
-      <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a", marginBottom: 10 }}>
+      <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
         Total Labor Cost Comparison — over {horizon} months
+        <InlineTip text={`How this is calculated: the model runs two complete, independent simulations of the exact same ${horizon}-month deal volume, close rate, and hiring policy — one with Staffing Mode forced to "US Only," one forced to "Hybrid." Every month in each simulation contributes its labor cost (regular hours + overtime for US closers, plus overseas wages if hybrid, minus anything paid to commission-only seats) to that scenario's running total. The two totals shown below are those sums — nothing else in the model (revenue, commission, other overhead) changes between them, so the difference you see is purely the cost of the staffing choice.`} width={320} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div style={{ background: "#fff", border: `1px solid ${currentMode === "us_only" ? FT_BLUE : "#e2e8f0"}`, borderRadius: 10, padding: 12 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>US Only {currentMode === "us_only" && "(current)"}</div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", display: "flex", alignItems: "center", gap: 4 }}>
+            US Only {currentMode === "us_only" && "(current)"}
+            <InlineTip text="Sum of US closer labor cost (hourly wage + overtime, per your current rate and schedule, excluding any Commission-Only Seats) across every month of the simulation, assuming Staffing Mode is US Only for the full run — no overseas team, no hybrid handoff." width={260} />
+          </div>
           <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 4 }}>{money.format(usOnlyLabor)}</div>
         </div>
         <div style={{ background: "#fff", border: `1px solid ${currentMode === "hybrid" ? FT_PURPLE : "#e2e8f0"}`, borderRadius: 10, padding: 12 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>Hybrid (overseas + US) {currentMode === "hybrid" && "(current)"}</div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", display: "flex", alignItems: "center", gap: 4 }}>
+            Hybrid (overseas + US) {currentMode === "hybrid" && "(current)"}
+            <InlineTip text="Sum of US closer labor cost PLUS overseas qualifier labor cost, across every month, assuming Staffing Mode is Hybrid for the full run — using your current overseas rate, seats, hours, and qualifying-share split. Hiring events in this scenario may add seats to whichever pool (US or overseas) is actually strained." width={280} />
+          </div>
           <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 4 }}>{money.format(hybridLabor)}</div>
         </div>
       </div>
@@ -796,13 +803,16 @@ export default function FundingTierOperatingModel() {
 
         <Accordion title="Starting Headcount &amp; Schedule" accent={FT_BLUE}
           tooltip="The company's staffing starting point for the US closer team — how many people, how many can take calls at once, and what hours the team covers. Every agent is assumed to work across all three backends — none are dedicated to a single one.">
-          <div style={grid3}>
+          <div style={grid4}>
             <NumField label="Starting Total Headcount" value={a.headcount.totalHeadcount}
               onChange={v => update("headcount", { totalHeadcount: v })}
               tooltip="Total US company headcount at the start of the simulation — used for every per-user software cost below (Slack, Salesforce, etc.), since all agents work across all backends." />
             <NumField label="US Closer Seats" value={a.headcount.concurrentSeats}
               onChange={v => update("headcount", { concurrentSeats: v })}
               tooltip="How many US-based agents can be actively on a call at the same time. In Hybrid mode, this pool only handles the closing portion of each call — see Staffing Model below." />
+            <NumField label="Commission-Only Seats" value={a.headcount.commissionOnlySeats}
+              onChange={v => update("headcount", { commissionOnlySeats: v })}
+              tooltip="How many of the US Closer Seats above are paid commission-only — no hourly wage or overtime at all, earning purely through the per-deal agent commission already modeled in each backend's payout. Capacity and call-handling stay the same; only the labor cost line changes. Set to your own seat (or any 1099/commission-only closer) to remove their hourly cost entirely." />
             <NumField label="Active DIDs (phone numbers)" value={a.headcount.activeDIDs}
               onChange={v => update("headcount", { activeDIDs: v })}
               tooltip="Number of active phone numbers rented, which factors into DID rental costs (both Krest Marketing App and Trackdrive)." />
