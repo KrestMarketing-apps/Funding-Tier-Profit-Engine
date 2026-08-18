@@ -51,7 +51,7 @@ function InlineTip({ text, width = 260 }: { text: string; width?: number }) {
       {show && (
         <div style={{ position: "absolute", bottom: "130%", left: "50%", transform: "translateX(-50%)",
           background: "#0f172a", color: "#fff", borderRadius: 10, padding: "10px 13px",
-          fontSize: 12, lineHeight: 1.65, width, zIndex: 300,
+          fontSize: 12, lineHeight: 1.65, width, zIndex: 300, textTransform: "none", fontWeight: 400,
           boxShadow: "0 8px 24px rgba(0,0,0,0.28)", pointerEvents: "none", whiteSpace: "pre-line" }}>
           {text}
         </div>
@@ -81,7 +81,7 @@ function Accordion({ title, subtitle, defaultOpen = false, children, accent = FT
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, overflow: "hidden", background: "#fff", borderLeft: `4px solid ${accent}` }}>
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, overflow: open ? "visible" : "hidden", background: "#fff", borderLeft: `4px solid ${accent}` }}>
       <button onClick={() => setOpen(o => !o)} style={{
         width: "100%", textAlign: "left", background: "#fff", border: "none",
         padding: "13px 18px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -117,12 +117,28 @@ function PctField({ label, valuePct, onChangePct, step = 0.5, min = 0, max = 100
   return (
     <div>
       <label style={labelStyle}>{label}{tooltip && <InlineTip text={tooltip} />}</label>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, maxWidth: 260 }}>
         <input type="range" min={min} max={max} step={step} value={valuePct}
           onChange={e => onChangePct(Number(e.target.value))}
-          style={{ flex: 1, accentColor: FT_GREEN }} />
-        <span style={{ fontSize: 13, fontWeight: 800, color: FT_GREEN_DARK, width: 52, textAlign: "right" }}>{valuePct}%</span>
+          style={{ width: 170, flexShrink: 0, accentColor: FT_GREEN }} />
+        <span style={{ fontSize: 13, fontWeight: 800, color: FT_GREEN_DARK, minWidth: 46, textAlign: "left" }}>{valuePct}%</span>
       </div>
+    </div>
+  );
+}
+
+function LockedField({ label, value, note }: { label: string; value: string; note?: string }) {
+  return (
+    <div>
+      <label style={labelStyle}>
+        {label}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800,
+          color: "#92400e", background: "#fef3c7", padding: "1px 6px", borderRadius: 999, textTransform: "none" }}>
+          🔒 Contract Term
+        </span>
+      </label>
+      <div style={{ ...inputStyle, background: "#f8fafc", color: "#475569", cursor: "not-allowed", fontWeight: 700 }}>{value}</div>
+      {note && <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>{note}</div>}
     </div>
   );
 }
@@ -155,23 +171,156 @@ const GLOSSARY: [string, string][] = [
 // EXPENSE STATEMENT (accounting-style monthly ledger)
 // ─────────────────────────────────────────────
 
-const ledgerLine: React.CSSProperties = {
-  display: "flex", justifyContent: "space-between", alignItems: "center",
-  padding: "8px 0", borderBottom: "1px solid #f1f5f9", fontSize: 13,
+function round2(v: number): number { return Math.round(v * 100) / 100; }
+
+const BACKEND_META: Record<BackendKey, { label: string; color: string }> = {
+  LEVEL: { label: "Level Debt", color: FT_GREEN_DARK },
+  CS: { label: "Shield Services", color: FT_BLUE },
+  LEGACY: { label: "Elite Legal Practice", color: FT_PURPLE },
 };
 
-function ExpenseStatement({ row, month, setMonth, horizon, headcount }: {
-  row: MonthRow; month: number; setMonth: (v: number) => void; horizon: number;
-  headcount: { totalHeadcount: number; concurrentSeats: number };
+function RevenueForecastByPartner({ rows, monthlyNewDeals, avgDebt, horizon, statementRow, month, setMonth }: {
+  rows: MonthRow[]; monthlyNewDeals: (t: number) => { LEVEL: number; CS: number; LEGACY: number };
+  avgDebt: Record<BackendKey, number>; horizon: number; statementRow: MonthRow; month: number; setMonth: (v: number) => void;
+}) {
+  const backends: BackendKey[] = ["LEVEL", "CS", "LEGACY"];
+
+  const totalDealsSubmitted: Record<BackendKey, number> = { LEVEL: 0, CS: 0, LEGACY: 0 };
+  for (let t = 1; t <= horizon; t++) {
+    const d = monthlyNewDeals(t);
+    totalDealsSubmitted.LEVEL += d.LEVEL;
+    totalDealsSubmitted.CS += d.CS;
+    totalDealsSubmitted.LEGACY += d.LEGACY;
+  }
+
+  const cumRevenue: Record<BackendKey, number> = { LEVEL: 0, CS: 0, LEGACY: 0 };
+  const cumCommission: Record<BackendKey, number> = { LEVEL: 0, CS: 0, LEGACY: 0 };
+  rows.forEach(r => backends.forEach(k => {
+    cumRevenue[k] += r.revenueByBackend[k];
+    cumCommission[k] += r.commissionByBackend[k];
+  }));
+
+  const totalRevenueAll = backends.reduce((s, k) => s + cumRevenue[k], 0);
+  const totalCommissionAll = backends.reduce((s, k) => s + cumCommission[k], 0);
+  const totalDealsAll = backends.reduce((s, k) => s + totalDealsSubmitted[k], 0);
+  const totalEnrolledAll = backends.reduce((s, k) => s + totalDealsSubmitted[k] * avgDebt[k], 0);
+
+  return (
+    <div style={{ ...card, background: "#fff" }}>
+      <div style={{ fontWeight: 800, fontSize: 15, color: "#0f172a", display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+        Revenue Forecast by Servicing Partner
+        <InlineTip text="Projected revenue and commission, broken out per backend, based on deals submitted and average debt load for each. Cumulative totals cover the full simulation horizon; the table below shows one specific month in detail." width={300} />
+      </div>
+      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>Cumulative over {horizon} months, by servicing partner</div>
+
+      <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 10 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr style={{ background: "#f8fafc" }}>
+            {["Servicing Partner", "Deals Submitted", "Avg Debt Load", "Total Enrolled Volume", "Total Revenue", "Total Commission", "Net Revenue"].map(h => (
+              <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {backends.map((k, i) => (
+              <tr key={k} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
+                <td style={{ padding: "8px 12px", fontWeight: 800, color: BACKEND_META[k].color }}>{BACKEND_META[k].label}</td>
+                <td style={{ padding: "8px 12px" }}>{Math.round(totalDealsSubmitted[k]).toLocaleString()}</td>
+                <td style={{ padding: "8px 12px" }}>{money.format(avgDebt[k])}</td>
+                <td style={{ padding: "8px 12px" }}>{money.format(totalDealsSubmitted[k] * avgDebt[k])}</td>
+                <td style={{ padding: "8px 12px", fontWeight: 700 }}>{money.format(cumRevenue[k])}</td>
+                <td style={{ padding: "8px 12px" }}>{money.format(cumCommission[k])}</td>
+                <td style={{ padding: "8px 12px", fontWeight: 800, color: FT_GREEN_DARK }}>{money.format(cumRevenue[k] - cumCommission[k])}</td>
+              </tr>
+            ))}
+            <tr style={{ background: "#f1f5f9", borderTop: "2px solid #cbd5e1" }}>
+              <td style={{ padding: "8px 12px", fontWeight: 900 }}>TOTAL</td>
+              <td style={{ padding: "8px 12px", fontWeight: 800 }}>{Math.round(totalDealsAll).toLocaleString()}</td>
+              <td style={{ padding: "8px 12px" }}>—</td>
+              <td style={{ padding: "8px 12px", fontWeight: 800 }}>{money.format(totalEnrolledAll)}</td>
+              <td style={{ padding: "8px 12px", fontWeight: 900 }}>{money.format(totalRevenueAll)}</td>
+              <td style={{ padding: "8px 12px", fontWeight: 800 }}>{money.format(totalCommissionAll)}</td>
+              <td style={{ padding: "8px 12px", fontWeight: 900, color: FT_GREEN_DARK }}>{money.format(totalRevenueAll - totalCommissionAll)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18, marginBottom: 8, flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: "#334155" }}>Single-Month Detail — active deals, revenue, and commission by partner</div>
+        <div>
+          <label style={{ ...labelStyle, marginBottom: 4 }}>Statement Month</label>
+          <input type="number" min={1} max={horizon} value={month}
+            onChange={e => setMonth(Math.max(1, Math.min(horizon, Number(e.target.value))))}
+            style={{ ...inputStyle, width: 90 }} />
+        </div>
+      </div>
+      <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 10 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr style={{ background: "#f8fafc" }}>
+            {["Servicing Partner", "Active Deals This Month", "Revenue This Month", "Commission This Month"].map(h => (
+              <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", whiteSpace: "nowrap" }}>{h}</th>
+            ))}
+          </tr></thead>
+          <tbody>
+            {backends.map((k, i) => (
+              <tr key={k} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
+                <td style={{ padding: "8px 12px", fontWeight: 800, color: BACKEND_META[k].color }}>{BACKEND_META[k].label}</td>
+                <td style={{ padding: "8px 12px" }}>{Math.round(statementRow.activeDealsByBackend[k]).toLocaleString()}</td>
+                <td style={{ padding: "8px 12px", fontWeight: 700 }}>{money.format(statementRow.revenueByBackend[k])}</td>
+                <td style={{ padding: "8px 12px" }}>{money.format(statementRow.commissionByBackend[k])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11, color: "#64748b", marginTop: 10, lineHeight: 1.6 }}>
+        "Active Deals" reflects survival-adjusted counts still generating revenue that month — not raw deals submitted.
+        Revenue timing differs by partner (Level Debt pays a lump sum after 2 deposits clear; Shield Services and Elite
+        Legal Practice pay monthly), so a given month's revenue mix will look different from the cumulative totals above.
+      </div>
+    </div>
+  );
+}
+
+function LedgerCategory({ label, subtotal, note, children }: {
+  label: string; subtotal: number; note: string; children: React.ReactNode;
+}) {
+  return (
+    <div style={{ borderBottom: "1px solid #f1f5f9", padding: "8px 0" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>{label}</div>
+          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>{note}</div>
+        </div>
+        <div style={{ fontWeight: 700, color: "#334155", fontVariantNumeric: "tabular-nums" }}>{money.format(subtotal)}</div>
+      </div>
+      <div style={{ marginTop: 6, paddingLeft: 14, display: "grid", gap: 3 }}>{children}</div>
+    </div>
+  );
+}
+
+function LedgerSubline({ label, amount }: { label: string; amount: number }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#64748b" }}>
+      <span>{label}</span>
+      <span style={{ fontVariantNumeric: "tabular-nums" }}>{money.format(amount)}</span>
+    </div>
+  );
+}
+
+function ExpenseStatement({ row, month, setMonth, horizon, assumptions }: {
+  row: MonthRow; month: number; setMonth: (v: number) => void; horizon: number; assumptions: Assumptions;
 }) {
   const cb = row.costBreakdown;
-  const items: [string, number, string][] = [
-    ["Fixed Monthly Tools", cb.fixed, "KM App CRM, Forth — flat regardless of volume"],
-    ["Per-User Tools", cb.perUser, "Slack, Salesforce — scales with headcount"],
-    ["Usage Rates (calls, SMS, email)", cb.usage, "Krest Marketing App — scales with call volume"],
-    ["Trackdrive (call routing)", cb.trackdrive, "Tiered — gets cheaper as volume grows"],
-    ["Labor", cb.labor, `${row.concurrentSeats} seat${row.concurrentSeats === 1 ? "" : "s"} × scheduled hours × blended rate`],
-  ];
+  const a = assumptions;
+  const isHybrid = a.headcount.staffingMode === "hybrid";
+
+  const totalSms = row.monthCallMinutes * a.operations.smsPerCallMultiplier;
+  const totalEmails = row.monthCallMinutes * a.operations.emailPerCallMultiplier;
+  const inboundForwardCost = round2(row.monthCallMinutes * a.costs.usageRates.inboundForwardPerMin);
+  const smsCost = round2(totalSms * a.costs.usageRates.smsPerSegment);
+  const emailCost = round2((totalEmails / 1000) * a.costs.usageRates.emailPer1000);
+  const didCost = round2(a.headcount.activeDIDs * a.costs.usageRates.didRentalPerMonth);
 
   return (
     <div style={{ ...card, background: "#fff" }}>
@@ -179,10 +328,10 @@ function ExpenseStatement({ row, month, setMonth, horizon, headcount }: {
         <div>
           <div style={{ fontWeight: 800, fontSize: 15, color: "#0f172a", display: "flex", alignItems: "center", gap: 6 }}>
             Monthly Operating Expense Statement
-            <InlineTip text="An accounting-style breakdown of every recurring cost for a single chosen month, rolling up to the same overhead total used in Results and the Month-by-Month table above." width={300} />
+            <InlineTip text="An accounting-style, itemized breakdown of every recurring cost for a single chosen month, rolling up to the same overhead total used in Results and the Month-by-Month table above." width={300} />
           </div>
           <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>
-            {row.concurrentSeats} concurrent seat{row.concurrentSeats === 1 ? "" : "s"} · {row.qualifiedTransfers.toLocaleString()} qualified transfers this month
+            {row.concurrentSeats} US closer seat{row.concurrentSeats === 1 ? "" : "s"}{isHybrid ? ` · ${row.overseasSeats} overseas seat${row.overseasSeats === 1 ? "" : "s"}` : ""} · {row.qualifiedTransfers.toLocaleString()} qualified transfers this month
           </div>
         </div>
         <div>
@@ -193,16 +342,45 @@ function ExpenseStatement({ row, month, setMonth, horizon, headcount }: {
         </div>
       </div>
 
-      <div style={{ marginTop: 14, border: "1px solid #e2e8f0", borderRadius: 12, padding: "6px 16px", background: "#fafbfc" }}>
-        {items.map(([label, amount, note]) => (
-          <div key={label} style={ledgerLine}>
+      <div style={{ marginTop: 14, border: "1px solid #e2e8f0", borderRadius: 12, padding: "4px 16px", background: "#fafbfc" }}>
+        <LedgerCategory label="Fixed Monthly Costs" subtotal={cb.fixed} note="Software, office, and team costs — flat regardless of volume">
+          {a.costs.fixedCosts.map((c, i) => <LedgerSubline key={i} label={c.label} amount={c.amount} />)}
+        </LedgerCategory>
+
+        <LedgerCategory label="Per-User Tools" subtotal={cb.perUser} note="Scales with total headcount">
+          {a.costs.perUserCosts.map((c, i) => (
+            <LedgerSubline key={i} label={`${c.label} (${money.format(c.amountPerUser)} × ${a.headcount.totalHeadcount} users)`} amount={c.amountPerUser * a.headcount.totalHeadcount} />
+          ))}
+        </LedgerCategory>
+
+        <LedgerCategory label="Usage Rates (calls, SMS, email)" subtotal={cb.usage} note="Krest Marketing App — scales with call volume">
+          <LedgerSubline label={`Inbound Forwarding (${row.monthCallMinutes.toLocaleString()} min)`} amount={inboundForwardCost} />
+          <LedgerSubline label={`SMS (${Math.round(totalSms).toLocaleString()} segments)`} amount={smsCost} />
+          <LedgerSubline label={`Email (${Math.round(totalEmails).toLocaleString()} sent)`} amount={emailCost} />
+          <LedgerSubline label={`DID Rental (${a.headcount.activeDIDs} numbers)`} amount={didCost} />
+        </LedgerCategory>
+
+        <LedgerCategory label="Trackdrive (call routing)" subtotal={cb.trackdrive}
+          note={`Tier "${row.trackdriveTierKey}" — resolved automatically from ${row.monthCallMinutes.toLocaleString()} call minutes`}>
+          <LedgerSubline label="Inbound + outbound routing, DID rental at this tier" amount={cb.trackdrive} />
+        </LedgerCategory>
+
+        <div style={{ padding: "8px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              <div style={{ fontWeight: 700, color: "#0f172a" }}>{label}</div>
-              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>{note}</div>
+              <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13 }}>Labor</div>
+              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>Seats × scheduled hours × rate, per pool</div>
             </div>
-            <div style={{ fontWeight: 700, color: "#334155", fontVariantNumeric: "tabular-nums" }}>{money.format(amount)}</div>
+            <div style={{ fontWeight: 700, color: "#334155", fontVariantNumeric: "tabular-nums" }}>{money.format(cb.labor)}</div>
           </div>
-        ))}
+          <div style={{ marginTop: 6, paddingLeft: 14, display: "grid", gap: 3 }}>
+            <LedgerSubline label={`US Closers (${row.concurrentSeats} seat${row.concurrentSeats === 1 ? "" : "s"} × ${a.headcount.scheduledHoursPerWeek} hrs/wk × ${money.format(a.costs.laborRatePerHour)}/hr)`} amount={cb.usLabor} />
+            {isHybrid && (
+              <LedgerSubline label={`Overseas Qualifiers (${row.overseasSeats} seat${row.overseasSeats === 1 ? "" : "s"} × ${a.headcount.overseasScheduledHoursPerWeek} hrs/wk × ${money.format(a.headcount.overseasRatePerHour)}/hr)`} amount={cb.overseasLabor} />
+            )}
+          </div>
+        </div>
+
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 12, marginTop: 4, borderTop: `2px solid #0f172a` }}>
           <div style={{ fontWeight: 900, fontSize: 15, color: "#0f172a" }}>GRAND TOTAL — Monthly Overhead</div>
           <div style={{ fontWeight: 900, fontSize: 20, color: FT_GREEN_DARK, fontVariantNumeric: "tabular-nums" }}>{money.format(cb.total)}</div>
@@ -213,6 +391,40 @@ function ExpenseStatement({ row, month, setMonth, horizon, headcount }: {
         "Overhead" column in Month-by-Month Detail below — this panel exists to show <em>what makes up</em> that number.
         Since Labor and usage-based costs scale with call volume and seat count, this total will differ month to month
         as the ramp progresses or a hire comes online — try changing the Statement Month above to see how.
+      </div>
+    </div>
+  );
+}
+
+function StaffingComparison({ usOnlyLabor, hybridLabor, currentMode, horizon }: {
+  usOnlyLabor: number; hybridLabor: number; currentMode: "us_only" | "hybrid"; horizon: number;
+}) {
+  const savings = usOnlyLabor - hybridLabor;
+  return (
+    <div style={{ marginTop: 16, border: "1px solid #e2e8f0", borderRadius: 12, padding: 14, background: "#faf5ff" }}>
+      <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a", marginBottom: 10 }}>
+        Total Labor Cost Comparison — over {horizon} months
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ background: "#fff", border: `1px solid ${currentMode === "us_only" ? FT_BLUE : "#e2e8f0"}`, borderRadius: 10, padding: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>US Only {currentMode === "us_only" && "(current)"}</div>
+          <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 4 }}>{money.format(usOnlyLabor)}</div>
+        </div>
+        <div style={{ background: "#fff", border: `1px solid ${currentMode === "hybrid" ? FT_PURPLE : "#e2e8f0"}`, borderRadius: 10, padding: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>Hybrid (overseas + US) {currentMode === "hybrid" && "(current)"}</div>
+          <div style={{ fontSize: 20, fontWeight: 900, color: "#0f172a", marginTop: 4 }}>{money.format(hybridLabor)}</div>
+        </div>
+      </div>
+      <div style={{ marginTop: 10, textAlign: "center", fontSize: 13, fontWeight: 800, color: savings > 0 ? FT_GREEN_DARK : FT_RED }}>
+        {savings > 0
+          ? `Hybrid saves ${money.format(savings)} in labor cost over ${horizon} months`
+          : savings < 0
+            ? `Hybrid costs ${money.format(-savings)} more over ${horizon} months at these settings`
+            : "No difference at current settings"}
+      </div>
+      <div style={{ fontSize: 11, color: "#64748b", marginTop: 8, lineHeight: 1.6 }}>
+        Both scenarios use the same deal volume, close rate, and hiring policy — only the staffing structure differs.
+        This isolates the true cost impact of the staffing choice itself.
       </div>
     </div>
   );
@@ -282,6 +494,19 @@ export default function FundingTierOperatingModel() {
     avgDebtByBackend: avgDebt,
     assumptions: a,
   }), [horizon, monthlyNewDeals, avgDebt, a]);
+
+  // Staffing comparison: run both modes with everything else held identical,
+  // so the Staffing Model panel can show the true isolated cost of the choice.
+  const usOnlyComparison = useMemo(() => simulatePortfolio({
+    months: horizon, monthlyNewDeals, avgDebtByBackend: avgDebt,
+    assumptions: { ...a, headcount: { ...a.headcount, staffingMode: "us_only" } },
+  }), [horizon, monthlyNewDeals, avgDebt, a]);
+  const hybridComparison = useMemo(() => simulatePortfolio({
+    months: horizon, monthlyNewDeals, avgDebtByBackend: avgDebt,
+    assumptions: { ...a, headcount: { ...a.headcount, staffingMode: "hybrid" } },
+  }), [horizon, monthlyNewDeals, avgDebt, a]);
+  const usOnlyComparisonTotalLabor = usOnlyComparison.rows.reduce((s, r) => s + r.costBreakdown.labor, 0);
+  const hybridComparisonTotalLabor = hybridComparison.rows.reduce((s, r) => s + r.costBreakdown.labor, 0);
 
   const rows = result.rows;
   const final = rows[rows.length - 1];
@@ -376,7 +601,7 @@ export default function FundingTierOperatingModel() {
               {result.hiringEvents.map((h, i) => (
                 <div key={i} style={{ background: "#fff", border: `1px solid ${FT_GREEN}44`, borderRadius: 10, padding: "8px 14px" }}>
                   <span style={{ fontWeight: 800, color: FT_GREEN_DARK }}>Month {h.month}</span>
-                  <span style={{ color: "#64748b", marginLeft: 8 }}>→ {h.seatsAfter} concurrent seats</span>
+                  <span style={{ color: "#64748b", marginLeft: 8 }}>→ {h.seatsAfter} {h.pool === "overseas" ? "overseas" : "US closer"} seats</span>
                 </div>
               ))}
             </div>
@@ -413,21 +638,21 @@ export default function FundingTierOperatingModel() {
           </div>
         </Accordion>
 
+        <RevenueForecastByPartner rows={rows} monthlyNewDeals={monthlyNewDeals} avgDebt={avgDebt} horizon={horizon}
+          statementRow={statementRow} month={clampedStatementMonth} setMonth={setStatementMonth} />
+
         {/* ── 2. BACKEND ASSUMPTIONS ── */}
         <div style={{ fontSize: 13, fontWeight: 800, color: "#334155", marginTop: 4 }}>2 · How each backend pays Funding Tier and its agents</div>
 
         <Accordion title="Level Debt" accent={FT_GREEN}
           tooltip="Debt settlement backend. Pays Funding Tier a one-time 8% revenue share after the client's 2nd deposit clears, and pays agents a graduated commission that scales with company-wide monthly volume.">
           <div style={grid3}>
-            <PctField label="Revenue Share" valuePct={a.levelDebt.revenueSharePct * 100} step={0.5}
-              onChangePct={v => update("levelDebt", { revenueSharePct: v / 100 })}
-              tooltip="% of enrolled debt Level Debt pays Funding Tier as company revenue — 8% per the current affiliate contract." />
-            <NumField label="Revenue Recognized" value={a.levelDebt.revenueRecognizedMonth} suffix="month"
-              onChange={v => update("levelDebt", { revenueRecognizedMonth: v })}
-              tooltip="Which month, counting from the client's first payment, Funding Tier actually receives this revenue as a lump sum (per Level Debt's real payout schedule — after 2 deposits clear)." />
-            <NumField label="Agent Payout" value={a.levelDebt.agentPayoutMonth} suffix="month"
-              onChange={v => update("levelDebt", { agentPayoutMonth: v })}
-              tooltip="Which month the agent's commission on this deal is actually paid out." />
+            <LockedField label="Revenue Share" value={`${(a.levelDebt.revenueSharePct * 100).toFixed(1)}%`}
+              note="8% of enrolled debt, per the Level Debt affiliate agreement." />
+            <LockedField label="Revenue Recognized" value={`Month ${a.levelDebt.revenueRecognizedMonth}`}
+              note="Timed to when Level Debt actually pays Funding Tier — after 2 client deposits clear." />
+            <LockedField label="Agent Payout" value={`Month ${a.levelDebt.agentPayoutMonth}`}
+              note="Set by real payout timing, not a company policy choice." />
           </div>
           <div style={{ marginTop: 14, fontSize: 12, fontWeight: 800, color: "#334155", display: "flex", alignItems: "center", gap: 6 }}>
             Graduated commission tiers (0.75%–2.5%, by monthly enrolled volume)
@@ -469,41 +694,32 @@ export default function FundingTierOperatingModel() {
         <Accordion title="Shield Services (Consumer Shield)" accent={FT_BLUE}
           tooltip="Debt validation backend. Pays Funding Tier a monthly share of each client payment — a high share for the first few months, a lower share for the rest of the program.">
           <div style={grid4}>
-            <NumField label="Servicing Deduction" value={a.consumerShield.servicingDeductionPerPayment} suffix="$/payment"
-              onChange={v => update("consumerShield", { servicingDeductionPerPayment: v })}
-              tooltip="Dollar amount deducted from each client payment before the revenue split, per the Consumer Shield contract." />
-            <NumField label="Front Months" value={a.consumerShield.frontMonths}
-              onChange={v => update("consumerShield", { frontMonths: v })}
-              tooltip="Number of months at the start of the program where Funding Tier keeps a higher share of each payment." />
-            <PctField label="Front Capture Rate" valuePct={a.consumerShield.frontCaptureRate * 100} max={100}
-              onChangePct={v => update("consumerShield", { frontCaptureRate: v / 100 })}
-              tooltip="% of the net payment Funding Tier keeps during the front months (100% per contract)." />
-            <PctField label="Backend Capture Rate" valuePct={a.consumerShield.backendCaptureRate * 100} max={100}
-              onChangePct={v => update("consumerShield", { backendCaptureRate: v / 100 })}
-              tooltip="% of the net payment Funding Tier keeps after the front months end (35% per contract)." />
+            <LockedField label="Servicing Deduction" value={money.format(a.consumerShield.servicingDeductionPerPayment) + "/payment"}
+              note="Per the Consumer Shield Service Marketing Agreement." />
+            <LockedField label="Front Months" value={String(a.consumerShield.frontMonths)}
+              note="Duration of the higher-capture window, per contract." />
+            <LockedField label="Front Capture Rate" value={`${(a.consumerShield.frontCaptureRate * 100).toFixed(0)}%`}
+              note="Funding Tier's share during front months." />
+            <LockedField label="Backend Capture Rate" value={`${(a.consumerShield.backendCaptureRate * 100).toFixed(0)}%`}
+              note="Funding Tier's share after front months." />
           </div>
-          <div style={{ marginTop: 10 }}>
-            <NumField label="Agent Payout Month" value={a.consumerShield.agentPayoutMonth}
-              onChange={v => update("consumerShield", { agentPayoutMonth: v })}
-              tooltip="Which month, after Payment 1 clears, the agent's commission on this deal is paid." />
+          <div style={{ marginTop: 10, maxWidth: 260 }}>
+            <LockedField label="Agent Payout Month" value={`Month ${a.consumerShield.agentPayoutMonth}`}
+              note="Set by real payout timing (by the 15th of the following month, per contract)." />
           </div>
         </Accordion>
 
         <Accordion title="Elite Legal Practice (Legacy Capital)" accent={FT_PURPLE}
           tooltip="Debt resolution backend. Charges a sliding fee (35%-49% of enrolled debt) spread over the program; Funding Tier passes through most of the first 2 payments, then keeps a set % of the rest.">
           <div style={grid4}>
-            <NumField label="Min Monthly Payment" value={a.legacy.minMonthlyPayment} suffix="$"
-              onChange={v => update("legacy", { minMonthlyPayment: v })}
-              tooltip="The minimum monthly client payment Legacy Capital allows. This sets the program length — term = total fee ÷ this floor." />
-            <NumField label="Draft Fee" value={a.legacy.draftFee} suffix="$"
-              onChange={v => update("legacy", { draftFee: v })}
-              tooltip="Per-payment processing fee deducted during the pass-through months (1-2)." />
-            <NumField label="Admin Monthly Fee" value={a.legacy.adminMonthlyFee} suffix="$"
-              onChange={v => update("legacy", { adminMonthlyFee: v })}
-              tooltip="Monthly maintenance + draft fee deducted from month 3 onward, before the tier rate below is applied." />
-            <PctField label="Tier 1 Rate (post pass-through)" valuePct={a.legacy.tier1Rate * 100} max={100}
-              onChangePct={v => update("legacy", { tier1Rate: v / 100 })}
-              tooltip="% of the payment (after the admin fee) that Funding Tier keeps from month 3 onward." />
+            <LockedField label="Min Monthly Payment" value={money.format(a.legacy.minMonthlyPayment)}
+              note="Sets program length: term = total fee ÷ this floor." />
+            <LockedField label="Draft Fee" value={money.format(a.legacy.draftFee)}
+              note="Per-payment fee during months 1-2 pass-through." />
+            <LockedField label="Admin Monthly Fee" value={money.format(a.legacy.adminMonthlyFee)}
+              note="Deducted from month 3 onward, before the tier rate." />
+            <LockedField label="Tier 1 Rate" value={`${(a.legacy.tier1Rate * 100).toFixed(0)}%`}
+              note="Funding Tier's share of payment (after admin fee) from month 3 on." />
           </div>
           <div style={{ marginTop: 14 }}>
             <PctField label="Sliding Fee Rate (35%–49% of enrolled debt)" valuePct={a.legacy.feeRate * 100}
@@ -546,17 +762,14 @@ export default function FundingTierOperatingModel() {
         </Accordion>
 
         <Accordion title="Starting Headcount &amp; Schedule" accent={FT_BLUE}
-          tooltip="The company's staffing starting point — how many people, how many can take calls at once, and what hours the team covers.">
-          <div style={grid4}>
+          tooltip="The company's staffing starting point for the US closer team — how many people, how many can take calls at once, and what hours the team covers. Every agent is assumed to work across all three backends — none are dedicated to a single one.">
+          <div style={grid3}>
             <NumField label="Starting Total Headcount" value={a.headcount.totalHeadcount}
               onChange={v => update("headcount", { totalHeadcount: v })}
-              tooltip="Total company headcount at the start of the simulation (used for per-user software costs like Slack)." />
-            <NumField label="Legacy-Specific Headcount" value={a.headcount.legacyHeadcount}
-              onChange={v => update("headcount", { legacyHeadcount: v })}
-              tooltip="How many of the total headcount work on Elite Legal Practice specifically (used for ELP-only costs like Salesforce)." />
-            <NumField label="Starting Concurrent Seats" value={a.headcount.concurrentSeats}
+              tooltip="Total US company headcount at the start of the simulation — used for every per-user software cost below (Slack, Salesforce, etc.), since all agents work across all backends." />
+            <NumField label="US Closer Seats" value={a.headcount.concurrentSeats}
               onChange={v => update("headcount", { concurrentSeats: v })}
-              tooltip="How many agents can be actively on a call at the same time. This, combined with scheduled hours, sets total call-handling capacity." />
+              tooltip="How many US-based agents can be actively on a call at the same time. In Hybrid mode, this pool only handles the closing portion of each call — see Staffing Model below." />
             <NumField label="Active DIDs (phone numbers)" value={a.headcount.activeDIDs}
               onChange={v => update("headcount", { activeDIDs: v })}
               tooltip="Number of active phone numbers rented, which factors into DID rental costs (both Krest Marketing App and Trackdrive)." />
@@ -564,8 +777,43 @@ export default function FundingTierOperatingModel() {
           <div style={{ marginTop: 10 }}>
             <NumField label="Scheduled Hours / Week" value={a.headcount.scheduledHoursPerWeek} suffix="hrs"
               onChange={v => update("headcount", { scheduledHoursPerWeek: v })}
-              tooltip="Hours per week the team is scheduled to be available to take calls, per seat." />
+              tooltip="Hours per week the US closer team is scheduled to be available, per seat." />
           </div>
+        </Accordion>
+
+        <Accordion title="Staffing Model — US Only vs. Overseas Hybrid" accent={FT_PURPLE} defaultOpen
+          tooltip="Compare an all-US staffing model against a hybrid model where an overseas team handles call qualification (the bulk of average handle time) and warm-hands off to a US closer who spends minimal time finishing the deal.">
+          <div style={{ maxWidth: 340, marginBottom: 16 }}>
+            <label style={labelStyle}>Staffing Mode</label>
+            <select value={a.headcount.staffingMode} onChange={e => update("headcount", { staffingMode: e.target.value as any })} style={inputStyle}>
+              <option value="us_only">US Only — closers handle full calls</option>
+              <option value="hybrid">Hybrid — overseas qualifiers + US closers</option>
+            </select>
+          </div>
+
+          {a.headcount.staffingMode === "hybrid" && (
+            <div style={grid4}>
+              <NumField label="Overseas Seats" value={a.headcount.overseasSeats}
+                onChange={v => update("headcount", { overseasSeats: v })}
+                tooltip="How many overseas agents can be actively on a qualifying call at the same time." />
+              <NumField label="Overseas Hours / Week" value={a.headcount.overseasScheduledHoursPerWeek} suffix="hrs"
+                onChange={v => update("headcount", { overseasScheduledHoursPerWeek: v })}
+                tooltip="Hours per week the overseas team is scheduled to be available, per seat." />
+              <NumField label="Overseas Rate" value={a.headcount.overseasRatePerHour} suffix="$/hr"
+                onChange={v => update("headcount", { overseasRatePerHour: v })}
+                tooltip="Blended hourly cost per overseas agent — illustrative estimate, adjust to your actual BPO/shored-services rate." />
+              <PctField label="Overseas Qualifying Share" valuePct={a.headcount.overseasQualifyingSharePct} max={95}
+                onChangePct={v => update("headcount", { overseasQualifyingSharePct: v })}
+                tooltip="% of the average handle time spent by the overseas qualifier before a warm handoff to the US closer. The remaining % is what the US closer's time — and required seat count — is based on." />
+            </div>
+          )}
+
+          <StaffingComparison
+            usOnlyLabor={usOnlyComparisonTotalLabor}
+            hybridLabor={hybridComparisonTotalLabor}
+            currentMode={a.headcount.staffingMode}
+            horizon={horizon}
+          />
         </Accordion>
 
         {/* ── 4. COST STACK ── */}
@@ -589,7 +837,7 @@ export default function FundingTierOperatingModel() {
           <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", margin: "16px 0 8px" }}>Per-User Tools</div>
           <div style={grid3}>
             {a.costs.perUserCosts.map((c, i) => (
-              <NumField key={i} label={`${c.label} (${c.appliesTo === "all" ? "company-wide" : "ELP only"})`} value={c.amountPerUser} suffix="$/user/mo"
+              <NumField key={i} label={c.label} value={c.amountPerUser} suffix="$/user/mo"
                 tooltip="Monthly cost that scales directly with headcount — each additional hire adds this cost."
                 onChange={v => {
                   const arr = [...a.costs.perUserCosts]; arr[i] = { ...arr[i], amountPerUser: v };
@@ -616,6 +864,12 @@ export default function FundingTierOperatingModel() {
           <div style={{ fontSize: 12, fontWeight: 800, color: "#334155", margin: "16px 0 8px", display: "flex", alignItems: "center", gap: 6 }}>
             Trackdrive (call routing)
             <InlineTip text="Trackdrive's per-minute call-routing rate gets cheaper automatically as monthly call volume grows. This table shows the rate at each spend tier — the model picks the right tier for you each month based on simulated volume." width={300} />
+          </div>
+          <div style={{ fontSize: 11, color: "#0c4a6e", background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "8px 11px", marginBottom: 8, lineHeight: 1.6 }}>
+            ℹ You don't pick a tier — the model resolves it automatically each month from simulated call volume, which is
+            itself driven by how many deals are submitted (not by headcount). More deals → more calls → cheaper per-minute
+            rate. This table only sets the <em>rate at each tier</em>; see the Monthly Operating Expense Statement below
+            to check which tier a given month actually landed in.
           </div>
           <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 10 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -673,7 +927,7 @@ export default function FundingTierOperatingModel() {
         </Accordion>
 
         <ExpenseStatement row={statementRow} month={clampedStatementMonth} setMonth={setStatementMonth} horizon={horizon}
-          headcount={{ totalHeadcount: a.headcount.totalHeadcount, concurrentSeats: statementRow.concurrentSeats }} />
+          assumptions={a} />
 
         {/* ── 5. RISK & GROWTH POLICY ── */}
         <div style={{ fontSize: 13, fontWeight: 800, color: "#334155", marginTop: 4 }}>5 · How the model manages risk and decides when to grow</div>
