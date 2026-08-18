@@ -34,7 +34,7 @@ export interface SurvivalCurve {
 }
 
 export interface FixedCost { label: string; amount: number; }
-export interface PerUserCost { label: string; amountPerUser: number; appliesTo: "all" | "LEGACY"; }
+export interface PerUserCost { label: string; amountPerUser: number; }
 export interface UsageRates {
   inboundForwardPerMin: number;
   smsPerSegment: number;
@@ -101,10 +101,14 @@ export interface Assumptions {
   };
   headcount: {
     totalHeadcount: number;
-    legacyHeadcount: number;
     scheduledHoursPerWeek: number;
     concurrentSeats: number;
     activeDIDs: number;
+    staffingMode: "us_only" | "hybrid";
+    overseasSeats: number;
+    overseasScheduledHoursPerWeek: number;
+    overseasRatePerHour: number;
+    overseasQualifyingSharePct: number;
   };
   reservePolicy: {
     targetMonthsOverhead: number;
@@ -184,10 +188,13 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
     fixedCosts: [
       { label: "KM App CRM", amount: 497 },
       { label: "Forth", amount: 100 },
+      { label: "Office Internet", amount: 150 },
+      { label: "Office Utilities", amount: 300 },
+      { label: "Team Lunch (weekly) + Water/Coffee", amount: 400 },
     ],
     perUserCosts: [
-      { label: "Slack", amountPerUser: 12, appliesTo: "all" },
-      { label: "Salesforce (Elite Legal Practice)", amountPerUser: 100, appliesTo: "LEGACY" },
+      { label: "Slack", amountPerUser: 12 },
+      { label: "Salesforce (Elite Legal Practice)", amountPerUser: 100 },
     ],
     usageRates: {
       inboundForwardPerMin: 0.02,
@@ -216,10 +223,14 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
   },
   headcount: {
     totalHeadcount: 2,
-    legacyHeadcount: 1,
     scheduledHoursPerWeek: 40,
     concurrentSeats: 2,
     activeDIDs: 4,
+    staffingMode: "us_only",
+    overseasSeats: 0,
+    overseasScheduledHoursPerWeek: 40,
+    overseasRatePerHour: 7,
+    overseasQualifyingSharePct: 70,
   },
   reservePolicy: {
     targetMonthsOverhead: 2,
@@ -369,6 +380,8 @@ export interface MonthlyCosts {
   perUser: number;
   usage: number;
   trackdrive: number;
+  usLabor: number;
+  overseasLabor: number;
   labor: number;
   total: number;
 }
@@ -383,10 +396,7 @@ export function calculateMonthlyCosts(
 
   const fixed = cfg.fixedCosts.reduce((s, c) => s + c.amount, 0);
 
-  const perUser = cfg.perUserCosts.reduce((s, c) => {
-    const headcount = c.appliesTo === "all" ? hc.totalHeadcount : hc.legacyHeadcount;
-    return s + c.amountPerUser * headcount;
-  }, 0);
+  const perUser = cfg.perUserCosts.reduce((s, c) => s + c.amountPerUser * hc.totalHeadcount, 0);
 
   const usage =
     totalCallMinutes * cfg.usageRates.inboundForwardPerMin +
@@ -400,14 +410,24 @@ export function calculateMonthlyCosts(
     totalCallMinutes * cfg.trackdriveOutboundRate +
     hc.activeDIDs * tdTier.did;
 
-  const laborHours = hc.scheduledHoursPerWeek * hc.concurrentSeats * (52 / 12);
-  const labor = laborHours * cfg.laborRatePerHour;
+  const usLaborHours = hc.scheduledHoursPerWeek * hc.concurrentSeats * (52 / 12);
+  const usLabor = usLaborHours * cfg.laborRatePerHour;
+
+  let overseasLabor = 0;
+  if (hc.staffingMode === "hybrid") {
+    const overseasLaborHours = hc.overseasScheduledHoursPerWeek * hc.overseasSeats * (52 / 12);
+    overseasLabor = overseasLaborHours * hc.overseasRatePerHour;
+  }
+
+  const labor = usLabor + overseasLabor;
 
   return {
     fixed: round2(fixed),
     perUser: round2(perUser),
     usage: round2(usage),
     trackdrive: round2(trackdrive),
+    usLabor: round2(usLabor),
+    overseasLabor: round2(overseasLabor),
     labor: round2(labor),
     total: round2(fixed + perUser + usage + trackdrive + labor),
   };
@@ -425,22 +445,30 @@ export interface MonthRow {
   qualifiedTransfers: number;
   levelCommissionRate: number;
   revenue: number;
+  revenueByBackend: Record<BackendKey, number>;
   commission: number;
+  commissionByBackend: Record<BackendKey, number>;
+  activeDealsByBackend: Record<BackendKey, number>;
   transferCost: number;
   overhead: number;
   costBreakdown: MonthlyCosts;
+  trackdriveTierKey: string;
+  monthCallMinutes: number;
   netCashFlow: number;
   cashPosition: number;
   reserveTarget: number;
   distributable: number;
   reserveMet: boolean;
   utilizationPct: number;
+  closerUtilizationPct: number;
+  overseasUtilizationPct: number;
   concurrentSeats: number;
+  overseasSeats: number;
   safeToHire: boolean;
   hireScheduledFor: number | null;
 }
 
-export interface HiringEvent { month: number; seatsAfter: number; }
+export interface HiringEvent { month: number; pool: "closer" | "overseas"; seatsAfter: number; }
 
 export interface PortfolioResult { rows: MonthRow[]; hiringEvents: HiringEvent[]; }
 
@@ -471,18 +499,25 @@ export function simulatePortfolio({
   const rows: MonthRow[] = [];
   let cashPosition = 0;
   let trailingCommission12mo: number[] = [];
-  let utilizationHistory: number[] = [];
+  let closerUtilizationHistory: number[] = [];
+  let overseasUtilizationHistory: number[] = [];
 
   let currentSeats = a.headcount.concurrentSeats;
+  let currentOverseasSeats = a.headcount.overseasSeats;
   let currentHeadcount = a.headcount.totalHeadcount;
-  let pendingHire: { effectiveMonth: number } | null = null;
+  let pendingHire: { effectiveMonth: number; pool: "closer" | "overseas" } | null = null;
   const hiringEvents: HiringEvent[] = [];
 
   for (let t = 1; t <= months; t++) {
     if (pendingHire && t >= pendingHire.effectiveMonth) {
-      currentSeats += a.hiringPolicy.seatsAddedPerHire;
-      currentHeadcount += a.hiringPolicy.seatsAddedPerHire;
-      hiringEvents.push({ month: t, seatsAfter: currentSeats });
+      if (pendingHire.pool === "closer") {
+        currentSeats += a.hiringPolicy.seatsAddedPerHire;
+        currentHeadcount += a.hiringPolicy.seatsAddedPerHire;
+        hiringEvents.push({ month: t, pool: "closer", seatsAfter: currentSeats });
+      } else {
+        currentOverseasSeats += a.hiringPolicy.seatsAddedPerHire;
+        hiringEvents.push({ month: t, pool: "overseas", seatsAfter: currentOverseasSeats });
+      }
       pendingHire = null;
     }
 
@@ -494,6 +529,9 @@ export function simulatePortfolio({
     });
 
     let monthRevenue = 0, monthCommission = 0, monthTransferCost = 0, monthCallMinutes = 0, monthQualifiedTransfers = 0;
+    const monthRevenueByBackend: Record<BackendKey, number> = { LEVEL: 0, CS: 0, LEGACY: 0 };
+    const monthCommissionByBackend: Record<BackendKey, number> = { LEVEL: 0, CS: 0, LEGACY: 0 };
+    const monthActiveDealsByBackend: Record<BackendKey, number> = { LEVEL: 0, CS: 0, LEGACY: 0 };
     const levelEnrolledVolumeThisMonth = newDeals.LEVEL * avgDebtByBackend.LEVEL;
     const levelRate = resolveLevelCommissionRate(levelEnrolledVolumeThisMonth, a.levelDebt.commissionTiers);
 
@@ -511,12 +549,15 @@ export function simulatePortfolio({
       const backend = BACKENDS[c.backendKey];
       const survival = survivalArrays[c.backendKey][age] ?? 0;
       const activeDeals = survival * c.dealCount;
+      monthActiveDealsByBackend[c.backendKey] += activeDeals;
 
       let revPerActive = 0;
       if (c.backendKey === "LEGACY") revPerActive = LEGACY_CAPITAL.companyRevenueForMonth(c.avgDebt, a.legacy.feeRate, legacyTerm, age, a);
       else if (c.backendKey === "CS") revPerActive = CONSUMER_SHIELD.companyRevenueForMonth(c.avgDebt, age, a);
       else revPerActive = LEVEL_DEBT.companyRevenueForMonth(c.avgDebt, age, a);
-      monthRevenue += revPerActive * activeDeals;
+      const revThisCohort = revPerActive * activeDeals;
+      monthRevenue += revThisCohort;
+      monthRevenueByBackend[c.backendKey] += revThisCohort;
 
       const payoutMonth = backend.agentPayoutMonth(a);
       if (age === payoutMonth) {
@@ -525,11 +566,16 @@ export function simulatePortfolio({
         if (c.backendKey === "LEVEL") perDealComm = levelDebtCommission(c.avgDebt, levelEnrolledVolumeThisMonth, a).amount;
         else if (c.backendKey === "LEGACY") perDealComm = LEGACY_CAPITAL.agentCommission(c.avgDebt, a.legacy.feeRate, a);
         else perDealComm = CONSUMER_SHIELD.agentCommission(c.avgDebt, a);
-        monthCommission += survivingAtPayout * perDealComm;
+        const commThisCohort = survivingAtPayout * perDealComm;
+        monthCommission += commThisCohort;
+        monthCommissionByBackend[c.backendKey] += commThisCohort;
       }
     }
 
-    const dynamicAssumptions: Assumptions = { ...a, headcount: { ...a.headcount, concurrentSeats: currentSeats, totalHeadcount: currentHeadcount } };
+    const dynamicAssumptions: Assumptions = {
+      ...a,
+      headcount: { ...a.headcount, concurrentSeats: currentSeats, overseasSeats: currentOverseasSeats, totalHeadcount: currentHeadcount },
+    };
     const trackdriveTierKey = resolveTrackdriveTier(tier => monthCallMinutes * tier.inbound, dynamicAssumptions).tier.key;
     const costs = calculateMonthlyCosts({
       totalCallMinutes: monthCallMinutes,
@@ -549,19 +595,44 @@ export function simulatePortfolio({
     const distributable = Math.max(0, cashPosition - reserveTarget);
     const reserveMet = cashPosition >= reserveTarget;
 
-    const capacityMinutes = currentSeats * a.headcount.scheduledHoursPerWeek * 60 * (52 / 12);
-    const utilization = capacityMinutes > 0 ? monthCallMinutes / capacityMinutes : 0;
-    utilizationHistory.push(utilization);
-    if (utilizationHistory.length > a.hiringPolicy.sustainMonths) utilizationHistory.shift();
-    const sustainedHighUtilization = utilizationHistory.length === a.hiringPolicy.sustainMonths &&
-      utilizationHistory.every(u => u >= a.hiringPolicy.utilizationThreshold);
+    // Split call time between the overseas qualifier and the US closer in
+    // hybrid mode. In us_only mode the closer handles the full call, exactly
+    // as before — this keeps existing behavior unchanged unless hybrid is on.
+    const isHybrid = a.headcount.staffingMode === "hybrid";
+    const overseasShare = isHybrid ? a.headcount.overseasQualifyingSharePct / 100 : 0;
+    const closerMinutesNeeded = monthQualifiedTransfers * a.operations.avgCallMinutesPerDeal * (1 - overseasShare);
+    const overseasMinutesNeeded = monthQualifiedTransfers * a.operations.avgCallMinutesPerDeal * overseasShare;
+
+    const closerCapacityMinutes = currentSeats * a.headcount.scheduledHoursPerWeek * 60 * (52 / 12);
+    const overseasCapacityMinutes = currentOverseasSeats * a.headcount.overseasScheduledHoursPerWeek * 60 * (52 / 12);
+    const closerUtilization = closerCapacityMinutes > 0 ? closerMinutesNeeded / closerCapacityMinutes : 0;
+    const overseasUtilization = isHybrid && overseasCapacityMinutes > 0 ? overseasMinutesNeeded / overseasCapacityMinutes : 0;
+
+    closerUtilizationHistory.push(closerUtilization);
+    if (closerUtilizationHistory.length > a.hiringPolicy.sustainMonths) closerUtilizationHistory.shift();
+    const closerSustained = closerUtilizationHistory.length === a.hiringPolicy.sustainMonths &&
+      closerUtilizationHistory.every(u => u >= a.hiringPolicy.utilizationThreshold);
+
+    overseasUtilizationHistory.push(overseasUtilization);
+    if (overseasUtilizationHistory.length > a.hiringPolicy.sustainMonths) overseasUtilizationHistory.shift();
+    const overseasSustained = isHybrid && overseasUtilizationHistory.length === a.hiringPolicy.sustainMonths &&
+      overseasUtilizationHistory.every(u => u >= a.hiringPolicy.utilizationThreshold);
 
     const atSeatCap = a.hiringPolicy.maxSeats != null && currentSeats >= a.hiringPolicy.maxSeats;
-    const safeToHire = reserveMet && sustainedHighUtilization && !pendingHire && !atSeatCap;
+    const canHire = reserveMet && !pendingHire && !atSeatCap;
 
-    if (safeToHire) {
-      pendingHire = { effectiveMonth: t + a.hiringPolicy.hireLagMonths };
-      utilizationHistory = [];
+    let safeToHire = false;
+    if (canHire) {
+      // If both pools are stretched at once, hire whichever is more strained.
+      if (closerSustained && (!overseasSustained || closerUtilization >= overseasUtilization)) {
+        pendingHire = { effectiveMonth: t + a.hiringPolicy.hireLagMonths, pool: "closer" };
+        closerUtilizationHistory = [];
+        safeToHire = true;
+      } else if (overseasSustained) {
+        pendingHire = { effectiveMonth: t + a.hiringPolicy.hireLagMonths, pool: "overseas" };
+        overseasUtilizationHistory = [];
+        safeToHire = true;
+      }
     }
 
     rows.push({
@@ -570,17 +641,37 @@ export function simulatePortfolio({
       qualifiedTransfers: round2(monthQualifiedTransfers),
       levelCommissionRate: round2(levelRate * 100),
       revenue: round2(monthRevenue),
+      revenueByBackend: {
+        LEVEL: round2(monthRevenueByBackend.LEVEL),
+        CS: round2(monthRevenueByBackend.CS),
+        LEGACY: round2(monthRevenueByBackend.LEGACY),
+      },
       commission: round2(monthCommission),
+      commissionByBackend: {
+        LEVEL: round2(monthCommissionByBackend.LEVEL),
+        CS: round2(monthCommissionByBackend.CS),
+        LEGACY: round2(monthCommissionByBackend.LEGACY),
+      },
+      activeDealsByBackend: {
+        LEVEL: round2(monthActiveDealsByBackend.LEVEL),
+        CS: round2(monthActiveDealsByBackend.CS),
+        LEGACY: round2(monthActiveDealsByBackend.LEGACY),
+      },
       transferCost: round2(monthTransferCost),
       overhead: costs.total,
       costBreakdown: costs,
+      trackdriveTierKey,
+      monthCallMinutes: round2(monthCallMinutes),
       netCashFlow: round2(netCashFlow),
       cashPosition: round2(cashPosition),
       reserveTarget: round2(reserveTarget),
       distributable: round2(distributable),
       reserveMet,
-      utilizationPct: round2(utilization * 100),
+      utilizationPct: round2(Math.max(closerUtilization, overseasUtilization) * 100),
+      closerUtilizationPct: round2(closerUtilization * 100),
+      overseasUtilizationPct: round2(overseasUtilization * 100),
       concurrentSeats: currentSeats,
+      overseasSeats: currentOverseasSeats,
       safeToHire,
       hireScheduledFor: pendingHire ? pendingHire.effectiveMonth : null,
     });
