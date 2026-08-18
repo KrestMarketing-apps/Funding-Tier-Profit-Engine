@@ -428,6 +428,7 @@ export interface MonthRow {
   commission: number;
   transferCost: number;
   overhead: number;
+  costBreakdown: MonthlyCosts;
   netCashFlow: number;
   cashPosition: number;
   reserveTarget: number;
@@ -572,6 +573,7 @@ export function simulatePortfolio({
       commission: round2(monthCommission),
       transferCost: round2(monthTransferCost),
       overhead: costs.total,
+      costBreakdown: costs,
       netCashFlow: round2(netCashFlow),
       cashPosition: round2(cashPosition),
       reserveTarget: round2(reserveTarget),
