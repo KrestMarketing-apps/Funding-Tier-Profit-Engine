@@ -81,7 +81,7 @@ function Accordion({ title, subtitle, defaultOpen = false, children, accent = FT
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, overflow: open ? "visible" : "hidden", background: "#fff", borderLeft: `4px solid ${accent}` }}>
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 16, background: "#fff", borderLeft: `4px solid ${accent}` }}>
       <button onClick={() => setOpen(o => !o)} style={{
         width: "100%", textAlign: "left", background: "#fff", border: "none",
         padding: "13px 18px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -154,7 +154,7 @@ const GLOSSARY: [string, string][] = [
   ["Deal Volume Ramp", "Deal count scales linearly from ~1/month up to the full-volume target over the Ramp Period. Every downstream number — revenue, cost, staffing — is driven off this curve."],
   ["Close Rate & Qualified Transfers", "A 'qualified transfer' is a call that clears the pre-screening buffer a lead vendor guarantees. Close Rate is the % of those that actually convert into a signed deal. To hit N signed deals, the model buys N ÷ Close Rate qualified transfers — and pays the transfer cost, and burns agent time, on all of them, not just the ones that close."],
   ["Average Handle Time (AHT)", "How long a full enrollment call runs, whether or not it closes. Debt-relief enrollment calls run materially longer than a typical sales call (45-90 min) because of the financial disclosure and documentation involved — this drives both labor cost and Trackdrive/usage cost per call."],
-  ["Backend Revenue Recognition", "Each backend pays Funding Tier on a different real schedule, not at the moment a deal is signed: Level Debt pays a lump sum after 2 client deposits clear; Consumer Shield pays monthly with a front-loaded then discounted split; Legacy passes through the first 2 payments then keeps a set % after. The model times revenue to match each contract, not to deal-signing date."],
+  ["Backend Revenue Recognition", "Each backend pays Funding Tier on a different real schedule, not at the moment a deal is signed: Level Debt pays on an advance-fee model, month 2 — and agent commission is passed through on that same month 2 timing; Consumer Shield pays monthly with a front-loaded then discounted split; Legacy passes through the first 2 payments then keeps a set % after. The model times revenue to match each contract, not to deal-signing date."],
   ["Level Debt — Graduated Commission", "Agent commission on Level Debt deals isn't flat — it scales up (0.75% to 2.5%) with how much total Level Debt volume the company enrolls in that same month. More company-wide volume unlocks a better rate for everyone that month."],
   ["Consumer Shield — Front vs. Backend Capture", "Consumer Shield's revenue share to Funding Tier is higher for the first few months of a program (the 'front' rate) and drops to a lower ongoing rate after (the 'backend' rate). This mirrors the real contract's incentive to capture more value early, when program dropout risk is highest."],
   ["Legacy — Sliding Fee Rate", "Legacy's total program fee (35%-49% of enrolled debt) is negotiable per deal. Raising it mostly extends the program's length rather than raising the client's monthly payment much, since the term auto-solves to stay near the minimum monthly payment floor."],
@@ -315,8 +315,9 @@ function ExpenseStatement({ row, month, setMonth, horizon, assumptions }: {
   const a = assumptions;
   const isHybrid = a.headcount.staffingMode === "hybrid";
 
-  const totalSms = row.monthCallMinutes * a.operations.smsPerCallMultiplier;
-  const totalEmails = row.monthCallMinutes * a.operations.emailPerCallMultiplier;
+  const totalSms = row.qualifiedTransfers * a.operations.smsPerTransfer;
+  const rawTotalEmails = row.qualifiedTransfers * a.operations.emailPerTransfer;
+  const totalEmails = a.operations.emailMonthlyCap != null ? Math.min(rawTotalEmails, a.operations.emailMonthlyCap) : rawTotalEmails;
   const inboundForwardCost = round2(row.monthCallMinutes * a.costs.usageRates.inboundForwardPerMin);
   const smsCost = round2(totalSms * a.costs.usageRates.smsPerSegment);
   const emailCost = round2((totalEmails / 1000) * a.costs.usageRates.emailPer1000);
@@ -374,7 +375,7 @@ function ExpenseStatement({ row, month, setMonth, horizon, assumptions }: {
             <div style={{ fontWeight: 700, color: "#334155", fontVariantNumeric: "tabular-nums" }}>{money.format(cb.labor)}</div>
           </div>
           <div style={{ marginTop: 6, paddingLeft: 14, display: "grid", gap: 3 }}>
-            <LedgerSubline label={`US Closers (${row.concurrentSeats} seat${row.concurrentSeats === 1 ? "" : "s"} × ${a.headcount.scheduledHoursPerWeek} hrs/wk × ${money.format(a.costs.laborRatePerHour)}/hr)`} amount={cb.usLabor} />
+            <LedgerSubline label={`US Closers (${row.concurrentSeats} seat${row.concurrentSeats === 1 ? "" : "s"} × ${a.headcount.scheduledHoursPerWeek} hrs/wk × ${money.format(a.costs.laborRatePerHour)}/hr${a.headcount.scheduledHoursPerWeek > a.headcount.overtimeThresholdHoursPerWeek ? `, incl. ${a.headcount.overtimeMultiplier}× OT beyond ${a.headcount.overtimeThresholdHoursPerWeek}hrs` : ""})`} amount={cb.usLabor} />
             {isHybrid && (
               <LedgerSubline label={`Overseas Qualifiers (${row.overseasSeats} seat${row.overseasSeats === 1 ? "" : "s"} × ${a.headcount.overseasScheduledHoursPerWeek} hrs/wk × ${money.format(a.headcount.overseasRatePerHour)}/hr)`} amount={cb.overseasLabor} />
             )}
@@ -650,7 +651,7 @@ export default function FundingTierOperatingModel() {
             <LockedField label="Revenue Share" value={`${(a.levelDebt.revenueSharePct * 100).toFixed(1)}%`}
               note="8% of enrolled debt, per the Level Debt affiliate agreement." />
             <LockedField label="Revenue Recognized" value={`Month ${a.levelDebt.revenueRecognizedMonth}`}
-              note="Timed to when Level Debt actually pays Funding Tier — after 2 client deposits clear." />
+              note="Timed to when Level Debt actually pays Funding Tier — advance-fee model, paid month 2." />
             <LockedField label="Agent Payout" value={`Month ${a.levelDebt.agentPayoutMonth}`}
               note="Set by real payout timing, not a company policy choice." />
           </div>
@@ -737,27 +738,59 @@ export default function FundingTierOperatingModel() {
 
         <Accordion title="Operations" accent={FT_GREEN}
           tooltip="How raw call transfers convert into signed deals, and how long that takes per call — the link between marketing spend and agent workload."
-          subtitle="Close rate, average handle time, transfer buffer">
-          <div style={grid4}>
+          subtitle="Close rate, average handle time, blended transfer mix">
+          <div style={grid3}>
             <PctField label="Close Rate" valuePct={a.operations.closeRate * 100} max={100}
               onChangePct={v => update("operations", { closeRate: v / 100 })}
               tooltip="% of qualified transfers (calls that clear the buffer) that actually convert into a signed, enrolled deal. Determines how many transfers you need to buy to hit your deal targets." />
             <NumField label="Avg Handle Time" value={a.operations.avgCallMinutesPerDeal} suffix="min/call"
               onChange={v => update("operations", { avgCallMinutesPerDeal: v })}
               tooltip="Average length of a full enrollment call, whether or not it results in a signed deal. Debt-relief enrollment calls typically run 45-90 minutes." />
-            <div>
-              <label style={labelStyle}>Transfer Buffer<InlineTip text="The pre-qualification window a lead vendor guarantees before transferring a call — longer buffers cost more per transfer but should yield better-qualified calls." /></label>
-              <select value={a.operations.transferBuffer} onChange={e => update("operations", { transferBuffer: e.target.value as any })} style={inputStyle}>
-                <option value="buffer1min">1-minute buffer ({money.format(a.costs.transferCost.buffer1min)})</option>
-                <option value="buffer2min">2-minute buffer ({money.format(a.costs.transferCost.buffer2min)})</option>
-                <option value="buffer5min">5-minute buffer ({money.format(a.costs.transferCost.buffer5min)})</option>
-              </select>
-            </div>
             <div />
           </div>
+
+          <div style={{ marginTop: 16, fontSize: 12, fontWeight: 800, color: "#334155", display: "flex", alignItems: "center", gap: 6 }}>
+            Monthly Cost of Call Transfers — blended mix across all 3 buffers
+            <InlineTip text="Rather than picking one buffer length, real call volume is split across all three transfer tiers. Set the % mix below — it should add to 100%. Only qualified (buffer-cleared) transfers are billed; unqualified attempts never reach this stage." width={300} />
+          </div>
+          <div style={grid3}>
+            <NumField label={`1-Minute Buffer (${money.format(a.costs.transferCost.buffer1min)}/transfer)`} value={a.operations.transferMix.buffer1min} suffix="%" step={1}
+              onChange={v => update("operations", { transferMix: { ...a.operations.transferMix, buffer1min: v } })} />
+            <NumField label={`2-Minute Buffer (${money.format(a.costs.transferCost.buffer2min)}/transfer)`} value={a.operations.transferMix.buffer2min} suffix="%" step={1}
+              onChange={v => update("operations", { transferMix: { ...a.operations.transferMix, buffer2min: v } })} />
+            <NumField label={`5-Minute Buffer (${money.format(a.costs.transferCost.buffer5min)}/transfer)`} value={a.operations.transferMix.buffer5min} suffix="%" step={1}
+              onChange={v => update("operations", { transferMix: { ...a.operations.transferMix, buffer5min: v } })} />
+          </div>
+          {(() => {
+            const mix = a.operations.transferMix;
+            const sum = mix.buffer1min + mix.buffer2min + mix.buffer5min;
+            const blended = (mix.buffer1min / 100) * a.costs.transferCost.buffer1min
+              + (mix.buffer2min / 100) * a.costs.transferCost.buffer2min
+              + (mix.buffer5min / 100) * a.costs.transferCost.buffer5min;
+            return (
+              <div style={{ fontSize: 12, marginTop: 8, color: Math.abs(sum - 100) > 0.5 ? FT_RED : "#64748b", fontWeight: Math.abs(sum - 100) > 0.5 ? 800 : 500 }}>
+                Mix totals {sum.toFixed(1)}% {Math.abs(sum - 100) > 0.5 && "— should sum to 100%"} · Blended cost per qualified transfer: <strong>{money.format(blended)}</strong>
+              </div>
+            );
+          })()}
+
+          <div style={{ marginTop: 16, fontSize: 12, fontWeight: 800, color: "#334155" }}>SMS &amp; Email Volume</div>
+          <div style={grid3}>
+            <NumField label="SMS per Transfer" value={a.operations.smsPerTransfer} suffix="segments"
+              onChange={v => update("operations", { smsPerTransfer: v })}
+              tooltip="Number of SMS segments sent per qualified transfer (not per call minute) — this drives the SMS line in Krest Marketing App Usage Rates." />
+            <NumField label="Email per Transfer" value={a.operations.emailPerTransfer} suffix="emails"
+              onChange={v => update("operations", { emailPerTransfer: v })}
+              tooltip="Number of emails sent per qualified transfer (not per call minute)." />
+            <NumField label="Email Monthly Cap" value={a.operations.emailMonthlyCap ?? 0} suffix="emails, 0 = no cap"
+              onChange={v => update("operations", { emailMonthlyCap: v > 0 ? v : null })}
+              tooltip="Hard ceiling on total emails sent per month, regardless of call volume — set to a realistic operating limit." />
+          </div>
+
           <div style={{ fontSize: 11, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 11px", marginTop: 12, lineHeight: 1.6 }}>
             ⚠ Close rate applies to every qualified transfer, not just successful enrollments — agents spend time on
-            calls that don't close too, which this model accounts for in labor and Trackdrive cost.
+            calls that don't close too, which this model accounts for in labor and Trackdrive cost. SMS and email
+            volume now scale per transfer, not per call-minute, and email has a hard monthly cap.
           </div>
         </Accordion>
 
@@ -777,7 +810,17 @@ export default function FundingTierOperatingModel() {
           <div style={{ marginTop: 10 }}>
             <NumField label="Scheduled Hours / Week" value={a.headcount.scheduledHoursPerWeek} suffix="hrs"
               onChange={v => update("headcount", { scheduledHoursPerWeek: v })}
-              tooltip="Hours per week the US closer team is scheduled to be available, per seat." />
+              tooltip="Hours per week the US closer team is scheduled to be available, per seat. For a 6am-7pm PST operating window, that's 13 hrs/day — multiply by however many days/week you actually run." />
+          </div>
+          <div style={{ marginTop: 14, fontSize: 12, fontWeight: 800, color: "#334155" }}>Overtime — US Closers Only</div>
+          <div style={grid3}>
+            <NumField label="Overtime Threshold" value={a.headcount.overtimeThresholdHoursPerWeek} suffix="hrs/wk"
+              onChange={v => update("headcount", { overtimeThresholdHoursPerWeek: v })}
+              tooltip="Hours per week a US closer can work before overtime pay kicks in — standard is 40. Hours scheduled beyond this are paid at the overtime multiplier. Does not apply to overseas reps." />
+            <NumField label="Overtime Multiplier" value={a.headcount.overtimeMultiplier} suffix="×" step={0.1}
+              onChange={v => update("headcount", { overtimeMultiplier: v })}
+              tooltip="Pay multiplier applied to US closer hours beyond the overtime threshold — 1.5× is standard." />
+            <div />
           </div>
         </Accordion>
 
