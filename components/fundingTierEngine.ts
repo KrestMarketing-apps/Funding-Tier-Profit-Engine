@@ -95,15 +95,18 @@ export interface Assumptions {
   operations: {
     closeRate: number;
     avgCallMinutesPerDeal: number;
-    transferBuffer: TransferBufferKey;
-    smsPerCallMultiplier: number;
-    emailPerCallMultiplier: number;
+    transferMix: Record<TransferBufferKey, number>; // % split across buffer tiers, should sum to 100
+    smsPerTransfer: number;
+    emailPerTransfer: number;
+    emailMonthlyCap: number | null;
   };
   headcount: {
     totalHeadcount: number;
     scheduledHoursPerWeek: number;
     concurrentSeats: number;
     activeDIDs: number;
+    overtimeThresholdHoursPerWeek: number;
+    overtimeMultiplier: number;
     staffingMode: "us_only" | "hybrid";
     overseasSeats: number;
     overseasScheduledHoursPerWeek: number;
@@ -137,8 +140,8 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
   levelDebt: {
     minDebt: 7000,
     revenueSharePct: 0.08,
-    revenueRecognizedMonth: 3,
-    agentPayoutMonth: 3,
+    revenueRecognizedMonth: 2,
+    agentPayoutMonth: 2,
     commissionTiers: [
       { threshold: 0, rate: 0.0075 },
       { threshold: 500000, rate: 0.0100 },
@@ -187,13 +190,13 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
   costs: {
     fixedCosts: [
       { label: "KM App CRM", amount: 497 },
-      { label: "Forth", amount: 100 },
       { label: "Office Internet", amount: 150 },
       { label: "Office Utilities", amount: 300 },
       { label: "Team Lunch (weekly) + Water/Coffee", amount: 400 },
     ],
     perUserCosts: [
       { label: "Slack", amountPerUser: 12 },
+      { label: "Forth", amountPerUser: 100 },
       { label: "Salesforce (Elite Legal Practice)", amountPerUser: 100 },
     ],
     usageRates: {
@@ -217,23 +220,27 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
   operations: {
     closeRate: 0.15,
     avgCallMinutesPerDeal: 65,
-    transferBuffer: "buffer2min",
-    smsPerCallMultiplier: 2,
-    emailPerCallMultiplier: 3,
+    // Split evenly across all three buffer tiers, mixing acquisition cost.
+    transferMix: { buffer1min: 33.34, buffer2min: 33.33, buffer5min: 33.33 },
+    smsPerTransfer: 2,
+    emailPerTransfer: 3,
+    emailMonthlyCap: 5000,
   },
   headcount: {
     totalHeadcount: 2,
     scheduledHoursPerWeek: 40,
     concurrentSeats: 2,
     activeDIDs: 4,
+    overtimeThresholdHoursPerWeek: 40,
+    overtimeMultiplier: 1.5,
     staffingMode: "us_only",
     overseasSeats: 0,
     overseasScheduledHoursPerWeek: 40,
-    overseasRatePerHour: 7,
+    overseasRatePerHour: 5,
     overseasQualifyingSharePct: 70,
   },
   reservePolicy: {
-    targetMonthsOverhead: 2,
+    targetMonthsOverhead: 6,
     expectedDisputeRatePct: 0.5,
   },
   hiringPolicy: {
@@ -248,9 +255,13 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
     // are contested: TASC (trade group) reports 35-60% full completion (avg
     // 45-50%); GAO/state AG investigations found actual completion "often
     // in the single digits." Calibrate toward real data as it comes in.
-    LEVEL: { firstPayPct: 88, cancelPctByMonth: [6, 4, 3, 3, 2], steadyStateMonthlyCancelPct: 1.5 },
-    CS: { firstPayPct: 82, cancelPctByMonth: [8, 6, 5, 4, 3], steadyStateMonthlyCancelPct: 2.0 },
-    LEGACY: { firstPayPct: 75, cancelPctByMonth: [12, 9, 7, 6, 5], steadyStateMonthlyCancelPct: 3.0 },
+    // Uniform, deliberately unsugarcoated defaults across all three backends:
+    // 50% of enrolled deals ever make their first payment, and a flat 15%
+    // monthly cancellation rate applies every month thereafter, indefinitely.
+    // Adjust per backend as real observed performance data comes in.
+    LEVEL:  { firstPayPct: 50, cancelPctByMonth: [15, 15, 15, 15, 15], steadyStateMonthlyCancelPct: 15 },
+    CS:     { firstPayPct: 50, cancelPctByMonth: [15, 15, 15, 15, 15], steadyStateMonthlyCancelPct: 15 },
+    LEGACY: { firstPayPct: 50, cancelPctByMonth: [15, 15, 15, 15, 15], steadyStateMonthlyCancelPct: 15 },
   },
 };
 
@@ -410,8 +421,11 @@ export function calculateMonthlyCosts(
     totalCallMinutes * cfg.trackdriveOutboundRate +
     hc.activeDIDs * tdTier.did;
 
-  const usLaborHours = hc.scheduledHoursPerWeek * hc.concurrentSeats * (52 / 12);
-  const usLabor = usLaborHours * cfg.laborRatePerHour;
+  const regularHoursPerWeek = Math.min(hc.scheduledHoursPerWeek, hc.overtimeThresholdHoursPerWeek);
+  const overtimeHoursPerWeek = Math.max(0, hc.scheduledHoursPerWeek - hc.overtimeThresholdHoursPerWeek);
+  const usRegularHours = regularHoursPerWeek * hc.concurrentSeats * (52 / 12);
+  const usOvertimeHours = overtimeHoursPerWeek * hc.concurrentSeats * (52 / 12);
+  const usLabor = usRegularHours * cfg.laborRatePerHour + usOvertimeHours * cfg.laborRatePerHour * hc.overtimeMultiplier;
 
   let overseasLabor = 0;
   if (hc.staffingMode === "hybrid") {
@@ -539,7 +553,11 @@ export function simulatePortfolio({
       const n = newDeals[key] || 0;
       const qualifiedTransfersNeeded = a.operations.closeRate > 0 ? n / a.operations.closeRate : 0;
       monthQualifiedTransfers += qualifiedTransfersNeeded;
-      monthTransferCost += qualifiedTransfersNeeded * a.costs.transferCost[a.operations.transferBuffer];
+      const blendedTransferCost =
+        (a.operations.transferMix.buffer1min / 100) * a.costs.transferCost.buffer1min +
+        (a.operations.transferMix.buffer2min / 100) * a.costs.transferCost.buffer2min +
+        (a.operations.transferMix.buffer5min / 100) * a.costs.transferCost.buffer5min;
+      monthTransferCost += qualifiedTransfersNeeded * blendedTransferCost;
       monthCallMinutes += qualifiedTransfersNeeded * a.operations.avgCallMinutesPerDeal;
     });
 
@@ -577,10 +595,12 @@ export function simulatePortfolio({
       headcount: { ...a.headcount, concurrentSeats: currentSeats, overseasSeats: currentOverseasSeats, totalHeadcount: currentHeadcount },
     };
     const trackdriveTierKey = resolveTrackdriveTier(tier => monthCallMinutes * tier.inbound, dynamicAssumptions).tier.key;
+    const rawTotalEmails = monthQualifiedTransfers * a.operations.emailPerTransfer;
+    const cappedTotalEmails = a.operations.emailMonthlyCap != null ? Math.min(rawTotalEmails, a.operations.emailMonthlyCap) : rawTotalEmails;
     const costs = calculateMonthlyCosts({
       totalCallMinutes: monthCallMinutes,
-      totalSmsSegments: monthCallMinutes * a.operations.smsPerCallMultiplier,
-      totalEmails: monthCallMinutes * a.operations.emailPerCallMultiplier,
+      totalSmsSegments: monthQualifiedTransfers * a.operations.smsPerTransfer,
+      totalEmails: cappedTotalEmails,
       trackdriveTierKey,
     }, dynamicAssumptions);
 
