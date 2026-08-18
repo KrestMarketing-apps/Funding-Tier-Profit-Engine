@@ -104,6 +104,7 @@ export interface Assumptions {
     totalHeadcount: number;
     scheduledHoursPerWeek: number;
     concurrentSeats: number;
+    commissionOnlySeats: number;
     activeDIDs: number;
     overtimeThresholdHoursPerWeek: number;
     overtimeMultiplier: number;
@@ -230,6 +231,7 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
     totalHeadcount: 2,
     scheduledHoursPerWeek: 40,
     concurrentSeats: 2,
+    commissionOnlySeats: 1,
     activeDIDs: 4,
     overtimeThresholdHoursPerWeek: 40,
     overtimeMultiplier: 1.5,
@@ -421,10 +423,11 @@ export function calculateMonthlyCosts(
     totalCallMinutes * cfg.trackdriveOutboundRate +
     hc.activeDIDs * tdTier.did;
 
+  const hourlyPaidSeats = Math.max(0, hc.concurrentSeats - Math.min(hc.commissionOnlySeats, hc.concurrentSeats));
   const regularHoursPerWeek = Math.min(hc.scheduledHoursPerWeek, hc.overtimeThresholdHoursPerWeek);
   const overtimeHoursPerWeek = Math.max(0, hc.scheduledHoursPerWeek - hc.overtimeThresholdHoursPerWeek);
-  const usRegularHours = regularHoursPerWeek * hc.concurrentSeats * (52 / 12);
-  const usOvertimeHours = overtimeHoursPerWeek * hc.concurrentSeats * (52 / 12);
+  const usRegularHours = regularHoursPerWeek * hourlyPaidSeats * (52 / 12);
+  const usOvertimeHours = overtimeHoursPerWeek * hourlyPaidSeats * (52 / 12);
   const usLabor = usRegularHours * cfg.laborRatePerHour + usOvertimeHours * cfg.laborRatePerHour * hc.overtimeMultiplier;
 
   let overseasLabor = 0;
