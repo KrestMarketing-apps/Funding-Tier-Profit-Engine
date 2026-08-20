@@ -9,7 +9,7 @@ import { legacy, shield } from './backends';
 import { RosterEditor } from './RosterEditor';
 import { ShowTheMath } from './ShowTheMath';
 import {
-  Btn, Callout, Field, Info, NumberInput, Panel, PartnerName, PartnerMark, Row, T,
+  Btn, Callout, Field, FT_LOGO, G, Info, NumberInput, Panel, PartnerName, PartnerMark, Row, T,
   fmtMoney, fmtMoney2, fmtNum, fmtPct, inputStyle, td, tdNum, th,
 } from './ui';
 
@@ -33,13 +33,16 @@ function Stat({ label, value, sub, tooltip, tone }: {
   label: string; value: string; sub?: string; tooltip: string; tone?: 'good' | 'bad';
 }) {
   return (
-    <div style={{ border: `1px solid ${T.line}`, borderRadius: 9, padding: '10px 12px', background: T.bg }}>
+    <div style={{
+      border: `1px solid ${T.line}`, borderRadius: 11, padding: '11px 13px', background: G.tile,
+      boxShadow: '0 1px 2px rgba(15,23,42,.04)',
+    }}>
       <div style={{
         fontSize: 9, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
         color: T.muted, display: 'flex', alignItems: 'center',
       }}>{label}<Info text={tooltip} /></div>
       <div style={{
-        fontSize: 19, fontWeight: 800, marginTop: 4, fontFamily: T.mono,
+        fontSize: 20, fontWeight: 800, marginTop: 5, fontFamily: T.mono, letterSpacing: '-0.5px',
         color: tone === 'bad' ? T.bad : tone === 'good' ? T.good : T.ink,
       }}>{value}</div>
       {sub && <div style={{ fontSize: 10, color: T.faint, marginTop: 2 }}>{sub}</div>}
@@ -77,6 +80,7 @@ export default function OperatingModel() {
   const results = useMemo(() => runModel(inputs), [inputs]);
   const horizon = results.months.length;
   const [stmtMonth, setStmtMonth] = useState(1);
+  const [mathOpen, setMathOpen] = useState(false);
   const month = results.months[Math.min(stmtMonth, horizon) - 1];
   const patch = (p: Partial<ModelInputs>) => setInputs({ ...inputs, ...p });
   const blended = blendedTransferCost(inputs);
@@ -99,12 +103,55 @@ export default function OperatingModel() {
   );
 
   return (
-    <div style={{ fontFamily: T.sans, color: T.body, maxWidth: 1280, margin: '0 auto', padding: '18px 16px 60px' }}>
-      <h1 style={{ fontSize: 22, fontWeight: 800, color: T.ink, margin: '0 0 4px' }}>Operating Model</h1>
-      <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
-        {BACKEND_KEYS.map((k) => <PartnerName key={k} k={k} size={19} sub />)}
+    <div style={{ fontFamily: T.sans, color: T.body, background: G.shell, minHeight: '100vh' }}>
+      {/* ── Sticky brand header — always in view ─────────────────────────── */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 900, padding: '10px 16px 0' }}>
+        <div style={{ maxWidth: 1280, margin: '0 auto' }}>
+          <div style={{
+            background: G.header, borderRadius: 14, padding: '11px 18px',
+            display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+            boxShadow: '0 10px 30px -12px rgba(15,23,42,.55)',
+            border: '1px solid rgba(255,255,255,.07)',
+          }}>
+            <img src={FT_LOGO} alt="Funding Tier" style={{ height: 26, width: 'auto', flex: '0 0 auto' }} />
+            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2, flex: 1, minWidth: 150 }}>
+              <span style={{ fontWeight: 800, fontSize: 18, color: '#fff', letterSpacing: '-0.4px' }}>
+                Operating Model
+              </span>
+              <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,.55)', fontWeight: 600 }}>
+                Cash flow, staffing, and profitability — month by month
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+              {[
+                { k: 'Revenue', v: fmtMoney(results.totals.revenue) },
+                { k: `Cash (mo ${horizon})`, v: fmtMoney(results.totals.finalCash) },
+                { k: 'Peak capital', v: fmtMoney(results.totals.peakCapitalRequired) },
+              ].map((x) => (
+                <div key={x.k} style={{ lineHeight: 1.2 }}>
+                  <div style={{
+                    fontSize: 8.5, fontWeight: 800, letterSpacing: 0.7, textTransform: 'uppercase',
+                    color: 'rgba(255,255,255,.5)',
+                  }}>{x.k}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', fontFamily: T.mono }}>{x.v}</div>
+                </div>
+              ))}
+              <button
+                onClick={() => setMathOpen(true)}
+                style={{
+                  background: '#fff', color: T.brandDark, border: 'none', borderRadius: 9,
+                  padding: '9px 15px', fontWeight: 800, fontSize: 12.5, cursor: 'pointer',
+                  fontFamily: T.sans, whiteSpace: 'nowrap',
+                  boxShadow: '0 3px 12px -3px rgba(0,0,0,.4)',
+                }}
+              >Show the math</button>
+            </div>
+          </div>
+        </div>
       </div>
 
+      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '14px 16px 60px' }}>
       {/* ── Results ───────────────────────────────────────────────────────── */}
       <Panel title="Results — based on everything set below" collapsible={false}
         tooltip="Headline outputs of the simulation. Every one of these traces back to a formula in Show the math.">
@@ -140,7 +187,11 @@ export default function OperatingModel() {
         )}
       </Panel>
 
-      <ShowTheMath inputs={inputs} results={results} month={stmtMonth} setMonth={setStmtMonth} />
+
+      <ShowTheMath
+        inputs={inputs} results={results} month={stmtMonth} setMonth={setStmtMonth}
+        open={mathOpen} onClose={() => setMathOpen(false)}
+      />
 
       {/* ── 1 · Ramp planner: five columns across ─────────────────────────── */}
       <Panel title="1 · Deal Volume Ramp Planner" accent={T.accent}
@@ -839,8 +890,13 @@ export default function OperatingModel() {
         </Callout>
       </Panel>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <Btn onClick={() => setInputs(cloneDefaults())}>Reset to defaults</Btn>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+          <Btn onClick={() => setInputs(cloneDefaults())}>Reset to defaults</Btn>
+          <span style={{ fontSize: 11, color: T.faint, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            Servicing partners:
+            {BACKEND_KEYS.map((k) => <PartnerName key={k} k={k} size={15} style={{ fontSize: 11 }} />)}
+          </span>
+        </div>
       </div>
     </div>
   );

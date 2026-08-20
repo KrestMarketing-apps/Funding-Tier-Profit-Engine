@@ -9,14 +9,14 @@ export const WEEKS_PER_MONTH = 52 / 12; // 4.3333…
 export const BRANDS: Record<BackendKey, BackendBrand> = {
   LEVEL: {
     key: 'LEVEL', name: 'Level Debt', legalName: 'Level Debt',
-    monogram: 'LD', accent: '#10b981', accentSoft: '#d1fae5',
+    monogram: 'LD', accent: '#0f9d8a', accentSoft: '#e6f7f4',
     // "level." wordmark — transparent PNG/WebP, dark type with a green accent.
     logoUrl: 'https://assets.cdn.filesafe.space/S4ztIlDxBovAboldwbOR/media/69c35b2cab2203b0fc83186d.webp',
     logoAspect: 224 / 84,
   },
   CS: {
     key: 'CS', name: 'Shield Services', legalName: 'Consumer Shield',
-    monogram: 'SS', accent: '#1e293b', accentSoft: '#e2e8f0',
+    monogram: 'SS', accent: '#1a6ed8', accentSoft: '#dbeafe',
     // Stacked CONSUMER / SHIELD lockup — square, ships on a white plate.
     logoUrl: 'https://assets.cdn.filesafe.space/S4ztIlDxBovAboldwbOR/media/69c35b2c25c6995d2d2d21fa.png',
     logoAspect: 1,
@@ -24,7 +24,7 @@ export const BRANDS: Record<BackendKey, BackendBrand> = {
   },
   LEGACY: {
     key: 'LEGACY', name: 'Elite Legal Practice', legalName: 'Legacy Capital Services',
-    monogram: 'ELP', accent: '#0f172a', accentSoft: '#e2e8f0',
+    monogram: 'ELP', accent: '#d97706', accentSoft: '#fef3c7',
     // LEGACY CAPITAL SERVICES wordmark with the pillar mark — ships on a white plate.
     logoUrl: 'https://assets.cdn.filesafe.space/S4ztIlDxBovAboldwbOR/media/69e1c95dc56ad279084b3141.png',
     logoAspect: 400 / 150,
