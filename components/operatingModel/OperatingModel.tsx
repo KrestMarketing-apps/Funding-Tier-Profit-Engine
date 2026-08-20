@@ -8,6 +8,7 @@ import { blendedTransferCost } from './costs';
 import { legacy, shield } from './backends';
 import { RosterEditor } from './RosterEditor';
 import { ShowTheMath } from './ShowTheMath';
+import { MonthEndReport } from './MonthEndReport';
 import {
   Btn, Callout, Field, FT_LOGO, G, Info, NumberInput, Panel, PartnerName, PartnerMark, Row, T,
   fmtMoney, fmtMoney2, fmtNum, fmtPct, inputStyle, td, tdNum, th,
@@ -19,6 +20,8 @@ const MONTH_COL_HELP: Record<string, string> = {
   deals: 'New deals submitted this month. Derived from paid closer hours ÷ 8 × deals-per-8-hours, capped by available talk time and scaled by the ramp factor, then split across the three servicing partners by the volume mix.',
   revenue: 'Cash actually received from the servicing partners this month — not deals signed. Every backend pays in arrears, so this lags enrollment. Computed as: for each live cohort, surviving deals × revenue per payment × (1 − dispute rate).',
   commission: 'Commission Funding Tier PAYS OUT to its own reps. This is money leaving the business, not money coming in. Booked in the month the backend releases payout, which is why month 1 is always zero.',
+  override: 'Override earned by Managers and Owner Operators on the deals their team closed, on top of anything they closed themselves. Another outflow.',
+  bonuses: 'Daily deal, monthly volume, balanced book and Level Debt enrolment bonuses paid this month, net of any provisional holdback. Daily thresholds are inferred from monthly volume using the deal-concentration setting.',
   overhead: 'Total monthly operating cost: fixed tools + per-user tools + usage rates + Trackdrive + transfer acquisition + labor. Transfer acquisition is included here — in the previous model it was deducted from cash but omitted from this column.',
   netcf: 'Revenue − commission paid to reps − overhead. The cash the business generated or burned this month.',
   cash: 'Running cash on hand: prior month cash position + this month net cash flow. Negative means capital has to be funded from outside.',
@@ -84,7 +87,14 @@ export default function OperatingModel() {
   const month = results.months[Math.min(stmtMonth, horizon) - 1];
   const patch = (p: Partial<ModelInputs>) => setInputs({ ...inputs, ...p });
   const blended = blendedTransferCost(inputs);
-  const mixTotal = inputs.operations.transferMix.buffer1min + inputs.operations.transferMix.buffer2min + inputs.operations.transferMix.buffer5min;
+  const mixTotal = inputs.operations.buffers.reduce((a, b) => a + b.mixPct, 0);
+  const setBuffer = (key: string, patch: Record<string, number>) => patch && setInputs({
+    ...inputs,
+    operations: {
+      ...inputs.operations,
+      buffers: inputs.operations.buffers.map((b) => (b.key === key ? { ...b, ...patch } : b)),
+    },
+  });
   const volMixTotal = BACKEND_KEYS.reduce((s, k) => s + inputs.volume.mixPct[k], 0);
   const derivedCap = results.months[0]?.capacity;
 
@@ -167,6 +177,10 @@ export default function OperatingModel() {
           <Stat label="Total commission paid" value={fmtMoney(results.totals.repCommission)}
             sub="Paid out to Funding Tier reps"
             tooltip="Total commission Funding Tier pays its own reps over the simulation. This is an outflow." />
+          <Stat label="Overrides + bonuses"
+            value={fmtMoney(results.totals.managerOverride + results.totals.bonuses)}
+            sub={`${fmtMoney(results.totals.managerOverride)} override · ${fmtMoney(results.totals.bonuses)} bonuses`}
+            tooltip="Manager and owner-operator overrides plus every bonus and spiff paid across the simulation. Both are outflows on top of base commission." />
           <Stat label="Peak capital required" value={fmtMoney(results.totals.peakCapitalRequired)} tone="bad"
             sub="Most capital needed before revenue catches up"
             tooltip="The deepest the cash position goes. This is the money that has to be funded from outside before the business self-sustains." />
@@ -292,7 +306,7 @@ export default function OperatingModel() {
 
       {/* ── 3 · Operations ─────────────────────────────────────────────────── */}
       <Panel title="2 · Operations — how calls turn into deals"
-        subtitle="Close rate, handle time, opener productivity, transfer mix"
+        subtitle="Close rate, handle time, opener productivity, and the transfer funnel"
         tooltip="These settings convert transfers into deals and set what each transfer costs to acquire.">
         <Row cols={5} gap={12}>
           <Field label="Close rate" tooltip="Share of qualified transfers that become enrolled deals. Applies to every transfer, including the ones that do not close — the time spent on those is still counted in labor and routing cost.">
@@ -320,35 +334,114 @@ export default function OperatingModel() {
           </Field>
         </Row>
 
-        <div style={{ marginTop: 14, fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: T.muted }}>
-          Transfer buffer mix
-          <Info text="Qualified transfers are bought with a billing buffer: the longer the buffer, the more the transfer costs. The mix must total 100%. Blended cost per transfer is the weighted average." />
+        <div style={{ marginTop: 16, fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: T.muted, display: 'flex', alignItems: 'center' }}>
+          Transfer funnel — raw · duds · billed
+          <Info text="A vendor routes a live call. If it disconnects before the buffer elapses it is a dud and is never invoiced — which is precisely what the higher price of a longer buffer buys you. Each tier therefore carries its own pass rate and its own close rate, and the only figure that compares one buffer with another is cost per CLOSED deal." />
         </div>
-        <Row cols={5} gap={12} style={{ marginTop: 8 }}>
-          <Field label={`1-min buffer ($${inputs.costs.transferCost.buffer1min})`} tooltip="Share of transfers bought on the 1-minute buffer.">
-            <NumberInput value={inputs.operations.transferMix.buffer1min} min={0} max={100} step={1}
-              invalid={Math.abs(mixTotal - 100) > 0.01}
-              onChange={(v) => patch({ operations: { ...inputs.operations, transferMix: { ...inputs.operations.transferMix, buffer1min: v } } })} suffix="%" />
+
+        <div style={{ overflowX: 'auto', marginTop: 8, border: `1px solid ${T.line}`, borderRadius: 9 }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 860 }}>
+            <thead>
+              <tr>
+                <th style={th}>Buffer</th>
+                <th style={{ ...th, textAlign: 'right', width: 108 }}>Price / billed</th>
+                <th style={{ ...th, textAlign: 'right', width: 96 }}>Mix of raw</th>
+                <th style={{ ...th, textAlign: 'right', width: 108 }}>Pass rate<Info text="Share of raw transfers on this tier that survive the buffer and become billable. Longer buffer, fewer survivors — that is the whole point of paying more for it. These defaults are estimates; calibrate from a vendor invoice." /></th>
+                <th style={{ ...th, textAlign: 'right', width: 100 }}>Close rate</th>
+                <th style={{ ...th, textAlign: 'right' }}>Raw</th>
+                <th style={{ ...th, textAlign: 'right' }}>Duds</th>
+                <th style={{ ...th, textAlign: 'right' }}>Billed</th>
+                <th style={{ ...th, textAlign: 'right' }}>Cost</th>
+                <th style={{ ...th, textAlign: 'right' }}>Cost / deal<Info text="Transfer spend on this tier divided by the deals it produced. This is the number that decides which buffer is actually cheapest — not the price per transfer." /></th>
+              </tr>
+            </thead>
+            <tbody>
+              {inputs.operations.buffers.map((b) => {
+                const row = month?.funnel.buffers.find((x) => x.key === b.key);
+                const off = b.mixPct <= 0;
+                return (
+                  <tr key={b.key} style={{ opacity: off ? 0.5 : 1 }}>
+                    <td style={{ ...td, fontWeight: 600, color: T.ink }}>{b.label}</td>
+                    <td style={tdNum}>
+                      <NumberInput value={b.price} min={0} step={0.5} prefix="$"
+                        onChange={(v) => setBuffer(b.key, { price: v })} />
+                    </td>
+                    <td style={tdNum}>
+                      <NumberInput value={b.mixPct} min={0} max={100} step={1} suffix="%"
+                        invalid={Math.abs(mixTotal - 100) > 0.01}
+                        onChange={(v) => setBuffer(b.key, { mixPct: v })} />
+                    </td>
+                    <td style={tdNum}>
+                      <NumberInput value={b.passRatePct} min={0} max={100} step={1} suffix="%"
+                        onChange={(v) => setBuffer(b.key, { passRatePct: v })} />
+                    </td>
+                    <td style={tdNum}>
+                      <NumberInput value={b.closeRatePct} min={0} max={100} step={0.5} suffix="%"
+                        onChange={(v) => setBuffer(b.key, { closeRatePct: v })} />
+                    </td>
+                    <td style={tdNum}>{fmtNum(row?.rawTransfers ?? 0, 0)}</td>
+                    <td style={{ ...tdNum, color: T.faint }}>{fmtNum(row?.duds ?? 0, 0)}</td>
+                    <td style={tdNum}>{fmtNum(row?.billedTransfers ?? 0, 0)}</td>
+                    <td style={tdNum}>{fmtMoney(row?.cost ?? 0)}</td>
+                    <td style={{ ...tdNum, fontWeight: 700, color: T.ink }}>
+                      {(row?.deals ?? 0) > 0 ? fmtMoney(row!.costPerDeal) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr>
+                <td style={{ ...td, borderTop: `2px solid ${T.ink}`, fontWeight: 800, color: T.ink }}>Total</td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 700 }}>{fmtMoney2(blended)}</td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 800, color: Math.abs(mixTotal - 100) > 0.01 ? T.bad : T.ink }}>
+                  {mixTotal.toFixed(0)}%
+                </td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 700 }}>{fmtPct(month?.funnel.blendedPassRatePct ?? 0, 0)}</td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}` }} />
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 800 }}>{fmtNum(month?.funnel.rawTransfers ?? 0, 0)}</td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 800, color: T.faint }}>{fmtNum(month?.funnel.duds ?? 0, 0)}</td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 800 }}>{fmtNum(month?.funnel.billedTransfers ?? 0, 0)}</td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 800 }}>{fmtMoney(month?.funnel.totalCost ?? 0)}</td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 800 }}>{fmtMoney(month?.funnel.costPerClosedDeal ?? 0)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <Row cols={5} gap={12} style={{ marginTop: 12 }}>
+          <Field label="Close rate measured against" tooltip="Check one vendor invoice (billed transfers) against your CRM (every transfer routed to you). Divide that month's deals by each. Whichever denominator lands on your quoted close rate is your convention. This setting decides whether transfer spend falls.">
+            <select
+              value={inputs.operations.closeRateBasis}
+              onChange={(e) => patch({ operations: { ...inputs.operations, closeRateBasis: e.target.value as 'billed' | 'all' } })}
+              style={{ ...inputStyle, fontSize: 12 }}
+            >
+              <option value="billed">Billed transfers</option>
+              <option value="all">All transfers taken</option>
+            </select>
           </Field>
-          <Field label={`2-min buffer ($${inputs.costs.transferCost.buffer2min})`} tooltip="Share of transfers bought on the 2-minute buffer.">
-            <NumberInput value={inputs.operations.transferMix.buffer2min} min={0} max={100} step={1}
-              invalid={Math.abs(mixTotal - 100) > 0.01}
-              onChange={(v) => patch({ operations: { ...inputs.operations, transferMix: { ...inputs.operations.transferMix, buffer2min: v } } })} suffix="%" />
-          </Field>
-          <Field label={`5-min buffer ($${inputs.costs.transferCost.buffer5min})`} tooltip="Share of transfers bought on the 5-minute buffer. Defaulted to zero — it is by far the most expensive.">
-            <NumberInput value={inputs.operations.transferMix.buffer5min} min={0} max={100} step={1}
-              invalid={Math.abs(mixTotal - 100) > 0.01}
-              onChange={(v) => patch({ operations: { ...inputs.operations, transferMix: { ...inputs.operations.transferMix, buffer5min: v } } })} suffix="%" />
-          </Field>
-          <Field label="Mix total" tooltip="Must equal 100%.">
-            <div style={{ ...inputStyle, background: Math.abs(mixTotal - 100) > 0.01 ? T.badBg : T.panel, color: Math.abs(mixTotal - 100) > 0.01 ? T.bad : T.ink, fontWeight: 700 }}>
-              {mixTotal.toFixed(0)}%
+          <Field label="Dud rate" tooltip="Share of raw transfers that dropped before the buffer and were never invoiced. This is the money the old model was spending that you never actually owed.">
+            <div style={{ ...inputStyle, background: T.panel, fontWeight: 800, color: T.ink }}>
+              {fmtPct(month?.funnel.dudRatePct ?? 0, 1)}
             </div>
           </Field>
-          <Field label="Blended cost / transfer" tooltip="Weighted average acquisition cost of one qualified transfer. Multiply by transfers purchased to get the monthly transfer bill.">
-            <div style={{ ...inputStyle, background: T.panel, fontWeight: 800, color: T.ink }}>{fmtMoney2(blended)}</div>
+          <Field label="Close rate — all transfers" tooltip="Deals ÷ every transfer taken, duds included.">
+            <div style={{ ...inputStyle, background: T.panel, fontWeight: 800, color: T.ink }}>
+              {fmtPct(month?.funnel.closeRateOnAllPct ?? 0, 1)}
+            </div>
+          </Field>
+          <Field label="Close rate — billed only" tooltip="Deals ÷ transfers you were actually invoiced for.">
+            <div style={{ ...inputStyle, background: T.panel, fontWeight: 800, color: T.ink }}>
+              {fmtPct(month?.funnel.closeRateOnBilledPct ?? 0, 1)}
+            </div>
+          </Field>
+          <Field label="Cost per closed deal" tooltip="Total transfer spend ÷ deals closed. The only figure that compares buffers honestly.">
+            <div style={{ ...inputStyle, background: T.panel, fontWeight: 800, color: T.ink }}>
+              {fmtMoney(month?.funnel.costPerClosedDeal ?? 0)}
+            </div>
           </Field>
         </Row>
+        {Math.abs(mixTotal - 100) > 0.01 && (
+          <Callout tone="bad">Buffer mix totals {mixTotal.toFixed(1)}% — it must total 100%.</Callout>
+        )}
       </Panel>
 
       {/* ── 4 · Backend terms, compact ─────────────────────────────────────── */}
@@ -560,7 +653,7 @@ export default function OperatingModel() {
               <tr>
                 <td style={{ ...td, paddingLeft: 20 }}>Purchased qualified transfers</td>
                 <td style={{ ...tdNum, fontWeight: 700 }}>{fmtMoney2(blended)}<div style={{ fontSize: 10, color: T.faint }}>blended</div></td>
-                <td style={{ ...tdNum, color: T.body }}>× {fmtNum(month?.capacity.purchasedTransfers ?? 0, 0)} transfers</td>
+                <td style={{ ...tdNum, color: T.body }}>× {fmtNum(month?.funnel.billedTransfers ?? 0, 0)} billed</td>
                 <td style={{ ...tdNum, fontWeight: 700 }}>{fmtMoney(month?.transferCost ?? 0)}</td>
               </tr>
               <tr><td colSpan={4} style={{ ...td, background: T.panel, fontWeight: 800, fontSize: 10.5, letterSpacing: 0.5, textTransform: 'uppercase', color: T.ink }}>Labor</td></tr>
@@ -623,6 +716,113 @@ export default function OperatingModel() {
           {' '}{month && month.overhead > 0 ? fmtPct((month.transferCost / month.overhead) * 100, 0) : '0%'} of the total.
         </Callout>
       </Panel>
+
+      {/* ── Incentive policy ───────────────────────────────────────────────── */}
+      <Panel title="Overrides, bonuses &amp; spiffs" accent={T.brand} defaultOpen={false}
+        subtitle="Manager override, and the four incentive programs from the agent reference"
+        tooltip="Compensation on top of base commission. Overrides go to Managers and Owner Operators on their team's closed deals; bonuses go to the closers who write the volume.">
+        <Row cols={5} gap={12}>
+          <Field label="Override enabled" tooltip="Turn the manager / owner override off entirely.">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: T.body, paddingTop: 6 }}>
+              <input type="checkbox" checked={inputs.overridePolicy.enabled}
+                onChange={(e) => patch({ overridePolicy: { ...inputs.overridePolicy, enabled: e.target.checked } })} />
+              {inputs.overridePolicy.enabled ? 'On' : 'Off'}
+            </label>
+          </Field>
+          <Field label="Override base" tooltip="What the override percentage is applied to. Enrolled debt volume mirrors how Level Debt's own graduated commission works and is the only base where 0.1%-0.25% produces a meaningful number.">
+            <select value={inputs.overridePolicy.base}
+              onChange={(e) => patch({ overridePolicy: { ...inputs.overridePolicy, base: e.target.value as any } })}
+              style={{ ...inputStyle, fontSize: 12 }}>
+              <option value="enrolledVolume">Team enrolled debt volume</option>
+              <option value="repCommission">Team rep commission</option>
+              <option value="ftRevenue">Funding Tier revenue from team</option>
+            </select>
+          </Field>
+          <Field label="Band minimum" tooltip="Lower end of the override band. Rates outside the band are flagged in the roster.">
+            <NumberInput value={inputs.overridePolicy.minPct} min={0} max={5} step={0.05} suffix="%"
+              onChange={(v) => patch({ overridePolicy: { ...inputs.overridePolicy, minPct: v } })} />
+          </Field>
+          <Field label="Band maximum" tooltip="Upper end of the override band.">
+            <NumberInput value={inputs.overridePolicy.maxPct} min={0} max={5} step={0.05} suffix="%"
+              onChange={(v) => patch({ overridePolicy: { ...inputs.overridePolicy, maxPct: v } })} />
+          </Field>
+          <Field label="Include own deals" tooltip="Whether a manager earns the override on deals they personally closed, as well as on their team's.">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: T.body, paddingTop: 6 }}>
+              <input type="checkbox" checked={inputs.overridePolicy.includeOwnDeals}
+                onChange={(e) => patch({ overridePolicy: { ...inputs.overridePolicy, includeOwnDeals: e.target.checked } })} />
+              {inputs.overridePolicy.includeOwnDeals ? 'Yes' : 'Team only'}
+            </label>
+          </Field>
+        </Row>
+
+        <div style={{ marginTop: 16, fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', color: T.muted, display: 'flex', alignItems: 'center' }}>
+          Bonus programs
+          <Info text="Two of the four programs trigger on DAILY thresholds while this model runs monthly, so daily volume has to be inferred. Deals arrive in clumps, and a flat spread would never cross the 3-deals-in-a-day line at realistic volumes, understating real payouts." />
+        </div>
+        <Row cols={5} gap={12} style={{ marginTop: 8 }}>
+          <Field label="Bonuses enabled" tooltip="Turn every bonus program off.">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: T.body, paddingTop: 6 }}>
+              <input type="checkbox" checked={inputs.bonusPolicy.enabled}
+                onChange={(e) => patch({ bonusPolicy: { ...inputs.bonusPolicy, enabled: e.target.checked } })} />
+              {inputs.bonusPolicy.enabled ? 'On' : 'Off'}
+            </label>
+          </Field>
+          <Field label="Working days / month" tooltip="Used to convert monthly volume into a daily rate.">
+            <NumberInput value={inputs.bonusPolicy.workingDaysPerMonth} min={1} max={31} step={0.1}
+              onChange={(v) => patch({ bonusPolicy: { ...inputs.bonusPolicy, workingDaysPerMonth: v } })} />
+          </Field>
+          <Field label="Deal concentration" tooltip="How much deals clump. 1.0 spreads them perfectly evenly across every working day. 1.6 means a rep is productive on about 62% of days and writes 1.6x their daily average on those. Raise it to match what you actually see."
+            hint={`${fmtNum(inputs.bonusPolicy.workingDaysPerMonth / Math.max(1, inputs.bonusPolicy.dealConcentration), 1)} productive days`}>
+            <NumberInput value={inputs.bonusPolicy.dealConcentration} min={1} max={5} step={0.1} suffix="×"
+              onChange={(v) => patch({ bonusPolicy: { ...inputs.bonusPolicy, dealConcentration: v } })} />
+          </Field>
+          <Field label="Manual hit-days 3+" tooltip="Set above zero to bypass the concentration model and state observed days per month where a rep wrote 3+ deals.">
+            <NumberInput value={inputs.bonusPolicy.manualHitDays3Plus} min={0} max={31} step={1}
+              onChange={(v) => patch({ bonusPolicy: { ...inputs.bonusPolicy, manualHitDays3Plus: v } })} />
+          </Field>
+          <Field label="Provisional holdback" tooltip="Share of accrued bonus withheld from this month's cash, pending clawback and chargeback clearance. Accrual is unaffected — only the timing of cash.">
+            <NumberInput value={inputs.bonusPolicy.provisionalHoldbackPct} min={0} max={100} step={5} suffix="%"
+              onChange={(v) => patch({ bonusPolicy: { ...inputs.bonusPolicy, provisionalHoldbackPct: v } })} />
+          </Field>
+        </Row>
+
+        <div style={{ overflowX: 'auto', marginTop: 12, border: `1px solid ${T.line}`, borderRadius: 9 }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 620 }}>
+            <thead>
+              <tr>
+                <th style={th}>Program</th>
+                <th style={th}>Status in month {stmtMonth}</th>
+                <th style={{ ...th, textAlign: 'right' }}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(month?.bonuses.lines ?? []).map((b) => (
+                <tr key={b.id}>
+                  <td style={{ ...td, fontWeight: 600, color: b.amount > 0 ? T.ink : T.muted }}>{b.label}</td>
+                  <td style={{ ...td, whiteSpace: 'normal', fontSize: 11, color: T.muted }}>{b.detail}</td>
+                  <td style={{ ...tdNum, fontWeight: b.amount > 0 ? 700 : 400, color: b.amount > 0 ? T.ink : T.faint }}>
+                    {b.amount > 0 ? fmtMoney(b.amount) : '—'}
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td style={{ ...td, borderTop: `2px solid ${T.ink}`, fontWeight: 800, color: T.ink }}>Total accrued</td>
+                <td style={{ ...td, borderTop: `2px solid ${T.ink}`, fontSize: 11, color: T.muted }}>
+                  {(month?.bonuses.heldBack ?? 0) > 0 ? `${fmtMoney(month!.bonuses.heldBack)} held back as provisional` : 'No holdback applied'}
+                </td>
+                <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, fontWeight: 800 }}>{fmtMoney(month?.bonuses.total ?? 0)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <Callout tone="warn">
+          All bonus payouts are subject to Funding Tier clawback and chargeback policy. Chargeback liability is enforced
+          daily and any open risk period can delay or reverse a payout — treat these as provisional until the related
+          files have cleared their windows.
+        </Callout>
+      </Panel>
+
+      <MonthEndReport inputs={inputs} results={results} month={stmtMonth} setMonth={setStmtMonth} />
 
       {/* ── 7 · Risk & attrition ───────────────────────────────────────────── */}
       <Panel title="5 · Risk, reserve, and attrition" defaultOpen={false}
@@ -842,13 +1042,15 @@ export default function OperatingModel() {
       <Panel title="Month-by-Month Detail"
         tooltip="The full simulation output. Hover any column header for the exact calculation behind it.">
         <div style={{ overflowX: 'auto', maxHeight: 620, border: `1px solid ${T.line}`, borderRadius: 8 }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 1180 }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 1360 }}>
             <thead>
               <tr>
                 <th style={{ ...th, width: 42 }}>Mo<Info text={MONTH_COL_HELP.mo} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Deals<Info text={MONTH_COL_HELP.deals} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Revenue<Info text={MONTH_COL_HELP.revenue} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Commission<Info text={MONTH_COL_HELP.commission} /></th>
+                <th style={{ ...th, textAlign: 'right' }}>Override<Info text={MONTH_COL_HELP.override} /></th>
+                <th style={{ ...th, textAlign: 'right' }}>Bonuses<Info text={MONTH_COL_HELP.bonuses} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Overhead<Info text={MONTH_COL_HELP.overhead} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Net CF<Info text={MONTH_COL_HELP.netcf} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Cash position<Info text={MONTH_COL_HELP.cash} /></th>
@@ -868,6 +1070,8 @@ export default function OperatingModel() {
                   <td style={tdNum}>{fmtNum(r.deals, 0)}</td>
                   <td style={tdNum}>{r.revenue > 0 ? fmtMoney(r.revenue) : <span style={{ color: T.warn, fontWeight: 700 }}>$0</span>}</td>
                   <td style={{ ...tdNum, color: r.repCommission > 0 ? T.bad : T.faint }}>{r.repCommission > 0 ? `(${fmtMoney(r.repCommission)})` : '$0'}</td>
+                  <td style={{ ...tdNum, color: r.managerOverride > 0 ? T.bad : T.faint }}>{r.managerOverride > 0 ? `(${fmtMoney(r.managerOverride)})` : '$0'}</td>
+                  <td style={{ ...tdNum, color: r.bonusPaid > 0 ? T.bad : T.faint }}>{r.bonusPaid > 0 ? `(${fmtMoney(r.bonusPaid)})` : '$0'}</td>
                   <td style={{ ...tdNum, color: T.bad }}>({fmtMoney(r.overhead)})</td>
                   <td style={{ ...tdNum, fontWeight: 700, color: r.netCashFlow >= 0 ? T.good : T.bad }}>{fmtMoney(r.netCashFlow)}</td>
                   <td style={{ ...tdNum, fontWeight: 700, color: r.cashPosition >= 0 ? T.ink : T.bad }}>{fmtMoney(r.cashPosition)}</td>

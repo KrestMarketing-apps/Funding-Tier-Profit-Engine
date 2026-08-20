@@ -46,7 +46,8 @@ export function computeEmployeeCost(emp: Employee, policy: LaborPolicy): Employe
   else closerShare = Math.min(1, Math.max(0, emp.hybridCloserSharePct / 100));
 
   // Validation.
-  if (!emp.commissionOnly && emp.type === 'inhouse' && emp.hourlyRate < policy.inHouseMinWage) {
+  const wageFloorApplies = emp.type === 'inhouse' || emp.type === 'manager';
+  if (!emp.commissionOnly && wageFloorApplies && emp.hourlyRate < policy.inHouseMinWage) {
     warnings.push(
       `${emp.name}: $${emp.hourlyRate.toFixed(2)}/hr is below the $${policy.inHouseMinWage.toFixed(2)} California minimum wage.`,
     );
@@ -96,6 +97,8 @@ export interface RosterMonthSummary {
   paidHours: number;
   inHouseCost: number;
   bpoCost: number;
+  managers: EmployeeCost[];
+  closers: EmployeeCost[];
 }
 
 export function summariseRosterForMonth(
@@ -110,7 +113,9 @@ export function summariseRosterForMonth(
     closerHours: active.reduce((s, c) => s + c.monthlyCloserHours, 0),
     openerHours: active.reduce((s, c) => s + c.monthlyOpenerHours, 0),
     paidHours: active.reduce((s, c) => s + c.monthlyPaidHours, 0),
-    inHouseCost: active.filter((c) => c.employee.type === 'inhouse').reduce((s, c) => s + c.monthlyCost, 0),
+    inHouseCost: active.filter((c) => c.employee.type !== 'bpo').reduce((s, c) => s + c.monthlyCost, 0),
     bpoCost: active.filter((c) => c.employee.type === 'bpo').reduce((s, c) => s + c.monthlyCost, 0),
+    managers: active.filter((c) => c.employee.type === 'manager' || c.employee.type === 'owner'),
+    closers: active.filter((c) => c.monthlyCloserHours > 0),
   };
 }

@@ -6,15 +6,19 @@ import type { RosterMonthSummary } from './labor';
 export const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
 export const money2 = (n: number) => `$${n.toFixed(2)}`;
 
-/** Blended acquisition cost of one qualified transfer, across the buffer mix. */
+/**
+ * Blended price of one BILLED transfer across the buffer mix.
+ *
+ * Weighted by each tier's share of billed transfers, not of raw transfers — a
+ * tier with a low pass rate contributes fewer billed transfers than its raw mix
+ * implies, so weighting by raw mix would overstate its influence on price.
+ */
 export function blendedTransferCost(inputs: ModelInputs): number {
-  const { transferMix } = inputs.operations;
-  const c = inputs.costs.transferCost;
-  return (
-    (transferMix.buffer1min / 100) * c.buffer1min +
-    (transferMix.buffer2min / 100) * c.buffer2min +
-    (transferMix.buffer5min / 100) * c.buffer5min
-  );
+  const buffers = inputs.operations.buffers;
+  const w = buffers.map((b) => (b.mixPct / 100) * (b.passRatePct / 100));
+  const sum = w.reduce((a, b) => a + b, 0);
+  if (sum <= 0) return 0;
+  return buffers.reduce((s, b, i) => s + (w[i] / sum) * b.price, 0);
 }
 
 /**
@@ -35,9 +39,12 @@ export function didCount(costs: CostInputs, headcount: number): number {
 }
 
 export interface CostContext {
+  /** Billed transfers — the calls actually invoiced and actually handled. */
   totalTransfers: number;
   purchasedTransfers: number;
   totalCallMinutes: number;
+  /** Transfer spend, computed by the funnel. */
+  transferCost: number;
   roster: RosterMonthSummary;
 }
 
@@ -140,10 +147,10 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
   const openerCovered = ctx.totalTransfers - ctx.purchasedTransfers;
   const transferLines = [
     {
-      id: 'tx-buy', label: 'Purchased qualified transfers',
-      detail: `${Math.round(ctx.purchasedTransfers).toLocaleString()} transfers x ${money2(blended)} blended`,
+      id: 'tx-buy', label: 'Purchased billed transfers',
+      detail: `${Math.round(ctx.purchasedTransfers).toLocaleString()} billed transfers x ${money2(blended)} blended`,
       formula: `${Math.round(ctx.purchasedTransfers).toLocaleString()} x ${money2(blended)}`,
-      amount: ctx.purchasedTransfers * blended,
+      amount: ctx.transferCost,
     },
   ];
   if (openerCovered > 0.5) {
@@ -156,7 +163,7 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
   }
   groups.push({
     id: 'transfers', label: 'Transfer Acquisition',
-    note: `Blended ${money2(blended)} per qualified transfer across the buffer mix`,
+    note: `Blended ${money2(blended)} per BILLED transfer. Transfers that drop before the buffer are never invoiced.`,
     lines: transferLines, subtotal: transferLines.reduce((s, l) => s + l.amount, 0),
   });
 

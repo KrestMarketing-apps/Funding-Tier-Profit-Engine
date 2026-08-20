@@ -3,7 +3,10 @@ import React, { useState } from 'react';
 import type { DayKey, Employee, ModelInputs, MonthRow } from './types';
 import { DAY_KEYS } from './types';
 import { computeEmployeeCost, employeeActiveInMonth } from './labor';
-import { DAY_LABELS, IN_HOUSE_MIN_WAGE, BPO_RATE_MIN, BPO_RATE_MAX, defaultShifts, makeEmployee } from './config';
+import {
+  DAY_LABELS, EMPLOYEE_TYPE_LABEL, IN_HOUSE_MIN_WAGE, BPO_RATE_MIN, BPO_RATE_MAX,
+  defaultShifts, makeEmployee, typeDefaults,
+} from './config';
 import {
   Btn, Callout, Field, Info, NumberInput, Panel, T, fmtMoney, fmtMoney2, fmtNum, inputStyle, td, tdNum, th,
 } from './ui';
@@ -82,30 +85,33 @@ export function RosterEditor({ inputs, setInputs, month }: {
     roster: inputs.roster.map((e) => {
       if (e.id !== id) return e;
       const next = { ...e, ...patch };
-      if (patch.type === 'inhouse' && e.type !== 'inhouse') {
-        next.hourlyRate = Math.max(IN_HOUSE_MIN_WAGE, e.hourlyRate);
-        next.unpaidBreakMinutes = 60; next.otEligible = true;
-      }
-      if (patch.type === 'bpo' && e.type !== 'bpo') {
-        next.hourlyRate = Math.min(BPO_RATE_MAX, Math.max(BPO_RATE_MIN, 5));
-        next.unpaidBreakMinutes = 0; next.otEligible = false;
+      // Switching type re-applies that type's sensible defaults.
+      if (patch.type && patch.type !== e.type) {
+        const d = typeDefaults(patch.type);
+        next.hourlyRate = d.hourlyRate;
+        next.unpaidBreakMinutes = d.unpaidBreakMinutes;
+        next.otEligible = d.otEligible;
+        next.commissionOnly = d.commissionOnly;
+        next.overridePct = d.overridePct;
       }
       return next;
     }),
   });
 
-  const add = (type: 'inhouse' | 'bpo') => {
+  const add = (type: Employee['type']) => {
     const n = inputs.roster.filter((e) => e.type === type).length + 1;
+    const teamId = inputs.roster[0]?.teamId ?? 'team-a';
     setInputs({
       ...inputs,
       roster: [...inputs.roster, makeEmployee({
         type,
-        name: type === 'inhouse' ? `In-House Closer ${n}` : `BPO Agent ${n}`,
-        role: type === 'inhouse' ? 'closer' : 'opener',
+        name: `${EMPLOYEE_TYPE_LABEL[type].split(' /')[0]} ${n}`,
         shifts: defaultShifts(),
+        teamId,
       })],
     });
   };
+  const teams = [...new Set(inputs.roster.map((e) => e.teamId))];
   const remove = (id: string) =>
     setInputs({ ...inputs, roster: inputs.roster.filter((e) => e.id !== id) });
 
@@ -119,12 +125,13 @@ export function RosterEditor({ inputs, setInputs, month }: {
   const totals = costs.reduce((acc, c) => {
     acc.weekly += c.weeklyPaidHours; acc.ot += c.otHoursPerWeek;
     acc.cost += c.monthlyCost;
-    acc.inhouse += c.employee.type === 'inhouse' ? c.monthlyCost : 0;
+    acc.inhouse += c.employee.type !== 'bpo' ? c.monthlyCost : 0;
     acc.bpo += c.employee.type === 'bpo' ? c.monthlyCost : 0;
     return acc;
   }, { weekly: 0, ot: 0, cost: 0, inhouse: 0, bpo: 0 });
 
   const anyWarn = costs.some((c) => c.warnings.length > 0);
+  const policy0 = inputs.overridePolicy;
 
   return (
     <Panel
@@ -133,9 +140,11 @@ export function RosterEditor({ inputs, setInputs, month }: {
       tooltip="One row per real person. Left to right: how many hours they are on the clock, at what rate, and what that costs per month. Deal capacity and transfer supply are computed from these same hours, so headcount and volume can never drift apart."
       subtitle="Agents × rate × weekly hours = monthly labor. Add or remove people with + / −."
       right={
-        <span style={{ display: 'flex', gap: 6 }}>
+        <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <Btn onClick={() => add('inhouse')} size="sm" tone="primary">+ In-House</Btn>
           <Btn onClick={() => add('bpo')} size="sm">+ BPO</Btn>
+          <Btn onClick={() => add('manager')} size="sm">+ Manager</Btn>
+          <Btn onClick={() => add('owner')} size="sm">+ Owner</Btn>
         </span>
       }
     >
@@ -147,6 +156,8 @@ export function RosterEditor({ inputs, setInputs, month }: {
               <th style={th}>Agent</th>
               <th style={th}>Type<Info text="In-House / CA employees are W2 staff paid at or above the $16.90 California minimum wage, with 1.5× overtime above 40 hours per week. BPO agents are overseas contractors billed at a flat $3–$8 per hour with no overtime premium." /></th>
               <th style={th}>Role<Info text="Openers qualify raw calls and hand off qualified transfers. Closers convert those transfers into enrolled deals. Hybrid agents split their paid hours between the two. Only CLOSER hours generate deals; opener hours generate transfer supply and reduce what you buy from the vendor." /></th>
+              <th style={th}>Team<Info text="Managers and owner-operators earn their override on the deals closed by everyone sharing their team name. Type a new name to create a team." /></th>
+              <th style={{ ...th, textAlign: 'right' }}>Override<Info text="Percentage a Manager or Owner Operator earns on the enrolled debt volume their team closes, on top of anything they close themselves. The policy band is 0.1%-0.25%." /></th>
               <th style={th}>Schedule</th>
               <th style={{ ...th, textAlign: 'right' }}>Hrs / wk<Info text="Paid hours: the clock span of every enabled shift, minus the unpaid meal break for each worked day." /></th>
               <th style={{ ...th, textAlign: 'right' }}>OT hrs<Info text="Paid hours above the 40 hr/week threshold. Billed at 1.5× the base rate. Applies to In-House / CA staff only unless overridden on the row." /></th>
@@ -168,6 +179,7 @@ export function RosterEditor({ inputs, setInputs, month }: {
                 (e.type === 'inhouse' && e.hourlyRate < policy.inHouseMinWage) ||
                 (e.type === 'bpo' && (e.hourlyRate < policy.bpoRateMin || e.hourlyRate > policy.bpoRateMax))
               );
+              const isOverrideRole = e.type === 'manager' || e.type === 'owner';
               const days = DAY_KEYS.filter((d) => e.shifts[d].enabled);
               const scheduleLabel = days.length === 0 ? 'None'
                 : `${days.map((d) => DAY_LABELS[d][0]).join('')} · ${hhmm(e.shifts[days[0]].start)}–${hhmm(e.shifts[days[0]].end)}`;
@@ -187,9 +199,10 @@ export function RosterEditor({ inputs, setInputs, month }: {
                     </td>
                     <td style={td}>
                       <select value={e.type} onChange={(ev) => update(e.id, { type: ev.target.value as any })}
-                        style={{ ...inputStyle, fontSize: 11.5, padding: '4px 6px', width: 132 }}>
-                        <option value="inhouse">In-House / CA</option>
-                        <option value="bpo">BPO / Overseas</option>
+                        style={{ ...inputStyle, fontSize: 11.5, padding: '4px 6px', width: 150 }}>
+                        {(['inhouse', 'bpo', 'manager', 'owner'] as const).map((t) => (
+                          <option key={t} value={t}>{EMPLOYEE_TYPE_LABEL[t]}</option>
+                        ))}
                       </select>
                     </td>
                     <td style={td}>
@@ -207,6 +220,20 @@ export function RosterEditor({ inputs, setInputs, month }: {
                           <span style={{ fontSize: 9.5, color: T.faint }}>% closing</span>
                         </span>
                       )}
+                    </td>
+                    <td style={td}>
+                      <input
+                        value={e.teamId} list="ft-teams"
+                        onChange={(ev) => update(e.id, { teamId: ev.target.value || 'house' })}
+                        style={{ ...inputStyle, fontFamily: T.sans, fontSize: 11.5, padding: '4px 6px', width: 92 }}
+                      />
+                    </td>
+                    <td style={{ ...tdNum, width: 96 }}>
+                      {isOverrideRole ? (
+                        <NumberInput value={e.overridePct} min={0} max={5} step={0.05}
+                          invalid={e.overridePct > 0 && (e.overridePct < policy0.minPct || e.overridePct > policy0.maxPct)}
+                          onChange={(v) => update(e.id, { overridePct: v })} suffix="%" />
+                      ) : <span style={{ color: T.faint }}>—</span>}
                     </td>
                     <td style={{ ...td, fontSize: 11, color: T.muted }}>{scheduleLabel}</td>
                     <td style={tdNum}>{fmtNum(c.weeklyPaidHours, 1)}</td>
@@ -240,7 +267,7 @@ export function RosterEditor({ inputs, setInputs, month }: {
                   </tr>
                   {expanded === e.id && (
                     <tr>
-                      <td colSpan={13} style={{ padding: '4px 10px 12px 34px', borderBottom: `1px solid ${T.lineSoft}` }}>
+                      <td colSpan={15} style={{ padding: '4px 10px 12px 34px', borderBottom: `1px solid ${T.lineSoft}` }}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 460px) 1fr', gap: 14 }}>
                           <ScheduleEditor emp={e} onChange={(next) => setInputs({
                             ...inputs, roster: inputs.roster.map((x) => (x.id === e.id ? next : x)),
@@ -283,6 +310,12 @@ export function RosterEditor({ inputs, setInputs, month }: {
                 {inputs.roster.filter((e) => e.type === 'inhouse').length} in-house · {inputs.roster.filter((e) => e.type === 'bpo').length} BPO
               </td>
               <td style={{ ...td, borderTop: `2px solid ${T.ink}`, borderBottom: 'none', fontSize: 11, color: T.muted }}>
+                {teams.length} team{teams.length === 1 ? '' : 's'}
+              </td>
+              <td style={{ ...tdNum, borderTop: `2px solid ${T.ink}`, borderBottom: 'none', fontSize: 11, color: T.muted }}>
+                {fmtMoney(month?.managerOverride ?? 0)}
+              </td>
+              <td style={{ ...td, borderTop: `2px solid ${T.ink}`, borderBottom: 'none', fontSize: 11, color: T.muted }}>
                 {fmtNum(totalCloserHrs, 0)} closer hrs
               </td>
               <td style={{ ...td, borderTop: `2px solid ${T.ink}`, borderBottom: 'none', fontSize: 11, color: T.muted }}>
@@ -305,12 +338,17 @@ export function RosterEditor({ inputs, setInputs, month }: {
             </tr>
           </tfoot>
         </table>
+        <datalist id="ft-teams">
+          {teams.map((t) => <option key={t} value={t} />)}
+        </datalist>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginTop: 12 }}>
         {[
-          { k: 'In-House / CA spend', v: fmtMoney(totals.inhouse), n: `${inputs.roster.filter((e) => e.type === 'inhouse').length} people` },
+          { k: 'In-House spend', v: fmtMoney(totals.inhouse), n: `${inputs.roster.filter((e) => e.type !== 'bpo').length} people` },
           { k: 'BPO / Overseas spend', v: fmtMoney(totals.bpo), n: `${inputs.roster.filter((e) => e.type === 'bpo').length} people` },
+          { k: 'Manager overrides', v: fmtMoney(month?.managerOverride ?? 0), n: `${inputs.roster.filter((e) => e.type === 'manager' || e.type === 'owner').length} earning` },
+          { k: 'Bonuses & spiffs', v: fmtMoney(month?.bonusPaid ?? 0), n: `month ${month?.month ?? 1}` },
           { k: 'Blended cost / paid hour', v: totals.weekly > 0 ? fmtMoney2(totals.cost / (totals.weekly * policy.weeksPerMonth)) : '—', n: `${fmtNum(totals.weekly * policy.weeksPerMonth, 0)} paid hrs/mo` },
           { k: 'Blended cost / deal', v: monthDeals > 0 ? fmtMoney(totals.cost / monthDeals) : '—', n: `${fmtNum(monthDeals, 0)} deals this month` },
         ].map((s) => (

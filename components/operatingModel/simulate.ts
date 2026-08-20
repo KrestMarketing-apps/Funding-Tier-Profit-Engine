@@ -10,6 +10,8 @@ import {
   maxRevenueMonth, revenueForDealMonth, revenueModelLabel,
 } from './backends';
 import { buildMonthlyCosts } from './costs';
+import { computeFunnel, blendedCloseRateOnBilled } from './funnel';
+import { computeBonuses } from './bonuses';
 
 /** Split a total into integer parts by percentage, preserving the total. */
 function allocate(total: number, pcts: Record<BackendKey, number>): Record<BackendKey, number> {
@@ -33,7 +35,9 @@ export function computeCapacity(
   rampFactor: number,
 ): CapacityDetail {
   const ops = inputs.operations;
-  const closeRate = ops.closeRatePct / 100;
+  // The capacity model works in BILLED transfers, because those are the calls a
+  // closer actually spends handle time on.
+  const closeRate = blendedCloseRateOnBilled(inputs);
 
   // Rule the business runs on: 1.0-1.5 deals per 8 paid closer hours.
   const ruleCapacityDeals = (closerHours / 8) * inputs.volume.dealsPer8CloserHours;
@@ -118,6 +122,9 @@ export function runModel(inputs: ModelInputs): ModelResults {
   const startingSeatCount = roster.filter((e) => e.startMonth <= 1).length;
   const disputeRate = inputs.reservePolicy.disputeRatePct / 100;
   const trailingCommission12mo: number[] = [];
+  // Compensation earned on a month's production but paid with a later payroll.
+  const overrideDue = new Map<number, number>();
+  const bonusDue = new Map<number, number>();
 
   for (let m = 1; m <= horizon; m++) {
     // ── Materialise an auto-hire that came due this month ────────────────────
@@ -196,18 +203,63 @@ export function runModel(inputs: ModelInputs): ModelResults {
       }
     }
 
+    // ── Transfer funnel ──────────────────────────────────────────────────────
+    const funnel = computeFunnel(inputs, totalDeals, capacity.openerSuppliedTransfers);
+
+    // ── Manager / owner overrides on their team's closed deals ───────────────
+    let overrideAccrued = 0;
+    if (inputs.overridePolicy.enabled) {
+      const totalCloserHours = rosterMonth.closerHours;
+      const enrolledThisMonth = BACKEND_KEYS.reduce(
+        (s, k) => s + dealsByBackend[k] * inputs.volume.avgDebt[k], 0,
+      );
+      for (const mgr of rosterMonth.managers) {
+        if (mgr.employee.overridePct <= 0) continue;
+        const team = rosterMonth.active.filter(
+          (c) => c.employee.teamId === mgr.employee.teamId
+            && c.monthlyCloserHours > 0
+            && (inputs.overridePolicy.includeOwnDeals || c.employee.id !== mgr.employee.id),
+        );
+        const teamHours = team.reduce((s, c) => s + c.monthlyCloserHours, 0);
+        const share = totalCloserHours > 0 ? teamHours / totalCloserHours : 0;
+        let base = 0;
+        if (inputs.overridePolicy.base === 'enrolledVolume') base = enrolledThisMonth * share;
+        else if (inputs.overridePolicy.base === 'repCommission') base = commission * share;
+        else base = revenue * share;
+        overrideAccrued += base * (mgr.employee.overridePct / 100);
+      }
+    }
+
+    // ── Bonuses and spiffs ───────────────────────────────────────────────────
+    const bonuses = computeBonuses(inputs, {
+      dealsByBackend,
+      avgDebt: inputs.volume.avgDebt,
+      closers: rosterMonth.closers,
+    });
+
+    // Compensation is paid in arrears, exactly like backend-driven commission —
+    // which is why month 1 carries no commission, no override and no bonus.
+    const oLag = Math.max(0, Math.round(inputs.overridePolicy.payoutLagMonths));
+    overrideDue.set(m + oLag, (overrideDue.get(m + oLag) ?? 0) + overrideAccrued);
+    const managerOverride = overrideDue.get(m) ?? 0;
+
+    const bLag = Math.max(0, Math.round(inputs.bonusPolicy.payoutLagMonths));
+    bonusDue.set(m + bLag, (bonusDue.get(m + bLag) ?? 0) + bonuses.paid);
+    const bonusPaid = bonusDue.get(m) ?? 0;
+
     // ── Cost ledger ──────────────────────────────────────────────────────────
     const costs = buildMonthlyCosts(inputs, {
-      totalTransfers: capacity.totalTransfers,
-      purchasedTransfers: capacity.purchasedTransfers,
+      totalTransfers: funnel.billedTransfers,
+      purchasedTransfers: funnel.billedTransfers - capacity.openerSuppliedTransfers,
       totalCallMinutes: capacity.requiredCallMinutes,
+      transferCost: funnel.totalCost,
       roster: rosterMonth,
     });
     const overhead = costs.total;
     const transferCost = costs.groups.find((g) => g.id === 'transfers')?.subtotal ?? 0;
     const laborCost = costs.groups.find((g) => g.id === 'labor')?.subtotal ?? 0;
 
-    const netCashFlow = revenue - commission - overhead;
+    const netCashFlow = revenue - commission - managerOverride - bonusPaid - overhead;
     cash += netCashFlow;
     if (cash < peakCapital) peakCapital = cash;
     if (firstCashPositive == null && cash > 0) firstCashPositive = m;
@@ -245,13 +297,16 @@ export function runModel(inputs: ModelInputs): ModelResults {
       month: m,
       deals: totalDeals,
       dealsByBackend,
-      revenue, repCommission: commission, overhead, transferCost, laborCost,
+      revenue, repCommission: commission,
+      managerOverride, managerOverrideAccrued: overrideAccrued,
+      bonuses, bonusPaid,
+      overhead, transferCost, laborCost,
       netCashFlow, cashPosition: cash,
       reserveTarget, reserveMet,
       seats, utilizationPct: util,
       event,
       notes: buildNote(m, inputs, revenue, commission, capacity, reserveMet, months[months.length - 1]),
-      capacity, costs,
+      capacity, funnel, costs,
       partners: BACKEND_KEYS.map((k) => partnerDetail[k]),
     });
   }
@@ -261,6 +316,8 @@ export function runModel(inputs: ModelInputs): ModelResults {
   const totals = {
     revenue: months.reduce((s, r) => s + r.revenue, 0),
     repCommission: months.reduce((s, r) => s + r.repCommission, 0),
+    managerOverride: months.reduce((s, r) => s + r.managerOverride, 0),
+    bonuses: months.reduce((s, r) => s + r.bonusPaid, 0),
     overhead: months.reduce((s, r) => s + r.overhead, 0),
     transferCost: months.reduce((s, r) => s + r.transferCost, 0),
     laborCost: months.reduce((s, r) => s + r.laborCost, 0),
@@ -279,8 +336,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
   const finalEmployeeCosts = roster.map((e) => computeEmployeeCost(e, inputs.laborPolicy));
   finalEmployeeCosts.forEach((e) => warnings.push(...e.warnings));
 
-  const mix = inputs.operations.transferMix;
-  const mixTotal = mix.buffer1min + mix.buffer2min + mix.buffer5min;
+  const mixTotal = inputs.operations.buffers.reduce((s, b) => s + b.mixPct, 0);
   if (Math.abs(mixTotal - 100) > 0.01) {
     warnings.push(`Transfer buffer mix totals ${mixTotal.toFixed(2)}% — it must total 100%.`);
   }

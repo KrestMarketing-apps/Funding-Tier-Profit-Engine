@@ -25,7 +25,7 @@ export interface BackendBrand {
 
 // ── Employees / roster ───────────────────────────────────────────────────────
 
-export type EmployeeType = 'inhouse' | 'bpo';
+export type EmployeeType = 'inhouse' | 'bpo' | 'owner' | 'manager';
 export type EmployeeRole = 'opener' | 'closer' | 'hybrid';
 export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
@@ -59,6 +59,28 @@ export interface Employee {
   shifts: WeekShifts;
   /** Commission-only reps cost $0 in labor but still consume capacity. */
   commissionOnly: boolean;
+  /**
+   * Managers and owner-operators earn an override on the deals their team
+   * closes, on top of anything they close themselves. 0.1%-0.25% is the band.
+   */
+  overridePct: number;
+  /** Team this person belongs to. Managers earn the override on their own team. */
+  teamId: string;
+}
+
+export const TEAM_UNASSIGNED = 'house';
+
+export type OverrideBase = 'enrolledVolume' | 'repCommission' | 'ftRevenue';
+
+export interface OverridePolicy {
+  enabled: boolean;
+  base: OverrideBase;
+  minPct: number;
+  maxPct: number;
+  /** Managers earn the override on deals they personally closed too. */
+  includeOwnDeals: boolean;
+  /** Months between a deal closing and the override reaching the manager. */
+  payoutLagMonths: number;
 }
 
 export interface LaborPolicy {
@@ -105,23 +127,88 @@ export interface RampInputs {
   horizonMonths: number;
 }
 
+export type BufferKey = 'buffer1min' | 'buffer2min' | 'buffer5min';
+
 export interface TransferMix {
   buffer1min: number;
   buffer2min: number;
   buffer5min: number;
 }
 
-export interface OperationsInputs {
+/**
+ * One buffer tier of the transfer funnel.
+ *
+ * A vendor routes a live call. If it disconnects before the buffer elapses it
+ * is a "dud" and is never billed — which is exactly why a longer buffer costs
+ * more per transfer. So each tier carries its own pass rate and its own close
+ * rate, and the only comparison that means anything is cost per CLOSED deal.
+ */
+export interface TransferBuffer {
+  key: BufferKey;
+  label: string;
+  /** Minutes a call must survive before it becomes billable. */
+  bufferMinutes: number;
+  /** Price per BILLED transfer. */
+  price: number;
+  /** Share of raw transfers routed on this tier (the three sum to 100). */
+  mixPct: number;
+  /** Share of raw transfers on this tier that survive the buffer and get billed. */
+  passRatePct: number;
+  /** Close rate on this tier, on the basis set by closeRateBasis. */
   closeRatePct: number;
+}
+
+/** Which denominator the close rate is quoted against. */
+export type CloseRateBasis = 'billed' | 'all';
+
+export interface OperationsInputs {
+  /** Legacy blended close rate. Kept in sync with the per-buffer tiers. */
+  closeRatePct: number;
+  closeRateBasis: CloseRateBasis;
+  buffers: TransferBuffer[];
   avgHandleMinutes: number;
   /** Qualified transfers an opener produces per paid hour. */
   openerTransfersPerHour: number;
-  transferMix: TransferMix;
   smsPerTransfer: number;
   emailPerTransfer: number;
   emailMonthlyCap: number;
   /** When true, deals are capped by closer talk-time capacity. */
   capDealsAtCapacity: boolean;
+}
+
+export interface BufferFunnel {
+  key: BufferKey;
+  label: string;
+  price: number;
+  mixPct: number;
+  passRatePct: number;
+  closeRatePct: number;
+  rawTransfers: number;
+  duds: number;
+  billedTransfers: number;
+  deals: number;
+  cost: number;
+  costPerDeal: number;
+}
+
+export interface TransferFunnel {
+  buffers: BufferFunnel[];
+  rawTransfers: number;
+  duds: number;
+  billedTransfers: number;
+  /** Billed ÷ raw, across the mix. */
+  blendedPassRatePct: number;
+  dudRatePct: number;
+  /** deals ÷ raw transfers taken. */
+  closeRateOnAllPct: number;
+  /** deals ÷ billed transfers. */
+  closeRateOnBilledPct: number;
+  /** Cost ÷ billed transfers. */
+  blendedPricePerBilled: number;
+  costPerClosedDeal: number;
+  totalCost: number;
+  /** Transfers the in-house opener pool covered, which are never purchased. */
+  openerCoveredRaw: number;
 }
 
 // ── Backend contract terms ───────────────────────────────────────────────────
@@ -215,6 +302,56 @@ export interface CostInputs {
 
 // ── Policy ───────────────────────────────────────────────────────────────────
 
+export interface DailyDealTier { minDealsPerDay: number; bonusPerDeal: number }
+export interface MonthlyVolumeTier { minDealsPerMonth: number; bonus: number }
+export interface BalancedBookTier { minMixPct: number; bonus: number }
+export interface LdEnrollmentTier { minEnrolledPerDay: number; bonus: number }
+
+export interface BonusPolicy {
+  enabled: boolean;
+  /** Working days per month used to convert monthly volume into daily rates. */
+  workingDaysPerMonth: number;
+  /**
+   * Deals do not arrive evenly. This multiplies a rep's average daily deal
+   * count on their good days, so daily thresholds can actually be reached.
+   * 1.0 = perfectly even. Raise it to match observed clumping.
+   */
+  dealConcentration: number;
+  /** Set > 0 to bypass the concentration model and state hit-days directly. */
+  manualHitDays3Plus: number;
+  manualHitDays5Plus: number;
+  dailyDeal: DailyDealTier[];
+  monthlyVolume: MonthlyVolumeTier[];
+  balancedBook: { minDeals: number; tiers: BalancedBookTier[] };
+  ldEnrollment: LdEnrollmentTier[];
+  /**
+   * Bonuses are provisional until the related files clear the clawback and
+   * chargeback windows. This holds back a share of accrued bonus.
+   */
+  provisionalHoldbackPct: number;
+  /**
+   * Months between the production month and the bonus hitting cash. Bonuses are
+   * earned on deals written, but paid with a later payroll — same arrears
+   * principle that keeps month 1 free of commission.
+   */
+  payoutLagMonths: number;
+}
+
+export interface BonusLine {
+  id: string;
+  label: string;
+  detail: string;
+  formula: string;
+  amount: number;
+}
+
+export interface BonusResult {
+  lines: BonusLine[];
+  total: number;
+  heldBack: number;
+  paid: number;
+}
+
 export interface ReservePolicy {
   targetMonthsOfOverhead: number;
   disputeRatePct: number;
@@ -252,6 +389,8 @@ export interface ModelInputs {
   costs: CostInputs;
   reservePolicy: ReservePolicy;
   hiringPolicy: HiringPolicy;
+  overridePolicy: OverridePolicy;
+  bonusPolicy: BonusPolicy;
   survivalCurves: Record<BackendKey, SurvivalCurveInputs>;
 }
 
@@ -319,6 +458,14 @@ export interface MonthRow {
   dealsByBackend: Record<BackendKey, number>;
   revenue: number;
   repCommission: number;
+  /** Override paid out in cash this month (accrued payoutLagMonths earlier). */
+  managerOverride: number;
+  /** Override accrued on this month's production. */
+  managerOverrideAccrued: number;
+  /** Bonuses accrued on this month's production. */
+  bonuses: BonusResult;
+  /** Bonus cash actually leaving the business this month. */
+  bonusPaid: number;
   overhead: number;
   transferCost: number;
   laborCost: number;
@@ -331,6 +478,7 @@ export interface MonthRow {
   event: string;
   notes: string;
   capacity: CapacityDetail;
+  funnel: TransferFunnel;
   costs: MonthlyCostBreakdown;
   partners: PartnerMonthDetail[];
 }
@@ -356,6 +504,8 @@ export interface ModelResults {
   totals: {
     revenue: number;
     repCommission: number;
+    managerOverride: number;
+    bonuses: number;
     overhead: number;
     transferCost: number;
     laborCost: number;

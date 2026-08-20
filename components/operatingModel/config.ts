@@ -1,6 +1,7 @@
 import type {
-  BackendBrand, BackendKey, Employee, ModelInputs, WeekShifts, DayKey,
+  BackendBrand, BackendKey, Employee, EmployeeType, ModelInputs, WeekShifts, DayKey,
 } from './types';
+import { TEAM_UNASSIGNED } from './types';
 import { sharedCosts, sharedLegacy, sharedLevelDebt, sharedShield } from './sharedTerms';
 
 export const WEEKS_PER_MONTH = 52 / 12; // 4.3333…
@@ -60,28 +61,62 @@ export const IN_HOUSE_MIN_WAGE = 16.9;
 export const BPO_RATE_MIN = 3;
 export const BPO_RATE_MAX = 8;
 
+export const EMPLOYEE_TYPE_LABEL: Record<EmployeeType, string> = {
+  inhouse: 'In-House / CA',
+  bpo: 'BPO / Overseas',
+  owner: 'Owner Operator',
+  manager: 'Manager / Team Lead',
+};
+
+/** Types that earn an override on their team's closed deals. */
+export const OVERRIDE_TYPES: EmployeeType[] = ['manager', 'owner'];
+
 let seq = 0;
 export function newEmployeeId(): string {
   seq += 1;
   return `emp_${seq}_${Math.round(seq * 7919) % 99991}`;
 }
 
+const DEFAULT_NAME: Record<EmployeeType, string> = {
+  inhouse: 'In-House Closer',
+  bpo: 'BPO Agent',
+  owner: 'Owner Operator',
+  manager: 'Team Lead',
+};
+
+/** Per-type defaults, so switching type in the roster does the sensible thing. */
+export function typeDefaults(type: EmployeeType) {
+  switch (type) {
+    case 'owner':
+      // Owner-operators take no hourly wage — they are paid by the business.
+      return { hourlyRate: 0, unpaidBreakMinutes: 0, otEligible: false, commissionOnly: true, overridePct: 0.25, role: 'closer' as const };
+    case 'manager':
+      return { hourlyRate: IN_HOUSE_MIN_WAGE, unpaidBreakMinutes: 60, otEligible: true, commissionOnly: false, overridePct: 0.15, role: 'closer' as const };
+    case 'bpo':
+      return { hourlyRate: 5, unpaidBreakMinutes: 0, otEligible: false, commissionOnly: false, overridePct: 0, role: 'opener' as const };
+    default:
+      return { hourlyRate: IN_HOUSE_MIN_WAGE, unpaidBreakMinutes: 60, otEligible: true, commissionOnly: false, overridePct: 0, role: 'closer' as const };
+  }
+}
+
 export function makeEmployee(partial: Partial<Employee> = {}): Employee {
   const type = partial.type ?? 'inhouse';
-  const isInHouse = type === 'inhouse';
+  const d = typeDefaults(type);
   return {
     id: partial.id ?? newEmployeeId(),
-    name: partial.name ?? (isInHouse ? 'In-House Closer' : 'BPO Agent'),
+    name: partial.name ?? DEFAULT_NAME[type],
     type,
-    role: partial.role ?? (isInHouse ? 'closer' : 'opener'),
-    hourlyRate: partial.hourlyRate ?? (isInHouse ? IN_HOUSE_MIN_WAGE : 5),
-    unpaidBreakMinutes: partial.unpaidBreakMinutes ?? (isInHouse ? 60 : 0),
-    otEligible: partial.otEligible ?? isInHouse,
+    role: partial.role ?? d.role,
+    hourlyRate: partial.hourlyRate ?? d.hourlyRate,
+    unpaidBreakMinutes: partial.unpaidBreakMinutes ?? d.unpaidBreakMinutes,
+    otEligible: partial.otEligible ?? d.otEligible,
     hybridCloserSharePct: partial.hybridCloserSharePct ?? 50,
     startMonth: partial.startMonth ?? 1,
     endMonth: partial.endMonth ?? null,
     shifts: partial.shifts ?? defaultShifts(),
-    commissionOnly: partial.commissionOnly ?? false,
+    commissionOnly: partial.commissionOnly ?? d.commissionOnly,
+    overridePct: partial.overridePct ?? d.overridePct,
+    teamId: partial.teamId ?? TEAM_UNASSIGNED,
   };
 }
 
@@ -90,11 +125,8 @@ export function makeEmployee(partial: Partial<Employee> = {}): Employee {
 // commission-only, expressed as real people instead of abstract "seats".
 export function defaultRoster(): Employee[] {
   return [
-    makeEmployee({ name: 'Closer 1 — In-House', type: 'inhouse', role: 'closer', hourlyRate: IN_HOUSE_MIN_WAGE }),
-    makeEmployee({
-      name: 'Closer 2 — Commission Only', type: 'inhouse', role: 'closer',
-      hourlyRate: 0, commissionOnly: true, otEligible: false,
-    }),
+    makeEmployee({ name: 'Owner Operator', type: 'owner', role: 'closer', teamId: 'team-a' }),
+    makeEmployee({ name: 'Closer 1 — In-House', type: 'inhouse', role: 'closer', teamId: 'team-a' }),
   ];
 }
 
@@ -116,10 +148,21 @@ export const DEFAULT_INPUTS: ModelInputs = {
 
   operations: {
     closeRatePct: 15,
+    // Which denominator the close rates below are quoted against. Check one
+    // vendor invoice (billed transfers) against the CRM (raw transfers taken)
+    // and set this once — it decides whether transfer spend falls.
+    closeRateBasis: 'billed',
+    buffers: [
+      // price: 2-min corrected from $15 to $14.
+      // passRatePct: share of raw transfers that survive the buffer and get
+      // billed. ESTIMATES — the longer the buffer, the fewer survive, which is
+      // exactly what the higher price buys. Calibrate from vendor invoices.
+      { key: 'buffer1min', label: '1-minute buffer', bufferMinutes: 1, price: 8, mixPct: 40, passRatePct: 85, closeRatePct: 15 },
+      { key: 'buffer2min', label: '2-minute buffer', bufferMinutes: 2, price: 14, mixPct: 60, passRatePct: 70, closeRatePct: 15 },
+      { key: 'buffer5min', label: '5-minute buffer', bufferMinutes: 5, price: 55, mixPct: 0, passRatePct: 40, closeRatePct: 15 },
+    ],
     avgHandleMinutes: 65,
     openerTransfersPerHour: 2,
-    // CHANGED: was 33.34 / 33.33 / 33.33
-    transferMix: { buffer1min: 40, buffer2min: 60, buffer5min: 0 },
     smsPerTransfer: 2,
     emailPerTransfer: 3,
     emailMonthlyCap: 5000,
@@ -159,6 +202,54 @@ export const DEFAULT_INPUTS: ModelInputs = {
 
   reservePolicy: { targetMonthsOfOverhead: 6, disputeRatePct: 0.5 },
 
+  overridePolicy: {
+    enabled: true,
+    // Percentage of the enrolled debt volume the manager's team closed. Same
+    // basis as Level Debt's own graduated commission, and the only base where
+    // 0.1%-0.25% produces a number that matters.
+    base: 'enrolledVolume',
+    minPct: 0.1,
+    maxPct: 0.25,
+    includeOwnDeals: true,
+    payoutLagMonths: 1,
+  },
+
+  // Straight from the agent incentive reference.
+  bonusPolicy: {
+    enabled: true,
+    workingDaysPerMonth: 21.7,
+    dealConcentration: 1.6,
+    manualHitDays3Plus: 0,
+    manualHitDays5Plus: 0,
+    dailyDeal: [
+      { minDealsPerDay: 3, bonusPerDeal: 50 },
+      { minDealsPerDay: 5, bonusPerDeal: 75 },
+    ],
+    monthlyVolume: [
+      { minDealsPerMonth: 8, bonus: 300 },
+      { minDealsPerMonth: 12, bonus: 600 },
+      { minDealsPerMonth: 17, bonus: 1000 },
+      { minDealsPerMonth: 23, bonus: 1500 },
+      { minDealsPerMonth: 30, bonus: 2250 },
+    ],
+    balancedBook: {
+      minDeals: 5,
+      tiers: [
+        { minMixPct: 30, bonus: 100 },
+        { minMixPct: 50, bonus: 250 },
+        { minMixPct: 70, bonus: 500 },
+      ],
+    },
+    ldEnrollment: [
+      { minEnrolledPerDay: 75000, bonus: 75 },
+      { minEnrolledPerDay: 100000, bonus: 125 },
+    ],
+    // Bonuses are provisional until the files clear the clawback and
+    // chargeback windows, so a share is withheld from the month's payout.
+    provisionalHoldbackPct: 0,
+    payoutLagMonths: 1,
+  },
+
   hiringPolicy: {
     // OFF by default. Volume now derives from employed closer hours, so adding
     // a seat adds volume — utilization sits at ~100% by construction and an
@@ -179,6 +270,8 @@ export const DEFAULT_INPUTS: ModelInputs = {
       hybridCloserSharePct: 50,
       shifts: defaultShifts(),
       commissionOnly: false,
+      overridePct: 0,
+      teamId: TEAM_UNASSIGNED,
     },
   },
 
