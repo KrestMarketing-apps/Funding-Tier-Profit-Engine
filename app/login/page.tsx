@@ -14,7 +14,9 @@ export default function Login({
       <form method="POST" action="/api/login"
         style={{width:"100%",maxWidth:380,background:"#fff",border:"1px solid #e2e8f0",
           borderRadius:16,padding:32,boxShadow:"0 10px 30px rgba(15,23,42,.08)"}}>
-        <div style={{width:48,height:48,borderRadius:"50%",background:"#0f9b8e",margin:"0 auto 20px"}} />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/apple-touch-icon.png" alt="Funding Tier" width={56} height={56}
+          style={{display:"block",margin:"0 auto 20px"}} />
         <h1 style={{margin:"0 0 6px",fontSize:19,fontWeight:800,color:"#0f172a",textAlign:"center"}}>
           Funding Tier
         </h1>
