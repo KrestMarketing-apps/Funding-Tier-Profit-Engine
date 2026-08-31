@@ -1,3 +1,5 @@
+import { p } from "../lib/paths";
+
 export const metadata = {
   title: "Funding Tier Profit Engine",
   description: "Funding Tier Profit Engine",
@@ -10,6 +12,14 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      {/* Written by hand rather than via the metadata API: the app is served
+          under a sub-path, and these hrefs need the prefix applied explicitly. */}
+      <head>
+        <link rel="icon" href={p("/favicon.ico")} sizes="any" />
+        <link rel="icon" type="image/png" sizes="32x32" href={p("/favicon-32x32.png")} />
+        <link rel="apple-touch-icon" sizes="180x180" href={p("/apple-touch-icon.png")} />
+        <meta name="theme-color" content="#0f9b8e" />
+      </head>
       <body style={{ margin: 0, padding: 0 }}>{children}</body>
     </html>
   );
