@@ -1,5 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextFetchEvent, NextRequest, NextResponse } from "next/server";
 import { COOKIE, readSession, type Role } from "./lib/session";
+import { url } from "./lib/paths";
+import { logAccess } from "./lib/audit";
 
 /**
  * Agent Tools is the commission simulator — everyone with a Krest Marketing
@@ -7,10 +9,10 @@ import { COOKIE, readSession, type Role } from "./lib/session";
  */
 const ALLOWED_ROLES: Role[] = ["admin", "agent"];
 
-// Reachable without a session. /login is a plain server-rendered form and /ghl
-// carries its script inline, so neither needs a JS bundle — which is why
-// /_next/* can stay gated and the app's compiled code stays private.
-const OPEN = ["/login", "/api/login", "/ghl", "/api/ghl-sso", "/no-access"];
+// Reachable without a session. /login carries its script inline and needs no
+// JS bundle, which is why /_next/* can stay gated and the app's compiled code
+// stays private.
+const OPEN = ["/login", "/ghl", "/api/ghl-sso", "/no-access"];
 const OPEN_FILES = [
   "/favicon.ico",
   "/favicon-32x32.png",
@@ -18,14 +20,21 @@ const OPEN_FILES = [
   "/android-chrome-192x192.png",
 ];
 
-export async function middleware(req: NextRequest) {
-  const secret = process.env.SESSION_SECRET || process.env.SITE_PASSWORD;
+function redirect(req: NextRequest, path: string, search = "") {
+  const res = NextResponse.redirect(url(req.nextUrl.origin, path, search), 307);
+  res.headers.set("x-robots-tag", "noindex, nofollow");
+  return res;
+}
+
+export async function middleware(req: NextRequest, event: NextFetchEvent) {
+  const secret = process.env.SESSION_SECRET;
   if (!secret) {
     return new NextResponse("This site is not configured for access yet.", { status: 503 });
   }
 
+  // Next strips basePath before middleware sees it, so these stay unprefixed.
   const { pathname } = req.nextUrl;
-  if (OPEN.some((p) => pathname === p || pathname.startsWith(p + "/")) || OPEN_FILES.includes(pathname)) {
+  if (OPEN.some((o) => pathname === o || pathname.startsWith(o + "/")) || OPEN_FILES.includes(pathname)) {
     return NextResponse.next();
   }
 
@@ -33,6 +42,7 @@ export async function middleware(req: NextRequest) {
 
   if (session && ALLOWED_ROLES.includes(session.role)) {
     const res = NextResponse.next();
+    // Handy for server components and for support questions ("who was this?").
     res.headers.set("x-ft-user", session.email);
     res.headers.set("x-ft-role", session.role);
     return res;
@@ -44,12 +54,8 @@ export async function middleware(req: NextRequest) {
     return new NextResponse(null, { status: 404 });
   }
 
-  const url = req.nextUrl.clone();
-  url.pathname = "/login";
-  url.search = pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`;
-  const res = NextResponse.redirect(url);
-  res.headers.set("x-robots-tag", "noindex, nofollow");
-  return res;
+
+  return redirect(req, "/login", pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`);
 }
 
 export const config = { matcher: ["/(.*)"] };

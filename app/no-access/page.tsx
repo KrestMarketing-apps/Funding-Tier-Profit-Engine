@@ -1,3 +1,5 @@
+import { p as path } from "../../lib/paths";
+
 export const dynamic = "force-dynamic";
 
 export default function NoAccess() {
@@ -16,7 +18,7 @@ export default function NoAccess() {
       <div style={{ textAlign: "center", maxWidth: 400 }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/apple-touch-icon.png"
+          src={path("/apple-touch-icon.png")}
           alt="Funding Tier"
           width={56}
           height={56}
