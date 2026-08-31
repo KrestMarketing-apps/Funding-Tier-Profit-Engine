@@ -58,4 +58,3 @@ export async function middleware(req: NextRequest, event: NextFetchEvent) {
   return redirect(req, "/login", pathname === "/" ? "" : `?next=${encodeURIComponent(pathname)}`);
 }
 
-export const config = { matcher: ["/(.*)"] };
