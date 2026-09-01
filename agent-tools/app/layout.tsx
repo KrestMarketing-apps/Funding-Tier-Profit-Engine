@@ -18,7 +18,10 @@ export default function RootLayout({
         <link rel="apple-touch-icon" sizes="180x180" href={p("/apple-touch-icon.png")} />
         <meta name="theme-color" content="#0f9b8e" />
       </head>
-      <body style={{ margin: 0, padding: 0 }}>{children}</body>
+            <body style={{ margin: 0, padding: 0 }}>
+        {children}
+        <script src="https://ai.fundingtier.com/toolkit.js" defer />
+      </body>
     </html>
   );
 }
