@@ -83,7 +83,7 @@ export const shield = {
 // Billable Payout Simulator. Nothing is reimplemented here.
 import {
   elpDraftMonthly, elpFinalPayment, elpMaxTerm, elpPaymentForMonth,
-  elpSchedule, elpScheduledPayment, elpTierRateForFiles,
+  elpSchedule, elpScheduledPayment, elpTierRateForFiles, elpTerm,
   type ElpTerms as EngineElpTerms,
 } from '../legacyEngine';
 
@@ -101,6 +101,7 @@ function engineTerms(terms: LegacyTerms, monthlyFiles?: number): EngineElpTerms 
     maintFee: terms.maintenanceFee,
     split: terms.splitSchedule,
     tierRate: monthlyFiles == null ? terms.tier1Rate : elpTierRateForFiles(monthlyFiles),
+    term: terms.targetTerm,
   };
 }
 
@@ -110,11 +111,17 @@ export const legacy = {
     return toCents(avgDebt * terms.feeRate);
   },
   /**
-   * Program length. The $250 floor applies to the client's DRAFT, so the
-   * service fee only has to cover what is left after maintenance and draft
-   * fees — which is why the term runs far longer than fee / $250 suggests.
+   * The term deals are actually written at, clamped by what the $250 draft
+   * floor allows. The floor is a minimum on the CLIENT DRAFT, not the term —
+   * treating the longest permitted term as the default understates ELP on
+   * both axes, since months 1-2 pass through in full and a longer term pushes
+   * more of the fee past them into the tier-rate phase.
    */
   getMaxTerm(avgDebt: number, terms: LegacyTerms): number {
+    return elpTerm(avgDebt, engineTerms(terms));
+  },
+  /** Longest term the $250 floor permits — the ceiling, not the default. */
+  getTermCap(avgDebt: number, terms: LegacyTerms): number {
     return elpMaxTerm(avgDebt, terms.feeRate * 100, terms.maintenanceFee, terms.splitSchedule);
   },
   /** Draft fee charged per month — doubled on a split schedule. */

@@ -252,6 +252,8 @@ export interface LegacyTerms {
   maintenanceFee: number;
   splitSchedule: boolean;
   maxTerm: number;
+  /** Program length actually written, clamped by the $250 draft floor. */
+  targetTerm: number;
   tier1Rate: number;
   tier2Rate: number;
   tier2FileThreshold: number;

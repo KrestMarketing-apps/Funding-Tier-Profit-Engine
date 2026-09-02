@@ -40,7 +40,21 @@ export type ElpTerms = {
   maintFee: number;     // 80 or 120
   split: boolean;       // two drafts per month instead of one
   tierRate: number;     // 0.60 / 0.65
+  /**
+   * Program length in months. The $250 minimum is a FLOOR on the client draft,
+   * not a target — the term is really set by what the client can afford, so it
+   * has to be an input rather than an assumption.
+   *
+   * Leaving this undefined falls back to the longest term the floor allows,
+   * which is the most conservative case on both axes: a longer term pushes
+   * more of the fee past month 2 into the tier-rate phase, so it earns less in
+   * total AND earns it later. Callers should set it.
+   */
+  term?: number;
 };
+
+/** Typical program length when nothing more specific is known. */
+export const ELP_DEFAULT_TARGET_TERM = 48;
 
 export type ElpSchedule = {
   eligible: boolean;
@@ -120,10 +134,41 @@ export function elpMaxTerm(debt: number, feeRatePct: number, maintFee: number, s
   return clamp(Math.floor((debt * (feeRatePct / 100)) / headroom), ELP_TERM_MIN, ELP_TERM_MAX);
 }
 
+/**
+ * The term actually used: the caller's chosen term, clamped to what the $250
+ * floor permits. Falls back to the longest allowed term when unset.
+ */
+export function elpTerm(debt: number, terms: ElpTerms): number {
+  const cap = elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split);
+  if (terms.term == null) return cap;
+  return clamp(Math.round(terms.term), ELP_TERM_MIN, cap);
+}
+
+/** Client draft implied by a given term. */
+export function elpDraftForTerm(debt: number, terms: ElpTerms, term: number): number {
+  if (debt < ELP_MIN_DEBT || term < 1) return 0;
+  const total = round2(debt * (terms.feeRatePct / 100));
+  return round2(floorCents(total / term) + terms.maintFee + elpDraftMonthly(terms.split));
+}
+
+/**
+ * Term implied by a client draft the customer can afford. Rounds the term UP
+ * so the resulting draft lands at or below what they said they could pay, then
+ * clamps to the longest term the $250 floor allows — so the answer is always
+ * both affordable and legal.
+ */
+export function elpTermForDraft(debt: number, terms: ElpTerms, targetDraft: number): number {
+  const cap = elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split);
+  const headroom = targetDraft - terms.maintFee - elpDraftMonthly(terms.split);
+  if (headroom <= 0 || debt < ELP_MIN_DEBT) return cap;
+  const total = round2(debt * (terms.feeRatePct / 100));
+  return clamp(Math.ceil(total / headroom), ELP_TERM_MIN, cap);
+}
+
 export function elpSchedule(debt: number, terms: ElpTerms): ElpSchedule {
   const eligible = debt >= ELP_MIN_DEBT;
   const draftMonthly = elpDraftMonthly(terms.split);
-  const term = eligible ? elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split) : 0;
+  const term = eligible ? elpTerm(debt, terms) : 0;
   const serviceFeeTotal   = eligible ? round2(debt * (terms.feeRatePct / 100)) : 0;
   // Truncated to the cent, matching the scheduled draft the client actually
   // pays. The final month carries the leftover cents (see elpFinalPayment);
@@ -208,14 +253,14 @@ export function elpExpectedRepCost(debt: number, effP2Pct: number, effP4Pct: num
 
 /** Service fee portion of every draft except the last. */
 export function elpScheduledServiceFee(debt: number, terms: ElpTerms): number {
-  const term = elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split);
+  const term = elpTerm(debt, terms);
   if (term <= 0) return 0;
   return floorCents(round2(debt * (terms.feeRatePct / 100)) / term);
 }
 
 /** Service fee portion of the final draft — carries the rounding remainder. */
 export function elpFinalServiceFee(debt: number, terms: ElpTerms): number {
-  const term = elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split);
+  const term = elpTerm(debt, terms);
   if (term <= 0) return 0;
   const total = round2(debt * (terms.feeRatePct / 100));
   return round2(total - elpScheduledServiceFee(debt, terms) * (term - 1));
@@ -235,7 +280,7 @@ export function elpFinalPayment(debt: number, terms: ElpTerms): number {
 
 /** Client draft in a given deal month, exact to the cent. */
 export function elpPaymentForMonth(debt: number, terms: ElpTerms, dealMonth?: number): number {
-  const term = elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split);
+  const term = elpTerm(debt, terms);
   if (dealMonth != null && dealMonth >= term) return elpFinalPayment(debt, terms);
   return elpScheduledPayment(debt, terms);
 }

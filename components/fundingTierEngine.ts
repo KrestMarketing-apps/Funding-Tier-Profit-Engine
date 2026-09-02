@@ -7,6 +7,7 @@
 import {
   ELP_MIN_DEBT, ELP_MIN_PAYMENT, ELP_DRAFT_FEE, ELP_TERM_MAX,
   ELP_TIER_RATE_BASE, ELP_TIER_RATE_HIGH, ELP_TIER_RATE_FILE_THRESHOLD,
+  ELP_DEFAULT_TARGET_TERM,
   elpDraftMonthly, elpMaxTerm, elpSchedule, elpScheduledPayment,
   elpFinalPayment, elpPaymentForMonth, elpTierRateForFiles,
   type ElpTerms,
@@ -91,6 +92,13 @@ export interface Assumptions {
     /** Two drafts a month instead of one. Only the draft fee doubles. */
     splitSchedule: boolean;
     maxTerm: number;
+    /**
+     * Program length actually written, clamped by what the $250 floor allows.
+     * The floor is a minimum on the draft, not the term the deal gets sold at
+     * — assuming the longest permitted term understates both how much ELP
+     * earns and how fast, because months 1-2 pass through in full.
+     */
+    targetTerm: number;
     tier1Rate: number;
     tier2Rate: number;
     tier2FileThreshold: number;
@@ -197,6 +205,7 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
     maintenanceFee: 80,
     splitSchedule: false,
     maxTerm: ELP_TERM_MAX,
+    targetTerm: ELP_DEFAULT_TARGET_TERM,
     tier1Rate: ELP_TIER_RATE_BASE,
     tier2Rate: ELP_TIER_RATE_HIGH,
     tier2FileThreshold: ELP_TIER_RATE_FILE_THRESHOLD,
@@ -354,6 +363,7 @@ export function legacyTermsFor(a: Assumptions, feeRate?: number, monthlyFiles?: 
     maintFee: a.legacy.maintenanceFee,
     split: a.legacy.splitSchedule,
     tierRate: monthlyFiles == null ? a.legacy.tier1Rate : elpTierRateForFiles(monthlyFiles),
+    term: a.legacy.targetTerm,
   };
 }
 
