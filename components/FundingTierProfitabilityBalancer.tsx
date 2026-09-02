@@ -1132,12 +1132,114 @@ function ProgramAccordion({ program, open, onToggle }: {
 }
 
 // ─────────────────────────────────────────────
+// PAYMENT / TERM TRADE-OFF
+//
+// The client-facing question on an attorney-model program is always the same:
+// "can you lower my payment?" The answer is yes, and the cost is months. This
+// lays both sides out — what the client pays, how long they pay it, and what
+// Funding Tier earns — so the trade can be shown rather than argued.
+// ─────────────────────────────────────────────
+
+function PaymentTermTradeoff({ debtAmount, terms, sched, csPayment, csTerm, ldRevenue, onPick }: {
+  debtAmount:number; terms:ElpTerms; sched:ElpSchedule;
+  csPayment:number; csTerm:number; ldRevenue:number; onPick:(draft:number)=>void;
+}) {
+  const capTerm = elpMaxTerm(debtAmount, terms.feeRatePct, terms.maintFee, terms.split);
+  const current = sched.term;
+
+  // Terms spanning the current program out to the longest the floor allows.
+  const candidates = Array.from(new Set(
+    [current,
+     Math.round(current + (capTerm - current) * 0.33),
+     Math.round(current + (capTerm - current) * 0.66),
+     capTerm].filter(t => t >= ELP_TERM_MIN && t <= capTerm)
+  )).sort((a, b) => a - b);
+
+  if (!sched.eligible || candidates.length === 0) return null;
+
+  const rows = candidates.map(t => {
+    const s = elpSchedule(debtAmount, { ...terms, term: t });
+    const be = elpBreakEven(ldRevenue, s);
+    return {
+      term: t, draft: s.grossPayment, full: elpFullRevenue(s), be,
+      deltaMonths: t - current, deltaDraft: round2(s.grossPayment - sched.grossPayment),
+      isCurrent: t === current,
+    };
+  });
+
+  return (
+    <div style={{ marginTop:14, border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
+      <div style={{ padding:"10px 13px", background:"#f8fafc", borderBottom:"1px solid #e2e8f0" }}>
+        <div style={{ fontSize:13, fontWeight:800, color:"#0f172a" }}>Payment vs term — what a lower draft costs</div>
+        <div style={{ fontSize:12, color:"#64748b", marginTop:2, lineHeight:1.6 }}>
+          The service fee is fixed at {money.format(sched.serviceFeeTotal)} ({terms.feeRatePct}% of {money.format(debtAmount)}),
+          so a lower payment does not reduce what the client owes — it spreads it over more months.
+          Click a row to model it.
+        </div>
+      </div>
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead><tr style={{ background:"#fff" }}>
+            {["Client draft","Term","vs current","Full-term revenue","Break-even vs LD"].map(h =>
+              <th key={h} style={{ ...TH, color:FT_CYAN_DARK }}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.term} onClick={() => onPick(r.draft)}
+                style={{ background:r.isCurrent ? FT_CYAN+"14" : "#fff", cursor:"pointer" }}>
+                <td style={{ ...TD, fontWeight:800, color:r.isCurrent?FT_CYAN_DARK:"#0f172a" }}>
+                  {money.format(r.draft)}/mo
+                  {r.isCurrent && <span style={{ marginLeft:6, fontSize:10, background:FT_CYAN+"26", color:FT_CYAN_DARK, fontWeight:800, padding:"1px 6px", borderRadius:99 }}>CURRENT</span>}
+                </td>
+                <td style={TD}>{r.term} mo</td>
+                <td style={{ ...TD, color:r.deltaMonths===0?"#94a3b8":"#475569" }}>
+                  {r.deltaMonths===0 ? "—"
+                    : `${money.format(r.deltaDraft)}/mo · +${r.deltaMonths} mo`}
+                </td>
+                <td style={{ ...TD, fontWeight:700 }}>{money.format(r.full)}</td>
+                <td style={{ ...TD, borderRight:"none", color:r.be?FT_AMBER:"#94a3b8", fontWeight:700 }}>
+                  {r.be ? `Month ${r.be}` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {csPayment > 0 && (() => {
+        const elpDraft = sched.grossPayment;
+        const gap      = round2(elpDraft - csPayment);
+        const matched  = Math.abs(gap) <= 10;      // within rounding of the CS payment
+        const dMonths  = current - csTerm;
+        const mo       = (n: number) => `${n} month${n === 1 ? "" : "s"}`;
+        const lengthPhrase = dMonths === 0 ? "the same length"
+          : dMonths < 0 ? `${mo(-dMonths)} shorter`
+          : `${mo(dMonths)} longer`;
+        return (
+          <div style={{ padding:"9px 13px", borderTop:"1px solid #e2e8f0", background:"#f8fafc",
+            fontSize:12, color:"#475569", lineHeight:1.65 }}>
+            <strong style={{ color:FT_BLUE }}>Against Consumer Shield:</strong> {money.format(csPayment)}/mo for {csTerm} months.
+            {matched
+              ? ` At a matched payment ELP runs ${current} months — ${lengthPhrase}.`
+              : gap > 0
+                ? ` ELP cannot go that low here — its floor is ${money.format(elpDraft)}/mo, ${money.format(gap)} more, over ${current} months (${lengthPhrase}).`
+                : ` ELP runs ${money.format(elpDraft)}/mo over ${current} months — ${money.format(-gap)} less per month, ${lengthPhrase}.`}
+            {" "}The programs resolve debt differently, so this compares cost and duration, not outcome.
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // ELP PROGRAM TERMS PANEL
 // ─────────────────────────────────────────────
 
-function ElpTermsPanel({ terms, onChange, sched, debtAmount, files, targetDraft, onDraftChange }: {
+function ElpTermsPanel({ terms, onChange, sched, debtAmount, files, targetDraft, onDraftChange,
+  csPayment, csTerm, ldRevenue }: {
   terms:ElpTerms; onChange:(t:ElpTerms)=>void; sched:ElpSchedule; debtAmount:number; files:number;
   targetDraft:number|null; onDraftChange:(v:number|null)=>void;
+  csPayment:number; csTerm:number; ldRevenue:number;
 }) {
   const floorOk = sched.eligible && sched.grossPayment >= 250;
   const capTerm  = elpMaxTerm(debtAmount, terms.feeRatePct, terms.maintFee, terms.split);
@@ -1174,11 +1276,11 @@ function ElpTermsPanel({ terms, onChange, sched, debtAmount, files, targetDraft,
               Client Monthly Draft
             </span>
             <button onClick={() => onDraftChange(null)}
-              title={`Reset to a ${ELP_DEFAULT_TARGET_TERM}-month program`}
+              title={csPayment > 0 ? `Reset to the Consumer Shield payment (${money.format(csPayment)}/mo)` : `Reset to a ${ELP_DEFAULT_TARGET_TERM}-month program`}
               style={{ border:"none", borderRadius:99, cursor:isAuto?"default":"pointer",
                 padding:"1px 7px", fontSize:9, fontWeight:800, letterSpacing:0.3,
                 background:isAuto?FT_CYAN+"22":"#e2e8f0", color:isAuto?FT_CYAN_DARK:"#64748b" }}>
-              {isAuto ? `AUTO ${ELP_DEFAULT_TARGET_TERM}MO` : "RESET"}
+              {isAuto ? (csPayment > 0 ? "MATCHED TO CS" : `AUTO ${ELP_DEFAULT_TARGET_TERM}MO`) : "RESET"}
             </button>
           </div>
           <input type="number" value={sched.eligible ? Math.round(sched.grossPayment) : 0}
@@ -1193,6 +1295,14 @@ function ElpTermsPanel({ terms, onChange, sched, debtAmount, files, targetDraft,
           <div style={{ fontSize:11, color:"#94a3b8" }}>
             Drag for term · floor {money.format(minDraft)}/mo at {capTerm} mo
           </div>
+          {csPayment > 0 && (
+            <div style={{ fontSize:11, marginTop:2, fontWeight:700,
+              color: minDraft > csPayment ? FT_AMBER : "#64748b" }}>
+              {minDraft > csPayment
+                ? `⚠ Cannot match CS ${money.format(csPayment)}/mo — ELP floor is ${money.format(minDraft)}`
+                : `Consumer Shield charges ${money.format(csPayment)}/mo for ${csTerm} mo`}
+            </div>
+          )}
         </div>
         <div>
           <div style={{ fontSize:12, fontWeight:800, color:FT_CYAN_DARK, marginBottom:5, textTransform:"uppercase", letterSpacing:0.3 }}>
@@ -1270,6 +1380,8 @@ function ElpTermsPanel({ terms, onChange, sched, debtAmount, files, targetDraft,
               ⚠ Derived draft of {money.format(sched.grossPayment)} sits under the $250 floor. Raise the fee rate or lower the maintenance fee.
             </div>
           )}
+          <PaymentTermTradeoff debtAmount={debtAmount} terms={terms} sched={sched}
+            csPayment={csPayment} csTerm={csTerm} ldRevenue={ldRevenue} onPick={onDraftChange} />
         </>
       )}
     </div>
@@ -1400,12 +1512,19 @@ export default function FundingTierProfitabilityBalancer() {
    * smaller debt. Resolve it against whatever debt is being analysed rather
    * than pinning one term across every deal size.
    */
-  const elpTermsFor = useCallback((debt: number): ElpTerms => ({
-    ...elpBaseTerms,
-    term: elpTargetDraft == null
-      ? ELP_DEFAULT_TARGET_TERM
-      : elpTermForDraft(debt, elpBaseTerms, elpTargetDraft),
-  }), [elpBaseTerms, elpTargetDraft]);
+  const elpTermsFor = useCallback((debt: number): ElpTerms => {
+    // Default the client draft to whatever Consumer Shield would charge on the
+    // same deal. That makes the two programs comparable on the one number the
+    // client actually feels — the monthly payment — instead of comparing a
+    // 36-month CS program against an ELP program stretched to the $250 floor.
+    const target = elpTargetDraft ?? getProgram(debt)?.payment ?? null;
+    return {
+      ...elpBaseTerms,
+      term: target == null
+        ? ELP_DEFAULT_TARGET_TERM
+        : elpTermForDraft(debt, elpBaseTerms, target),
+    };
+  }, [elpBaseTerms, elpTargetDraft]);
 
   const elpTerms = useMemo(() => elpTermsFor(debtAmount), [elpTermsFor, debtAmount]);
 
@@ -1670,6 +1789,7 @@ export default function FundingTierProfitabilityBalancer() {
         {/* ELP program terms */}
         <ElpTermsPanel terms={elpTerms} sched={deal.elp.schedule} debtAmount={debtAmount} files={portfolioDeals}
           targetDraft={elpTargetDraft} onDraftChange={setElpTargetDraft}
+          csPayment={deal.cs.payment} csTerm={deal.cs.term} ldRevenue={deal.ld.expectedRevenue}
           onChange={t => { setElpFeeRate(t.feeRatePct); setElpMaintFee(t.maintFee); setElpSplit(t.split); }} />
 
         {/* Snapshots */}
