@@ -201,12 +201,13 @@ export function buildTrace(inputs: ModelInputs, results: ModelResults, monthInde
       const last = legacy.getFinalPayment(debt, L);
       const draftFee = legacy.draftFeePerMonth(L);
       const headroom = L.minMonthlyPayment - L.maintenanceFee - draftFee;
+      const cap = legacy.getTermCap(debt, L);
       revRows.push({
         step: brand.name, what: 'Program term and scheduled draft',
-        formula: 'term = ⌊fee ÷ (min draft − maintenance − processing)⌋ · draft = service fee + maintenance + processing',
-        substitution: `${money2(fee)} ÷ (${money(L.minMonthlyPayment)} − ${money(L.maintenanceFee)} − ${money(draftFee)} = ${money(headroom)}) = ${term} mo; draft = ${money2(pay - L.maintenanceFee - draftFee)} + ${money(L.maintenanceFee)} + ${money(draftFee)} = ${money2(pay)}`,
+        formula: 'term = written term, capped at ⌊fee ÷ (min draft − maintenance − processing)⌋ · draft = service fee + maintenance + processing',
+        substitution: `written ${L.targetTerm} mo, cap ⌊${money2(fee)} ÷ ${money(headroom)}⌋ = ${cap} mo → ${term} mo; draft = ${money2(pay - L.maintenanceFee - draftFee)} + ${money(L.maintenanceFee)} + ${money(draftFee)} = ${money2(pay)}`,
         result: `${term} × ${money2(pay)}`,
-        note: `The ${money(L.minMonthlyPayment)} floor is on the client draft, not the service fee — maintenance and processing already cover ${money(L.maintenanceFee + draftFee)} of it.${L.splitSchedule ? ' Split schedule: two drafts a month, so processing is charged twice and maintenance once.' : ''}${Math.abs(last - pay) >= 0.005 ? ` The final draft is ${money2(last)} so the client is billed exactly ${money2(fee)} in fees.` : ''}`,
+        note: `The ${money(L.minMonthlyPayment)} floor is a minimum on the client draft, not the term — it only caps how long the fee can be spread. A shorter term earns more and earns it sooner, since months 1–2 pass through in full.${L.splitSchedule ? ' Split schedule: two drafts a month, so processing is charged twice and maintenance once.' : ''}${Math.abs(last - pay) >= 0.005 ? ` The final draft is ${money2(last)} so the client is billed exactly ${money2(fee)} in fees.` : ''}`,
       });
       revRows.push({
         step: brand.name, what: 'Revenue per payment',

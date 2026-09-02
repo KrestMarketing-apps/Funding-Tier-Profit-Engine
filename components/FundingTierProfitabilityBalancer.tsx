@@ -6,6 +6,7 @@ import {
   ELP_BLOCKED_STATES, ELP_TIER_RATE_FILE_THRESHOLD,
   elpSchedule, elpRevenueAt, elpFullRevenue, elpBuildTimeline, elpBreakEven,
   elpRevenueAtFraction, elpExpectedRepCost, elpTierRateForFiles, getLcBand,
+  elpMaxTerm, elpDraftForTerm, elpTermForDraft, ELP_DEFAULT_TARGET_TERM, ELP_TERM_MIN,
   type ElpSchedule, type ElpTerms,
 } from "./legacyEngine";
 
@@ -624,7 +625,7 @@ function CashUrgencyPanel({ urgency, onChange, adjustedUrgency, stabilityPenalty
   const cards = [
     { key:"LD"  as const, pct:routing.ldPct,  blurb:"Fast 8% recognition — cash in the door by Month 3", res:analysis.ld },
     { key:"CS"  as const, pct:routing.csPct,  blurb:"Debt validation perpetuity — 36-month tail on most bands", res:analysis.cs },
-    { key:"ELP" as const, pct:routing.elpPct, blurb:"Attorney model — longest term, highest full-term ceiling", res:analysis.elp },
+    { key:"ELP" as const, pct:routing.elpPct, blurb:"Attorney model — term set by the client draft, highest full-term ceiling", res:analysis.elp },
   ];
 
   return (
@@ -1131,13 +1132,119 @@ function ProgramAccordion({ program, open, onToggle }: {
 }
 
 // ─────────────────────────────────────────────
+// PAYMENT / TERM TRADE-OFF
+//
+// The client-facing question on an attorney-model program is always the same:
+// "can you lower my payment?" The answer is yes, and the cost is months. This
+// lays both sides out — what the client pays, how long they pay it, and what
+// Funding Tier earns — so the trade can be shown rather than argued.
+// ─────────────────────────────────────────────
+
+function PaymentTermTradeoff({ debtAmount, terms, sched, csPayment, csTerm, ldRevenue, onPick }: {
+  debtAmount:number; terms:ElpTerms; sched:ElpSchedule;
+  csPayment:number; csTerm:number; ldRevenue:number; onPick:(draft:number)=>void;
+}) {
+  const capTerm = elpMaxTerm(debtAmount, terms.feeRatePct, terms.maintFee, terms.split);
+  const current = sched.term;
+
+  // Terms spanning the current program out to the longest the floor allows.
+  const candidates = Array.from(new Set(
+    [current,
+     Math.round(current + (capTerm - current) * 0.33),
+     Math.round(current + (capTerm - current) * 0.66),
+     capTerm].filter(t => t >= ELP_TERM_MIN && t <= capTerm)
+  )).sort((a, b) => a - b);
+
+  if (!sched.eligible || candidates.length === 0) return null;
+
+  const rows = candidates.map(t => {
+    const s = elpSchedule(debtAmount, { ...terms, term: t });
+    const be = elpBreakEven(ldRevenue, s);
+    return {
+      term: t, draft: s.grossPayment, full: elpFullRevenue(s), be,
+      deltaMonths: t - current, deltaDraft: round2(s.grossPayment - sched.grossPayment),
+      isCurrent: t === current,
+    };
+  });
+
+  return (
+    <div style={{ marginTop:14, border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
+      <div style={{ padding:"10px 13px", background:"#f8fafc", borderBottom:"1px solid #e2e8f0" }}>
+        <div style={{ fontSize:13, fontWeight:800, color:"#0f172a" }}>Payment vs term — what a lower draft costs</div>
+        <div style={{ fontSize:12, color:"#64748b", marginTop:2, lineHeight:1.6 }}>
+          The service fee is fixed at {money.format(sched.serviceFeeTotal)} ({terms.feeRatePct}% of {money.format(debtAmount)}),
+          so a lower payment does not reduce what the client owes — it spreads it over more months.
+          Click a row to model it.
+        </div>
+      </div>
+      <div style={{ overflowX:"auto" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead><tr style={{ background:"#fff" }}>
+            {["Client draft","Term","vs current","Full-term revenue","Break-even vs LD"].map(h =>
+              <th key={h} style={{ ...TH, color:FT_CYAN_DARK }}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.term} onClick={() => onPick(r.draft)}
+                style={{ background:r.isCurrent ? FT_CYAN+"14" : "#fff", cursor:"pointer" }}>
+                <td style={{ ...TD, fontWeight:800, color:r.isCurrent?FT_CYAN_DARK:"#0f172a" }}>
+                  {money.format(r.draft)}/mo
+                  {r.isCurrent && <span style={{ marginLeft:6, fontSize:10, background:FT_CYAN+"26", color:FT_CYAN_DARK, fontWeight:800, padding:"1px 6px", borderRadius:99 }}>CURRENT</span>}
+                </td>
+                <td style={TD}>{r.term} mo</td>
+                <td style={{ ...TD, color:r.deltaMonths===0?"#94a3b8":"#475569" }}>
+                  {r.deltaMonths===0 ? "—"
+                    : `${money.format(r.deltaDraft)}/mo · +${r.deltaMonths} mo`}
+                </td>
+                <td style={{ ...TD, fontWeight:700 }}>{money.format(r.full)}</td>
+                <td style={{ ...TD, borderRight:"none", color:r.be?FT_AMBER:"#94a3b8", fontWeight:700 }}>
+                  {r.be ? `Month ${r.be}` : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {csPayment > 0 && (() => {
+        const elpDraft = sched.grossPayment;
+        const gap      = round2(elpDraft - csPayment);
+        const matched  = Math.abs(gap) <= 10;      // within rounding of the CS payment
+        const dMonths  = current - csTerm;
+        const mo       = (n: number) => `${n} month${n === 1 ? "" : "s"}`;
+        const lengthPhrase = dMonths === 0 ? "the same length"
+          : dMonths < 0 ? `${mo(-dMonths)} shorter`
+          : `${mo(dMonths)} longer`;
+        return (
+          <div style={{ padding:"9px 13px", borderTop:"1px solid #e2e8f0", background:"#f8fafc",
+            fontSize:12, color:"#475569", lineHeight:1.65 }}>
+            <strong style={{ color:FT_BLUE }}>Against Consumer Shield:</strong> {money.format(csPayment)}/mo for {csTerm} months.
+            {matched
+              ? ` At a matched payment ELP runs ${current} months — ${lengthPhrase}.`
+              : gap > 0
+                ? ` ELP cannot go that low here — its floor is ${money.format(elpDraft)}/mo, ${money.format(gap)} more, over ${current} months (${lengthPhrase}).`
+                : ` ELP runs ${money.format(elpDraft)}/mo over ${current} months — ${money.format(-gap)} less per month, ${lengthPhrase}.`}
+            {" "}The programs resolve debt differently, so this compares cost and duration, not outcome.
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // ELP PROGRAM TERMS PANEL
 // ─────────────────────────────────────────────
 
-function ElpTermsPanel({ terms, onChange, sched, debtAmount, files }: {
+function ElpTermsPanel({ terms, onChange, sched, debtAmount, files, targetDraft, onDraftChange,
+  csPayment, csTerm, ldRevenue }: {
   terms:ElpTerms; onChange:(t:ElpTerms)=>void; sched:ElpSchedule; debtAmount:number; files:number;
+  targetDraft:number|null; onDraftChange:(v:number|null)=>void;
+  csPayment:number; csTerm:number; ldRevenue:number;
 }) {
   const floorOk = sched.eligible && sched.grossPayment >= 250;
+  const capTerm  = elpMaxTerm(debtAmount, terms.feeRatePct, terms.maintFee, terms.split);
+  const minDraft = sched.eligible ? elpDraftForTerm(debtAmount, terms, capTerm) : 0;
+  const isAuto   = targetDraft == null;
   return (
     <div style={{ ...card, borderLeft:`4px solid ${FT_CYAN}` }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12, flexWrap:"wrap", gap:10 }}>
@@ -1146,17 +1253,57 @@ function ElpTermsPanel({ terms, onChange, sched, debtAmount, files }: {
           <div>
             <div style={{ fontWeight:800, fontSize:15, color:"#0f172a" }}>Elite Legal Practice — Program Terms</div>
             <div style={{ fontSize:12, color:"#64748b", marginTop:2, lineHeight:1.6 }}>
-              Legacy Capital Services attorney model. Term is derived from the $250/mo minimum draft, capped at {ELP_TERM_MAX} months.
+              Legacy Capital Services attorney model. The client draft sets the term — $250/mo is the floor, not the target.
+              Shorter terms earn more and earn it sooner, because months 1–2 pass through in full.
             </div>
           </div>
         </div>
         <div style={{ textAlign:"right", flexShrink:0 }}>
-          <div style={{ fontSize:11, color:"#64748b", textTransform:"uppercase", letterSpacing:0.4, fontWeight:700 }}>Derived Term</div>
+          <div style={{ fontSize:11, color:"#64748b", textTransform:"uppercase", letterSpacing:0.4, fontWeight:700 }}>Program Term</div>
           <div style={{ fontSize:22, fontWeight:900, color:FT_CYAN_DARK }}>{sched.eligible ? `${sched.term} mo` : "N/A"}</div>
+          {sched.eligible && (
+            <div style={{ fontSize:10, color:sched.term===capTerm?FT_AMBER:"#94a3b8", fontWeight:700, marginTop:2 }}>
+              {sched.term===capTerm ? `at the $250 floor — longest allowed` : `max ${capTerm} mo at this fee rate`}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="ft-grid-3" style={{ marginBottom:14 }}>
+      <div className="ft-grid-4" style={{ marginBottom:14 }}>
+        <div>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:5, gap:6 }}>
+            <span style={{ fontSize:12, fontWeight:800, color:FT_CYAN_DARK, textTransform:"uppercase", letterSpacing:0.3 }}>
+              Client Monthly Draft
+            </span>
+            <button onClick={() => onDraftChange(null)}
+              title={csPayment > 0 ? `Reset to the Consumer Shield payment (${money.format(csPayment)}/mo)` : `Reset to a ${ELP_DEFAULT_TARGET_TERM}-month program`}
+              style={{ border:"none", borderRadius:99, cursor:isAuto?"default":"pointer",
+                padding:"1px 7px", fontSize:9, fontWeight:800, letterSpacing:0.3,
+                background:isAuto?FT_CYAN+"22":"#e2e8f0", color:isAuto?FT_CYAN_DARK:"#64748b" }}>
+              {isAuto ? (csPayment > 0 ? "MATCHED TO CS" : `AUTO ${ELP_DEFAULT_TARGET_TERM}MO`) : "RESET"}
+            </button>
+          </div>
+          <input type="number" value={sched.eligible ? Math.round(sched.grossPayment) : 0}
+            min={Math.round(minDraft)} step={10} disabled={!sched.eligible}
+            onChange={e => onDraftChange(Number(e.target.value))}
+            style={{ width:"100%", padding:"7px 9px", borderRadius:8, boxSizing:"border-box",
+              border:`1px solid ${floorOk?"#cbd5e1":FT_AMBER}`, fontSize:14, fontWeight:800, color:"#0f172a", background:"#fff" }} />
+          <input type="range" min={ELP_TERM_MIN} max={Math.max(ELP_TERM_MIN, capTerm)} step={1}
+            value={sched.eligible ? sched.term : ELP_TERM_MIN} disabled={!sched.eligible}
+            onChange={e => onDraftChange(elpDraftForTerm(debtAmount, terms, Number(e.target.value)))}
+            style={{ width:"100%", accentColor:FT_CYAN, marginTop:5 }} />
+          <div style={{ fontSize:11, color:"#94a3b8" }}>
+            Drag for term · floor {money.format(minDraft)}/mo at {capTerm} mo
+          </div>
+          {csPayment > 0 && (
+            <div style={{ fontSize:11, marginTop:2, fontWeight:700,
+              color: minDraft > csPayment ? FT_AMBER : "#64748b" }}>
+              {minDraft > csPayment
+                ? `⚠ Cannot match CS ${money.format(csPayment)}/mo — ELP floor is ${money.format(minDraft)}`
+                : `Consumer Shield charges ${money.format(csPayment)}/mo for ${csTerm} mo`}
+            </div>
+          )}
+        </div>
         <div>
           <div style={{ fontSize:12, fontWeight:800, color:FT_CYAN_DARK, marginBottom:5, textTransform:"uppercase", letterSpacing:0.3 }}>
             Service Fee Rate
@@ -1233,6 +1380,8 @@ function ElpTermsPanel({ terms, onChange, sched, debtAmount, files }: {
               ⚠ Derived draft of {money.format(sched.grossPayment)} sits under the $250 floor. Raise the fee rate or lower the maintenance fee.
             </div>
           )}
+          <PaymentTermTradeoff debtAmount={debtAmount} terms={terms} sched={sched}
+            csPayment={csPayment} csTerm={csTerm} ldRevenue={ldRevenue} onPick={onDraftChange} />
         </>
       )}
     </div>
@@ -1308,7 +1457,8 @@ function KnowledgeBase({ open, onClose }: { open:boolean; onClose:()=>void }) {
           ["Lead Quality", `Scales that backend's effective survival rates.\nFormula: effectiveRate = setRate × (0.35 + 0.65 × quality/100)\n\nAt 100%: unchanged. At 50%: ×0.68. At 0%: ×0.35 floor.\n\nCS and ELP carry separate quality sliders — an attorney-model book and a validation book rarely churn the same way.`],
           ["Cash Urgency + Stability Adjustment", `Cash urgency sets Level Debt's share:\n  LD% = 20 + (adjustedUrgency × 0.65)\n\nThe remainder splits between CS and ELP in proportion to their adjusted expected value, so the stronger perpetuity backend takes the larger tail share.\n\nThe stability penalty is computed on the unweighted mean of the CS and ELP effective funnels — deliberately independent of your portfolio sliders so the recommendation never chases itself:\n• Low blended completion (<50%) → up to +25pt\n• Low blended P2 rate (<50%) → up to +15pt\n• High funnel drop-off → up to +10pt`],
           ["Eligibility Floors", `Level Debt: $7,000 minimum enrolled debt.\nElite Legal Practice: $6,000 minimum, plus $250/mo payment capacity.\nConsumer Shield: $4,000 minimum.\n\nEnforced everywhere in this tool — including the portfolio routing sliders.`],
-          ["ELP Term Derivation", `The client draft can never come in under $250/mo. That floor — not a fixed month count — caps the term.\n\n  headroom = $250 − maintenance − draft fee\n  term = floor(debt × fee% / headroom), capped at 60\n\nA bigger service fee stretches over more months; a smaller one over fewer.`],
+          ["ELP Term and the $250 Floor", `The term is set by what the client can afford to draft each month, not by the floor. $250/mo is only a minimum, and it caps how long the fee can be spread:\n\n  headroom = $250 − maintenance − draft fee\n  max term = floor(debt × fee% / headroom), capped at 60\n\nThe tool defaults to a ${ELP_DEFAULT_TARGET_TERM}-month program. Enter the client's draft to change it, or drag the slider to pick a term directly.`],
+          ["Why Shorter Terms Earn More", `Months 1–2 pass through in full — service fee plus maintenance. Everything after is the tier rate on the service fee alone.\n\nA longer term shrinks the monthly service fee, so less of the total lands inside that 100% window:\n\n  revenue = fee × tier + fee × 2(1 − tier) / term + 2 × maintenance\n\nSo a longer term earns LESS in total and earns it LATER. Assuming the longest permitted term is the pessimistic corner on both axes, which is why it is no longer the default.`],
           ["ELP Tier Rate", `Funding Tier keeps 60% of the post-fee service amount from Payment 3 on, stepping to 65% once the book clears 100 billable files per month. The Portfolio Forecast deal count drives which tier this tool applies.`],
           ["ELP State Restrictions", `Legacy Capital Services cannot be sold in ${ELP_BLOCKED_STATES.join(", ")}. This tool models national economics — check state eligibility in the Router before routing a live deal.`],
           ["Break-Even Cohort With No Level Debt Benchmark", `Below $7,000 Level Debt cannot take the deal, so there is no 8% benchmark and no break-even month to show.\n\nThe break-even cohort still has to be worth something — those clients paid for half a program. This tool prices that cohort at the mid-program month instead of $0, which is the only sub-$7k range where Consumer Shield and Elite Legal Practice compete head to head.`],
@@ -1338,6 +1488,9 @@ export default function FundingTierProfitabilityBalancer() {
   const [elpFeeRate,       setElpFeeRate]       = useState(49);
   const [elpMaintFee,      setElpMaintFee]      = useState<number>(80);
   const [elpSplit,         setElpSplit]         = useState(false);
+  // null = follow the ELP_DEFAULT_TARGET_TERM-month default; a number = the
+  // client draft the customer can afford, which is what really sets the term.
+  const [elpTargetDraft,   setElpTargetDraft]   = useState<number|null>(null);
   const [cashUrgency,      setCashUrgency]      = useState(50);
   const [levelRepPct,      setLevelRepPct]      = useState(1.25);
   const [csRepUpfront,     setCsRepUpfront]     = useState(200);
@@ -1349,10 +1502,31 @@ export default function FundingTierProfitabilityBalancer() {
   const [kbOpen,           setKbOpen]           = useState(false);
   const [openProgram,      setOpenProgram]      = useState<string|null>("CS Program A");
 
-  const elpTerms: ElpTerms = useMemo(() => ({
+  const elpBaseTerms: ElpTerms = useMemo(() => ({
     feeRatePct: elpFeeRate, maintFee: elpMaintFee, split: elpSplit,
     tierRate: elpTierRateForFiles(portfolioDeals),
   }), [elpFeeRate, elpMaintFee, elpSplit, portfolioDeals]);
+
+  /**
+   * Term is per-deal: the same client draft buys a shorter program on a
+   * smaller debt. Resolve it against whatever debt is being analysed rather
+   * than pinning one term across every deal size.
+   */
+  const elpTermsFor = useCallback((debt: number): ElpTerms => {
+    // Default the client draft to whatever Consumer Shield would charge on the
+    // same deal. That makes the two programs comparable on the one number the
+    // client actually feels — the monthly payment — instead of comparing a
+    // 36-month CS program against an ELP program stretched to the $250 floor.
+    const target = elpTargetDraft ?? getProgram(debt)?.payment ?? null;
+    return {
+      ...elpBaseTerms,
+      term: target == null
+        ? ELP_DEFAULT_TARGET_TERM
+        : elpTermForDraft(debt, elpBaseTerms, target),
+    };
+  }, [elpBaseTerms, elpTargetDraft]);
+
+  const elpTerms = useMemo(() => elpTermsFor(debtAmount), [elpTermsFor, debtAmount]);
 
   const csEff  = useMemo(() => applyLeadQuality(csFunnel, csLeadQuality),   [csFunnel, csLeadQuality]);
   const elpEff = useMemo(() => applyLeadQuality(elpFunnel, elpLeadQuality), [elpFunnel, elpLeadQuality]);
@@ -1363,12 +1537,16 @@ export default function FundingTierProfitabilityBalancer() {
   );
 
   const analysisArgs = useMemo(() => ({
-    csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, elpTerms,
+    csFunnel, csLeadQuality, elpFunnel, elpLeadQuality,
     adjustedUrgency: stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4,
-  }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, elpTerms, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
+  }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
 
-  const deal      = useMemo(() => analyzeDeal({ debtAmount, ...analysisArgs }), [debtAmount, analysisArgs]);
-  const portfolioDeal = useMemo(() => analyzeDeal({ debtAmount: portfolioAvgDebt, ...analysisArgs }), [portfolioAvgDebt, analysisArgs]);
+  const deal = useMemo(
+    () => analyzeDeal({ debtAmount, elpTerms: elpTermsFor(debtAmount), ...analysisArgs }),
+    [debtAmount, elpTermsFor, analysisArgs]);
+  const portfolioDeal = useMemo(
+    () => analyzeDeal({ debtAmount: portfolioAvgDebt, elpTerms: elpTermsFor(portfolioAvgDebt), ...analysisArgs }),
+    [portfolioAvgDebt, elpTermsFor, analysisArgs]);
 
   const routing = useMemo(() => cashUrgencyToRouting(
     stability.adjusted,
@@ -1442,13 +1620,13 @@ export default function FundingTierProfitabilityBalancer() {
   const elpBandSweep = useMemo(() => {
     const samples = [7500, 12500, 17500, 22500, 27500, 40000, 60000];
     return samples.map(d => {
-      const s = elpSchedule(d, elpTerms);
+      const s = elpSchedule(d, elpTermsFor(d));
       const ldR = d >= 7000 ? round2(d * 0.08) : 0;
       const be = elpBreakEven(ldR, s);
       const band = getLcBand(d);
       return { debt:d, s, ldR, be, band, full: elpFullRevenue(s) };
     });
-  }, [elpTerms]);
+  }, [elpTermsFor]);
 
   return (
     <div style={{ minHeight:"100vh", background:FT_BG, color:"#0f172a",
@@ -1610,6 +1788,8 @@ export default function FundingTierProfitabilityBalancer() {
 
         {/* ELP program terms */}
         <ElpTermsPanel terms={elpTerms} sched={deal.elp.schedule} debtAmount={debtAmount} files={portfolioDeals}
+          targetDraft={elpTargetDraft} onDraftChange={setElpTargetDraft}
+          csPayment={deal.cs.payment} csTerm={deal.cs.term} ldRevenue={deal.ld.expectedRevenue}
           onChange={t => { setElpFeeRate(t.feeRatePct); setElpMaintFee(t.maintFee); setElpSplit(t.split); }} />
 
         {/* Snapshots */}
@@ -1957,7 +2137,8 @@ export default function FundingTierProfitabilityBalancer() {
             ["Eligibility floors", "Level Debt will not accept enrolled debt below $7,000. Elite Legal Practice requires $6,000 and $250/mo payment capacity. Consumer Shield starts at $4,000. Between $4,000 and $5,999 there is no routing decision — Consumer Shield is the only option. Enforced throughout this tool."],
             ["Three-way comparison", "The Backend Comparison table is the one place every assumption lands on the same deal. Expected revenue is the number to compare — full-term ceilings flatter Elite Legal Practice because its terms run far longer than Consumer Shield's."],
             ["Separate survival funnels", "Consumer Shield and Elite Legal Practice each carry their own cascading rates and their own lead quality slider. A validation book and an attorney-model book rarely churn the same way, and forcing one curve on both hides exactly the difference this tool exists to measure."],
-            ["ELP term is derived, never chosen", "The $250/mo client draft floor caps the term: term = floor(debt × fee% ÷ ($250 − maintenance − draft fee)), capped at 60 months. Raising the fee rate lengthens the term rather than raising the payment."],
+            ["ELP term is a choice, not a constant", `The $250/mo minimum is a floor on the client's draft, not the term a deal gets written at — it only caps how long the fee can be spread (max = fee ÷ ($250 − maintenance − draft fee), up to 60 months). Set the client's monthly draft in the Program Terms panel; the model defaults to a ${ELP_DEFAULT_TARGET_TERM}-month program.`],
+            ["Shorter ELP terms are worth more", "Months 1–2 pass through in full; everything after pays the tier rate on the service fee alone. A longer term pushes more of the fee past month 2, so it earns less in total AND later. On a $20,000 deal: 20 months returns about $6,432 and breaks even against Level Debt in month 4, while 59 months returns about $6,173 and takes until month 14. Worth checking the draft against what your reps actually write."],
             ["ELP revenue shape", "Payments 1–2 pass through in full — service fee plus maintenance, less the draft fee. From Payment 3 the maintenance fee is backed out and Funding Tier keeps the tier rate of the service fee portion only. That is why the first two months are worth several times any later month."],
             ["ELP state restrictions", `Legacy Capital Services cannot be sold in ${ELP_BLOCKED_STATES.join(", ")}. This tool models national economics — confirm state eligibility in the Router before routing a live deal.`],
             ["Break-even below $7k", "Under $7,000 there is no Level Debt benchmark, so no break-even month is displayed. The break-even cohort is still priced — at the mid-program month rather than at zero — otherwise every sub-$7k deal would look worse than it is. $6,000–$6,999 is the one band where Consumer Shield and Elite Legal Practice compete with no settlement option at all."],
