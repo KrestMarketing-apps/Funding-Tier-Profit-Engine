@@ -11,7 +11,7 @@ import {
 } from "./legacyEngine";
 import {
   ldProgram, LD_ESTIMATED_SETTLEMENT_RATE, LD_PROGRAM_FEE_ATTORNEY,
-  LD_MIN_DEPOSIT, type LdProgram,
+  LD_PROGRAM_FEE_STANDARD, LD_ATTORNEY_STATES, LD_MIN_DEPOSIT, type LdProgram,
 } from "./levelDebtEngine";
 
 // ─────────────────────────────────────────────
@@ -254,6 +254,8 @@ export type DealAnalysisArgs = {
   csFunnel: Funnel; csLeadQuality: number;
   elpFunnel: Funnel; elpLeadQuality: number;
   elpTerms: ElpTerms;
+  /** Attorney-model states carry the higher Level Debt program fee. */
+  ldAttorneyModel: boolean;
   adjustedUrgency: number;
   levelRepPct: number;
   csRepUpfront: number; csRepAfter4: number;
@@ -279,7 +281,7 @@ function analyzeDeal(a: DealAnalysisArgs): DealAnalysis {
   const ldRev  = ldEligible ? round2(debt * 0.08) : 0;
   const ldRep  = ldEligible ? round2(debt * (a.levelRepPct / 100)) : 0;
   const ldScore = ldEligible ? ldRev * (1 + urgencyBias * 0.6) : -1;
-  const ldProg  = ldProgram(debt);
+  const ldProg  = ldProgram(debt, a.ldAttorneyModel);
 
   const ld = {
     key: "LD" as const, name: BACKEND_META.LD.name,
@@ -1527,6 +1529,7 @@ export default function FundingTierProfitabilityBalancer() {
   // null = follow the ELP_DEFAULT_TARGET_TERM-month default; a number = the
   // client draft the customer can afford, which is what really sets the term.
   const [elpTargetDraft,   setElpTargetDraft]   = useState<number|null>(null);
+  const [ldAttorneyModel,  setLdAttorneyModel]  = useState(false);
   const [cashUrgency,      setCashUrgency]      = useState(50);
   const [levelRepPct,      setLevelRepPct]      = useState(1.25);
   const [csRepUpfront,     setCsRepUpfront]     = useState(200);
@@ -1573,9 +1576,9 @@ export default function FundingTierProfitabilityBalancer() {
   );
 
   const analysisArgs = useMemo(() => ({
-    csFunnel, csLeadQuality, elpFunnel, elpLeadQuality,
+    csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel,
     adjustedUrgency: stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4,
-  }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
+  }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
 
   const deal = useMemo(
     () => analyzeDeal({ debtAmount, elpTerms: elpTermsFor(debtAmount), ...analysisArgs }),
@@ -1834,13 +1837,35 @@ export default function FundingTierProfitabilityBalancer() {
           <div style={card}>
             <SnapshotHead k="LD" logo={LEVEL_DEBT_LOGO} name="Level Debt"
               warn={!deal.ld.eligible ? "Under $7k" : null} />
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:11, flexWrap:"wrap" }}>
+              <span style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:0.3 }}>
+                Program Fee
+              </span>
+              <InlineTip width={300} text={
+                `Level Debt runs an attorney model in ${LD_ATTORNEY_STATES.length} states, where the client program fee is `
+                + `${Math.round(LD_PROGRAM_FEE_ATTORNEY*100)}% instead of ${Math.round(LD_PROGRAM_FEE_STANDARD*100)}%:\n\n`
+                + LD_ATTORNEY_STATES.join(", ")
+                + `\n\nThis raises what the CLIENT pays each month. It does not change Funding Tier's 8% — that is a share of enrolled debt and is unaffected by the fee rate.`} />
+              <div style={{ display:"flex", gap:5, flex:1, minWidth:180 }}>
+                {[{ v:false, l:`Standard ${Math.round(LD_PROGRAM_FEE_STANDARD*100)}%` },
+                  { v:true,  l:`Attorney ${Math.round(LD_PROGRAM_FEE_ATTORNEY*100)}%` }].map(o => (
+                  <button key={String(o.v)} onClick={() => setLdAttorneyModel(o.v)}
+                    style={{ flex:1, padding:"6px 5px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:11,
+                      border:`1px solid ${ldAttorneyModel===o.v?FT_GREEN:"#cbd5e1"}`,
+                      background:ldAttorneyModel===o.v?FT_GREEN+"1a":"#fff",
+                      color:ldAttorneyModel===o.v?FT_GREEN_DARK:"#64748b" }}>
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="ft-grid-2-inner">
               <MetricCard title="Debt Amount" value={money.format(deal.debtAmount)} />
               <MetricCard title="Payment / Monthly"
                 value={deal.ld.program.eligible ? money.format(deal.ld.program.monthlyPayment) : "N/A"}
                 inlineTag={deal.ld.program.eligible ? `${deal.ld.program.term} months` : undefined}
                 tooltip={deal.ld.program.eligible
-                  ? `What the client deposits each month.\n\nEstimated settlement (${Math.round(LD_ESTIMATED_SETTLEMENT_RATE*100)}% of enrolled debt) ${money.format(deal.ld.program.estimatedSettlement)} + program fees (${Math.round(deal.ld.program.feeRate*100)}%) ${money.format(deal.ld.program.programFees)} = ${money.format(deal.ld.program.totalProgramCost)}, over ${deal.ld.program.term} months.\n\nTerm is banded by enrolled debt. Attorney-model states carry a ${Math.round(LD_PROGRAM_FEE_ATTORNEY*100)}% fee instead.`
+                  ? `What the client deposits each month.\n\nEstimated settlement (${Math.round(LD_ESTIMATED_SETTLEMENT_RATE*100)}% of enrolled debt) ${money.format(deal.ld.program.estimatedSettlement)} + program fees (${Math.round(deal.ld.program.feeRate*100)}%) ${money.format(deal.ld.program.programFees)} = ${money.format(deal.ld.program.totalProgramCost)}, over ${deal.ld.program.term} months.\n\nTerm is banded by enrolled debt. ${ldAttorneyModel ? "Attorney-model rate in play." : `Attorney-model states use ${Math.round(LD_PROGRAM_FEE_ATTORNEY*100)}% instead.`}`
                   : undefined} />
               <MetricCard title="Gross Revenue" value={deal.ld.eligible ? money.format(deal.ld.grossRevenue) : "N/A"}
                 subtitle="8% of enrolled debt" />
