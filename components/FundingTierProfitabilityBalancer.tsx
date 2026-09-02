@@ -1,14 +1,23 @@
 "use client";
 
 import React, { useMemo, useState, useCallback } from "react";
+import {
+  ELP_MIN_DEBT, ELP_FEE_MIN, ELP_FEE_MAX, ELP_MAINT_OPTIONS, ELP_TERM_MAX,
+  ELP_BLOCKED_STATES, ELP_TIER_RATE_FILE_THRESHOLD,
+  elpSchedule, elpRevenueAt, elpFullRevenue, elpBuildTimeline, elpBreakEven,
+  elpRevenueAtFraction, elpExpectedRepCost, elpTierRateForFiles, getLcBand,
+  type ElpSchedule, type ElpTerms,
+} from "./legacyEngine";
 
 // ─────────────────────────────────────────────
 // TYPES
 // ─────────────────────────────────────────────
 
+type BackendKey = "LD" | "CS" | "ELP";
+
 type TimelineRow = {
   month: number;
-  phase: "Front" | "Tail-End Revenue";
+  phase: string;
   monthlyRevenue: number;
   cumulativeRevenue: number;
   liabilityFreeMonth: number;
@@ -21,21 +30,27 @@ type ConsumerShieldProgram = {
   payment: number; term: number;
 };
 
-type DealMetrics = {
-  debtAmount: number; levelDebtEligible: boolean;
-  levelDebtRevenue: number; levelDebtRevShareEligible: boolean;
-  consumerShieldPayment: number | null; consumerShieldTerm: number | null;
-  consumerShieldNetPayment: number | null;
-  consumerShieldRevenueAfter2: number | null; consumerShieldRevenueAfter4: number | null;
-  consumerShieldFrontRevenue: number | null; consumerShieldBackRevenueMonthly: number | null;
-  consumerShieldRevenueAtHalf: number | null; consumerShieldRevenueAtFull: number | null;
-  consumerShieldExpectedRevenue: number | null;
-  consumerShieldBreakEvenMonthVsLevel: number | null;
-  consumerShieldLiabilityClearMonth: number | null;
-  consumerShieldTimeline: TimelineRow[];
-  effectiveP2: number; effectiveP4: number; effectiveBE: number; effectiveComp: number;
-  recommendedBackend: "Level Debt" | "Consumer Shield" | "Consumer Shield (Required — Under $7k)" | "No Recommendation";
-  recommendationReason: string;
+type Funnel = { p2: number; p4: number; be: number; comp: number };
+type Effective = { p2: number; p4: number; be: number; comp: number };
+
+type BackendResult = {
+  key: BackendKey;
+  name: string;
+  eligible: boolean;
+  ineligibleReason: string;
+  /** Expected (survival-weighted) revenue per deal. */
+  expectedRevenue: number;
+  /** Full-term ceiling. Same as expectedRevenue for Level Debt. */
+  fullRevenue: number;
+  /** Score used for the routing recommendation. */
+  adjustedScore: number;
+  breakEvenMonth: number | null;
+  liabilityClearMonth: number | null;
+  term: number;
+  timeline: TimelineRow[];
+  effective: Effective;
+  repCost: number;
+  netRevenue: number;
 };
 
 // ─────────────────────────────────────────────
@@ -45,14 +60,23 @@ type DealMetrics = {
 const FT_LOGO         = "https://assets.cdn.filesafe.space/S4ztIlDxBovAboldwbOR/media/68783cf82035bab4d790ae7e.png";
 const LEVEL_DEBT_LOGO = "https://assets.cdn.filesafe.space/S4ztIlDxBovAboldwbOR/media/69c35b2cab2203b0fc83186d.webp";
 const CS_LOGO         = "https://assets.cdn.filesafe.space/S4ztIlDxBovAboldwbOR/media/69c35b2c25c6995d2d2d21fa.png";
+const ELP_LOGO        = "https://assets.cdn.filesafe.space/S4ztIlDxBovAboldwbOR/media/69e1c95dc56ad279084b3141.png";
 
 const FT_GREEN      = "#0f9d8a";
 const FT_GREEN_DARK = "#0b7d6e";
 const FT_HYPER      = "#00ff88";
 const FT_BLUE       = "#1a6ed8";
+const FT_CYAN       = "#0891b2";  // Elite Legal Practice / Legacy Capital
+const FT_CYAN_DARK  = "#0e7490";
 const FT_AMBER      = "#f59e0b";
 const FT_RED        = "#ef4444";
 const FT_BG         = "#f8fafc";
+
+const BACKEND_META: Record<BackendKey, { name: string; short: string; logo: string; color: string; colorDark: string; minDebt: number }> = {
+  LD:  { name: "Level Debt",           short: "LD",  logo: LEVEL_DEBT_LOGO, color: FT_GREEN, colorDark: FT_GREEN_DARK, minDebt: 7000 },
+  CS:  { name: "Consumer Shield",      short: "CS",  logo: CS_LOGO,         color: FT_BLUE,  colorDark: "#1552a8",     minDebt: 4000 },
+  ELP: { name: "Elite Legal Practice", short: "ELP", logo: ELP_LOGO,        color: FT_CYAN,  colorDark: FT_CYAN_DARK,  minDebt: ELP_MIN_DEBT },
+};
 
 const money      = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const percentFmt = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -91,12 +115,12 @@ function csRevenueAt(month: number, net: number, term: number) {
   return round2(Math.min(m, 4) * net + Math.max(0, m - 4) * net * 0.35);
 }
 
-function buildTimeline(net: number, term: number): TimelineRow[] {
+function csBuildTimeline(net: number, term: number): TimelineRow[] {
   return Array.from({ length: term }, (_, i) => {
     const month = i + 1;
     return {
       month,
-      phase: (month <= 4 ? "Front" : "Tail-End Revenue") as TimelineRow["phase"],
+      phase: month <= 4 ? "Front" : "Tail-End Revenue",
       monthlyRevenue: round2(month <= 4 ? net : net * 0.35),
       cumulativeRevenue: csRevenueAt(month, net, term),
       liabilityFreeMonth: month + 4,
@@ -105,181 +129,267 @@ function buildTimeline(net: number, term: number): TimelineRow[] {
   });
 }
 
-function calcBreakEven(ldRev: number, net: number, term: number) {
+function csBreakEven(ldRev: number, net: number, term: number) {
+  if (ldRev <= 0) return null;
   for (let m = 1; m <= term; m++) if (csRevenueAt(m, net, term) >= ldRev) return m;
   return null;
 }
 
-function fractionRevenue(frac: number, net: number, term: number) {
-  return csRevenueAt(Math.max(1, Math.floor(term * frac)), net, term);
+/**
+ * Lead quality degrades effective survival rates.
+ * effectiveRate = baseRate × (0.35 + 0.65 × quality/100)
+ * Cascade enforced after applying the scalar.
+ */
+function applyLeadQuality(f: Funnel, quality: number): Effective {
+  const scalar = 0.35 + 0.65 * (quality / 100);
+  const p2   = round2(f.p2 * scalar);
+  const p4   = round2(Math.min(f.p4 * scalar, p2));
+  const be   = round2(Math.min(f.be * scalar, p4));
+  const comp = round2(Math.min(f.comp * scalar, be));
+  return { p2, p4, be, comp };
 }
 
-/**
- * Lead quality degrades effective CS survival rates.
- * effectiveRate = baseRate × (0.35 + 0.65 × quality/100)
- * Cascade enforced after applying scalar.
- */
-function applyLeadQuality(p2: number, p4: number, be: number, comp: number, quality: number): [number, number, number, number] {
-  const scalar = 0.35 + 0.65 * (quality / 100);
-  let ep2   = round2(p2   * scalar);
-  let ep4   = round2(Math.min(p4   * scalar, ep2));
-  let ebe   = round2(Math.min(be   * scalar, ep4));
-  let ecomp = round2(Math.min(comp * scalar, ebe));
-  return [ep2, ep4, ebe, ecomp];
+function calcExpectedRevenue(e: Effective, rev2: number, rev4: number, revBE: number, fullRev: number): number {
+  return round2(
+    (e.p2 - e.p4) / 100 * rev2
+    + (e.p4 - e.be) / 100 * rev4
+    + (e.be - e.comp) / 100 * revBE
+    + e.comp / 100 * fullRev
+  );
 }
 
 /**
  * STABILITY-ADJUSTED URGENCY
  *
- * If CS survival rates are poor, the effective CS revenue per deal is unreliable.
- * The system automatically increases urgency to protect cash flow stability.
- *
- * Penalty components:
- *   - Low effective completion (< 30%) → high penalty: company is not realizing CS LTV
- *   - Low effective P2 (< 50%) → medium penalty: most CS deals earning nothing
- *   - Gap between P2 and completion → measures how much revenue is being lost mid-funnel
- *
- * Formula:
- *   stabilityPenalty = completionPenalty + p2Penalty + funnelLeakPenalty
- *   adjustedUrgency  = clamp(baseUrgency + stabilityPenalty, 0, 100)
+ * Both perpetuity backends (Consumer Shield and Elite Legal Practice) earn out
+ * over time, so when either book is churning the company's near-term cash is
+ * unreliable and urgency should rise. The penalty is computed against the
+ * unweighted mean of the two effective funnels — deliberately independent of
+ * the portfolio routing sliders, so the recommendation never chases itself.
  */
-function calcStabilityAdjustedUrgency(
-  baseUrgency: number,
-  ep2: number, ep4: number, ebe: number, ecomp: number
-): { adjusted: number; penalty: number; reason: string } {
-  // Completion penalty: 0 at 50%+ completion, up to 25 at 0% completion
-  const completionPenalty = ecomp < 50 ? round2((50 - ecomp) * 0.5) : 0;
+function blendPerpetuityRates(cs: Effective, elp: Effective): Effective {
+  return {
+    p2:   round2((cs.p2 + elp.p2) / 2),
+    p4:   round2((cs.p4 + elp.p4) / 2),
+    be:   round2((cs.be + elp.be) / 2),
+    comp: round2((cs.comp + elp.comp) / 2),
+  };
+}
 
-  // P2 penalty: if less than half your CS deals even make payment 2, cash flow is fragile
-  const p2Penalty = ep2 < 50 ? round2((50 - ep2) * 0.3) : 0;
-
-  // Funnel leak penalty: large gap between P2 and completion means lots of early drop-off
-  const funnelLeak = ep2 - ecomp;
-  const funnelPenalty = funnelLeak > 50 ? round2((funnelLeak - 50) * 0.15) : 0;
+function calcStabilityAdjustedUrgency(baseUrgency: number, e: Effective): { adjusted: number; penalty: number; reason: string } {
+  const completionPenalty = e.comp < 50 ? round2((50 - e.comp) * 0.5) : 0;
+  const p2Penalty         = e.p2  < 50 ? round2((50 - e.p2) * 0.3)   : 0;
+  const funnelLeak        = round2(e.p2 - e.comp);
+  const funnelPenalty     = funnelLeak > 50 ? round2((funnelLeak - 50) * 0.15) : 0;
 
   const totalPenalty = Math.round(completionPenalty + p2Penalty + funnelPenalty);
   const adjusted = clamp(baseUrgency + totalPenalty, 0, 100);
 
   let reason = "";
   if (totalPenalty === 0) {
-    reason = "CS survival rates are healthy — no stability adjustment needed.";
+    reason = "Blended CS + ELP survival rates are healthy — no stability adjustment needed.";
   } else {
-    const parts = [];
-    if (completionPenalty > 0) parts.push(`low CS completion (${ecomp}%) +${Math.round(completionPenalty)}pt`);
-    if (p2Penalty > 0) parts.push(`low CS P2 rate (${ep2}%) +${Math.round(p2Penalty)}pt`);
-    if (funnelPenalty > 0) parts.push(`high funnel drop-off (${funnelLeak}pp gap) +${Math.round(funnelPenalty)}pt`);
+    const parts: string[] = [];
+    if (completionPenalty > 0) parts.push(`low blended completion (${e.comp}%) +${Math.round(completionPenalty)}pt`);
+    if (p2Penalty > 0)         parts.push(`low blended P2 rate (${e.p2}%) +${Math.round(p2Penalty)}pt`);
+    if (funnelPenalty > 0)     parts.push(`high funnel drop-off (${funnelLeak}pp gap) +${Math.round(funnelPenalty)}pt`);
     reason = `Stability adjustment +${totalPenalty}pt due to: ${parts.join("; ")}. Routing more deals to Level Debt protects near-term cash flow.`;
   }
-
   return { adjusted, penalty: totalPenalty, reason };
 }
 
 /**
- * Cash urgency → recommended % of deals above $7k to route to Level Debt.
- * Uses stability-adjusted urgency for routing math.
- * 100% → ~85% LD, 0% → ~20% LD
- * Formula: ldPct = 20 + (adjustedUrgency × 0.65)
+ * Cash urgency → recommended routing across all three backends.
+ *
+ * Level Debt's share is driven purely by how fast cash is needed:
+ *   ldPct = 20 + (adjustedUrgency × 0.65)
+ *
+ * Whatever is left is split between the two perpetuity backends in proportion
+ * to their adjusted expected value at the portfolio's average deal — so the
+ * stronger long-tail product wins the larger share of the tail allocation.
  */
-function cashUrgencyToRouting(adjustedUrgency: number): { ldPct: number; horizon: string; rationale: string } {
-  const ldPct = Math.round(20 + adjustedUrgency * 0.65);
+function cashUrgencyToRouting(adjustedUrgency: number, csScore: number, elpScore: number, csEligible: boolean, elpEligible: boolean): {
+  ldPct: number; csPct: number; elpPct: number; horizon: string; rationale: string;
+} {
+  let ldPct = Math.round(20 + adjustedUrgency * 0.65);
+  const tail = 100 - ldPct;
+
+  let csPct: number, elpPct: number;
+  if (csEligible && elpEligible) {
+    const total = csScore + elpScore;
+    csPct  = total > 0 ? Math.round(tail * (csScore / total)) : Math.round(tail / 2);
+    elpPct = tail - csPct;
+  } else if (csEligible)  { csPct = tail; elpPct = 0; }
+  else if (elpEligible)   { csPct = 0;    elpPct = tail; }
+  else                    { csPct = 0;    elpPct = 0; ldPct = 100; }
+
   let horizon = "", rationale = "";
-  if (adjustedUrgency >= 90)      { horizon = "~90 days";  rationale = "Maximum Level Debt routing. CS deals won't break even within your cash window."; }
-  else if (adjustedUrgency >= 65) { horizon = "~120–150 days"; rationale = "Heavily weighted to Level Debt. Small CS allocation for high-quality deals only."; }
-  else if (adjustedUrgency >= 40) { horizon = "~180 days"; rationale = "Balanced. Level Debt funds operations while CS builds a long-tail revenue stack."; }
-  else if (adjustedUrgency >= 20) { horizon = "~270 days"; rationale = "Lean toward CS. You have enough runway to let back-end revenue materialize on quality deals."; }
-  else                             { horizon = "No near-term constraint"; rationale = "Maximize Consumer Shield for highest long-term LTV. Use Level Debt as a cash buffer floor only."; }
-  return { ldPct, horizon, rationale };
-}
+  if (adjustedUrgency >= 90)      { horizon = "~90 days";      rationale = "Maximum Level Debt routing. Neither perpetuity backend breaks even inside your cash window."; }
+  else if (adjustedUrgency >= 65) { horizon = "~120–150 days"; rationale = "Heavily weighted to Level Debt. Reserve the perpetuity allocation for high-quality deals only."; }
+  else if (adjustedUrgency >= 40) { horizon = "~180 days";     rationale = "Balanced. Level Debt funds operations while CS and ELP build a long-tail revenue stack."; }
+  else if (adjustedUrgency >= 20) { horizon = "~270 days";     rationale = "Lean into the perpetuity backends. You have enough runway to let back-end revenue materialize."; }
+  else                            { horizon = "No near-term constraint"; rationale = "Maximize long-term LTV across CS and ELP. Use Level Debt as a cash buffer floor only."; }
 
-function calcExpectedRevenue(ep2: number, ep4: number, ebe: number, ecomp: number,
-  rev2: number, rev4: number, revBE: number, fullRev: number): number {
-  return round2(
-    (ep2 - ep4) / 100 * rev2
-    + (ep4 - ebe) / 100 * rev4
-    + (ebe - ecomp) / 100 * revBE
-    + ecomp / 100 * fullRev
-  );
+  const tailNote = csEligible && elpEligible
+    ? ` Tail allocation splits ${csPct}% CS / ${elpPct}% ELP on adjusted expected value.`
+    : "";
+
+  return { ldPct, csPct, elpPct, horizon, rationale: rationale + tailNote };
 }
 
 // ─────────────────────────────────────────────
-// CORE CALCULATOR
+// CORE ANALYSIS — ALL THREE BACKENDS, ONE DEAL
 // ─────────────────────────────────────────────
 
-function calculateDealMetrics(args: {
-  debtAmount: number; p2Pct: number; p4Pct: number; bePct: number; compPct: number;
-  leadQuality: number; adjustedUrgency: number;
-}): DealMetrics {
-  const { debtAmount, p2Pct, p4Pct, bePct, compPct, leadQuality, adjustedUrgency } = args;
+export type DealAnalysisArgs = {
+  debtAmount: number;
+  csFunnel: Funnel; csLeadQuality: number;
+  elpFunnel: Funnel; elpLeadQuality: number;
+  elpTerms: ElpTerms;
+  adjustedUrgency: number;
+  levelRepPct: number;
+  csRepUpfront: number; csRepAfter4: number;
+};
 
-  const levelDebtEligible = debtAmount >= 7000;
-  const ldRev = levelDebtEligible ? round2(debtAmount * 0.08) : 0;
-  const prog  = getProgram(debtAmount);
-  const [ep2, ep4, ebe, ecomp] = applyLeadQuality(p2Pct, p4Pct, bePct, compPct, leadQuality);
+export type DealAnalysis = {
+  debtAmount: number;
+  ld: BackendResult & { grossRevenue: number };
+  cs: BackendResult & { program: ConsumerShieldProgram | null; payment: number; netPayment: number; frontRevenue: number; tailMonthly: number; revAfter2: number; revAfter4: number; revAtHalf: number; breakEvenRefMonth: number; breakEvenRefRevenue: number };
+  elp: BackendResult & { schedule: ElpSchedule; revAfter2: number; revAfter4: number; revAtHalf: number; bandLabel: string; breakEvenRefMonth: number; breakEvenRefRevenue: number };
+  ranked: BackendResult[];
+  recommended: BackendKey | null;
+  recommendedLabel: string;
+  recommendationReason: string;
+};
 
-  const empty: DealMetrics = {
-    debtAmount, levelDebtEligible, levelDebtRevenue: ldRev,
-    levelDebtRevShareEligible: debtAmount >= 120000,
-    consumerShieldPayment: null, consumerShieldTerm: null, consumerShieldNetPayment: null,
-    consumerShieldRevenueAfter2: null, consumerShieldRevenueAfter4: null,
-    consumerShieldFrontRevenue: null, consumerShieldBackRevenueMonthly: null,
-    consumerShieldRevenueAtHalf: null, consumerShieldRevenueAtFull: null,
-    consumerShieldExpectedRevenue: null, consumerShieldBreakEvenMonthVsLevel: null,
-    consumerShieldLiabilityClearMonth: null, consumerShieldTimeline: [],
-    effectiveP2: ep2, effectiveP4: ep4, effectiveBE: ebe, effectiveComp: ecomp,
-    recommendedBackend: "No Recommendation",
-    recommendationReason: "Debt amount falls outside the configured range.",
+function analyzeDeal(a: DealAnalysisArgs): DealAnalysis {
+  const debt = a.debtAmount;
+  const urgencyBias = a.adjustedUrgency / 100;
+
+  // ── Level Debt ────────────────────────────────────────────
+  const ldEligible = debt >= BACKEND_META.LD.minDebt;
+  const ldRev  = ldEligible ? round2(debt * 0.08) : 0;
+  const ldRep  = ldEligible ? round2(debt * (a.levelRepPct / 100)) : 0;
+  const ldScore = ldEligible ? ldRev * (1 + urgencyBias * 0.6) : -1;
+
+  const ld = {
+    key: "LD" as const, name: BACKEND_META.LD.name,
+    eligible: ldEligible,
+    ineligibleReason: ldEligible ? "" : "Level Debt will not accept enrolled debt below $7,000.",
+    grossRevenue: ldRev,
+    expectedRevenue: ldRev, fullRevenue: ldRev,
+    adjustedScore: ldScore,
+    breakEvenMonth: ldEligible ? 2 : null,
+    liabilityClearMonth: ldEligible ? 2 : null,
+    term: ldEligible ? 2 : 0,
+    timeline: [] as TimelineRow[],
+    effective: { p2: 100, p4: 100, be: 100, comp: 100 },
+    repCost: ldRep,
+    netRevenue: round2(ldRev - ldRep),
   };
 
-  if (!prog) return empty;
+  // ── Consumer Shield ───────────────────────────────────────
+  const csEff  = applyLeadQuality(a.csFunnel, a.csLeadQuality);
+  const prog   = getProgram(debt);
+  const csNet  = prog ? prog.payment - 40 : 0;
+  const csTerm = prog ? prog.term : 0;
+  const csTimeline  = prog ? csBuildTimeline(csNet, csTerm) : [];
+  const csRev2      = prog ? csRevenueAt(2, csNet, csTerm) : 0;
+  const csRev4      = prog ? csRevenueAt(4, csNet, csTerm) : 0;
+  const csFront     = prog ? round2(csNet * Math.min(4, csTerm)) : 0;
+  const csTailM     = prog ? round2(csNet * 0.35) : 0;
+  const csFull      = prog ? round2(csFront + Math.max(0, csTerm - 4) * csTailM) : 0;
+  const csBE        = prog ? csBreakEven(ldRev, csNet, csTerm) : null;
+  // With no Level Debt benchmark (deal under $7k) there is no break-even month.
+  // Falling back to $0 for that cohort would silently understate every sub-$7k
+  // deal, so the mid-program month stands in as the reference point instead.
+  const csBERef     = csBE ?? (prog ? Math.max(1, Math.floor(csTerm / 2)) : 0);
+  const csRevBE     = prog ? csRevenueAt(csBERef, csNet, csTerm) : 0;
+  const csExpected  = prog ? calcExpectedRevenue(csEff, csRev2, csRev4, csRevBE, csFull) : 0;
+  const csRep       = prog ? round2(a.csRepUpfront + a.csRepAfter4 * (csEff.p4 / 100)) : 0;
+  const csScoreRaw  = csExpected * (0.5 + (a.csLeadQuality / 100) * 0.7) * (1 - urgencyBias * 0.35);
 
-  const { payment, term } = prog;
-  const net   = payment - 40;
-  const tl    = buildTimeline(net, term);
-  const rev2  = csRevenueAt(2, net, term);
-  const rev4  = csRevenueAt(4, net, term);
-  const front = round2(net * Math.min(4, term));
-  const tailM = round2(net * 0.35);
-  const tailF = round2(Math.max(0, term - 4) * tailM);
-  const fullR = round2(front + tailF);
-  const be    = levelDebtEligible ? calcBreakEven(ldRev, net, term) : null;
-  const revBE = be ? csRevenueAt(be, net, term) : 0;
-  const liabilityClearMonth = be !== null ? be + 4 : null;
-  const expected = calcExpectedRevenue(ep2, ep4, ebe, ecomp, rev2, rev4, revBE, fullR);
+  const cs = {
+    key: "CS" as const, name: BACKEND_META.CS.name,
+    eligible: !!prog,
+    ineligibleReason: prog ? "" : "Consumer Shield requires at least $4,000 in enrolled debt.",
+    program: prog, payment: prog?.payment ?? 0, netPayment: csNet,
+    frontRevenue: csFront, tailMonthly: csTailM,
+    revAfter2: csRev2, revAfter4: csRev4,
+    revAtHalf: prog ? csRevenueAt(Math.max(1, Math.floor(csTerm * 0.5)), csNet, csTerm) : 0,
+    breakEvenRefMonth: csBERef, breakEvenRefRevenue: csRevBE,
+    expectedRevenue: csExpected, fullRevenue: csFull,
+    adjustedScore: prog ? csScoreRaw : -1,
+    breakEvenMonth: csBE,
+    liabilityClearMonth: csBE !== null ? csBE + 4 : null,
+    term: csTerm,
+    timeline: csTimeline,
+    effective: csEff,
+    repCost: csRep,
+    netRevenue: round2(csExpected - csRep),
+  };
 
-  let recommendedBackend: DealMetrics["recommendedBackend"] = "No Recommendation";
-  let recommendationReason = "";
+  // ── Elite Legal Practice / Legacy Capital ─────────────────
+  const elpEff   = applyLeadQuality(a.elpFunnel, a.elpLeadQuality);
+  const sched    = elpSchedule(debt, a.elpTerms);
+  const elpTl    = elpBuildTimeline(sched);
+  const elpRev2  = elpRevenueAt(2, sched);
+  const elpRev4  = elpRevenueAt(4, sched);
+  const elpFull  = elpFullRevenue(sched);
+  const elpBE    = elpBreakEven(ldRev, sched);
+  const elpBERef = elpBE ?? (sched.eligible ? Math.max(1, Math.floor(sched.term / 2)) : 0);
+  const elpRevBE = sched.eligible ? elpRevenueAt(elpBERef, sched) : 0;
+  const elpExpected = sched.eligible ? calcExpectedRevenue(elpEff, elpRev2, elpRev4, elpRevBE, elpFull) : 0;
+  const elpRep   = sched.eligible ? elpExpectedRepCost(debt, elpEff.p2, elpEff.p4) : 0;
+  const elpScoreRaw = elpExpected * (0.5 + (a.elpLeadQuality / 100) * 0.7) * (1 - urgencyBias * 0.35);
+  const band     = getLcBand(debt);
 
-  if (!levelDebtEligible) {
-    recommendedBackend = "Consumer Shield (Required — Under $7k)";
-    recommendationReason = "Deals under $7,000 enrolled debt cannot be routed to Level Debt. Consumer Shield is the only eligible backend.";
-  } else {
-    const urgencyBias = adjustedUrgency / 100;
-    const qualityBias = leadQuality / 100;
-    const ldAdjusted  = ldRev * (1 + urgencyBias * 0.6);
-    const csAdjusted  = expected * (0.5 + qualityBias * 0.7) * (1 - urgencyBias * 0.35);
-    if (csAdjusted > ldAdjusted) {
-      recommendedBackend = "Consumer Shield";
-      recommendationReason = `CS wins on adjusted expected value. Effective rates: P2=${ep2}% P4=${ep4}% BE=${ebe}% Comp=${ecomp}%.`;
+  const elp = {
+    key: "ELP" as const, name: BACKEND_META.ELP.name,
+    eligible: sched.eligible,
+    ineligibleReason: sched.eligible ? "" : `Elite Legal Practice requires at least ${money.format(ELP_MIN_DEBT)} in enrolled debt.`,
+    schedule: sched,
+    revAfter2: elpRev2, revAfter4: elpRev4,
+    revAtHalf: elpRevenueAtFraction(0.5, sched),
+    breakEvenRefMonth: elpBERef, breakEvenRefRevenue: elpRevBE,
+    expectedRevenue: elpExpected, fullRevenue: elpFull,
+    adjustedScore: sched.eligible ? elpScoreRaw : -1,
+    breakEvenMonth: elpBE,
+    liabilityClearMonth: elpBE !== null ? elpBE + 4 : null,
+    term: sched.term,
+    timeline: elpTl,
+    effective: elpEff,
+    repCost: elpRep,
+    netRevenue: round2(elpExpected - elpRep),
+    bandLabel: band ? `${band.label} · ${band.range}` : "—",
+  };
+
+  // ── Ranking ───────────────────────────────────────────────
+  const contenders: BackendResult[] = [ld, cs, elp].filter(b => b.eligible);
+  const ranked = [...contenders].sort((x, y) => y.adjustedScore - x.adjustedScore);
+  const winner = ranked[0] ?? null;
+
+  let recommendedLabel = "No Recommendation";
+  let recommendationReason = "Debt amount falls outside every backend's accepted range.";
+
+  if (winner) {
+    const onlyOne = contenders.length === 1;
+    recommendedLabel = onlyOne ? `${winner.name} (Only Eligible Backend)` : winner.name;
+    const runnerUp = ranked[1];
+    if (onlyOne) {
+      const blocked = [ld, cs, elp].filter(b => !b.eligible).map(b => b.ineligibleReason);
+      recommendationReason = `${winner.name} is the only backend that will accept ${money.format(debt)}. ${blocked.join(" ")}`;
+    } else if (winner.key === "LD") {
+      recommendationReason = `Level Debt wins — ${urgencyBias > 0.5 ? "cash urgency/stability favors fast recognition" : "neither perpetuity backend's adjusted expected value clears the 8% benchmark"}. Next best: ${runnerUp.name} at ${money.format(runnerUp.expectedRevenue)} expected.`;
     } else {
-      recommendedBackend = "Level Debt";
-      recommendationReason = `Level Debt wins — ${urgencyBias > 0.5 ? "cash urgency/stability favors fast recognition" : "adjusted CS expected value doesn't clear the LD benchmark"} at current lead quality (${leadQuality}%).`;
+      recommendationReason = `${winner.name} wins on adjusted expected value (${money.format(winner.expectedRevenue)} vs ${money.format(runnerUp.expectedRevenue)} for ${runnerUp.name}). Effective rates: P2=${winner.effective.p2}% P4=${winner.effective.p4}% BE=${winner.effective.be}% Comp=${winner.effective.comp}%.`;
     }
   }
 
   return {
-    debtAmount, levelDebtEligible, levelDebtRevenue: ldRev,
-    levelDebtRevShareEligible: debtAmount >= 120000,
-    consumerShieldPayment: payment, consumerShieldTerm: term, consumerShieldNetPayment: net,
-    consumerShieldRevenueAfter2: rev2, consumerShieldRevenueAfter4: rev4,
-    consumerShieldFrontRevenue: front, consumerShieldBackRevenueMonthly: tailM,
-    consumerShieldRevenueAtHalf: fractionRevenue(0.5, net, term),
-    consumerShieldRevenueAtFull: fullR,
-    consumerShieldExpectedRevenue: expected,
-    consumerShieldBreakEvenMonthVsLevel: be,
-    consumerShieldLiabilityClearMonth: liabilityClearMonth,
-    consumerShieldTimeline: tl,
-    effectiveP2: ep2, effectiveP4: ep4, effectiveBE: ebe, effectiveComp: ecomp,
-    recommendedBackend, recommendationReason,
+    debtAmount: debt, ld, cs, elp, ranked,
+    recommended: winner?.key ?? null,
+    recommendedLabel, recommendationReason,
   };
 }
 
@@ -327,18 +437,79 @@ function InlineTip({ text, width = 260 }: { text: string; width?: number }) {
 }
 
 // ─────────────────────────────────────────────
-// CASCADING FUNNEL SLIDERS
+// ACCORDION
 // ─────────────────────────────────────────────
 
-function CascadingFunnel({ p2, p4, be, comp, onChange }: {
-  p2: number; p4: number; be: number; comp: number;
-  onChange: (p2: number, p4: number, be: number, comp: number) => void;
+function Accordion({ title, defaultOpen=false, children, badge, accent=FT_GREEN }: {
+  title:string; defaultOpen?:boolean; children:React.ReactNode; badge?:string; accent?:string;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{ border:"1px solid #e2e8f0", borderRadius:16, overflow:"hidden", background:"#fff" }}>
+      <button onClick={() => setOpen(o=>!o)} style={{
+        width:"100%", textAlign:"left", background:"#fff", border:"none",
+        padding:"13px 18px", cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center",
+      }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ fontWeight:800, fontSize:16, color:"#0f172a" }}>{title}</span>
+          {badge && <span style={{ fontSize:11, fontWeight:700, background:accent+"22", color:accent, padding:"2px 8px", borderRadius:99 }}>{badge}</span>}
+        </div>
+        <span style={{ fontSize:20, fontWeight:900, color:accent }}>{open?"−":"+"}</span>
+      </button>
+      {open && <div style={{ borderTop:"1px solid #e2e8f0", padding:18 }}>{children}</div>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// METRIC CARD
+// ─────────────────────────────────────────────
+
+function MetricCard({ title, value, subtitle, tooltip, inlineTag, accent }: {
+  title:string; value:string; subtitle?:string; tooltip?:string; inlineTag?:string; accent?:string;
+}) {
+  const [showTip, setShowTip] = useState(false);
+  return (
+    <div style={{ ...card, position:"relative" }}>
+      <div style={{ fontSize:11, fontWeight:700, color:"#64748b", marginBottom:7,
+        textTransform:"uppercase", letterSpacing:0.4,
+        display:"flex", alignItems:"center", justifyContent:"space-between", gap:4 }}>
+        <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+          {title}
+          {tooltip && (
+            <span onMouseEnter={() => setShowTip(true)} onMouseLeave={() => setShowTip(false)}
+              style={{ display:"inline-flex", alignItems:"center", justifyContent:"center",
+                width:14, height:14, borderRadius:"50%", background:accent ?? FT_GREEN,
+                color:"#fff", fontSize:9, fontWeight:900, cursor:"help", flexShrink:0 }}>?</span>
+          )}
+        </span>
+        {inlineTag && <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8", fontStyle:"italic", textTransform:"none", whiteSpace:"nowrap" }}>{inlineTag}</span>}
+      </div>
+      {showTip && tooltip && (
+        <div style={{ position:"absolute", top:"100%", left:0, zIndex:100,
+          background:"#0f172a", color:"#fff", borderRadius:10,
+          padding:"10px 13px", fontSize:12, lineHeight:1.6,
+          width:260, boxShadow:"0 8px 24px rgba(0,0,0,0.25)", marginTop:4, pointerEvents:"none", whiteSpace:"pre-line" }}>{tooltip}</div>
+      )}
+      <div style={{ fontSize:24, fontWeight:800, color:accent ?? "#0f172a", lineHeight:1.1, wordBreak:"break-word" }}>{value}</div>
+      {subtitle && <div style={{ fontSize:12, color:"#64748b", marginTop:7, lineHeight:1.5 }}>{subtitle}</div>}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// CASCADING FUNNEL SLIDERS (per backend)
+// ─────────────────────────────────────────────
+
+function CascadingFunnel({ prefix, funnel, onChange, accent }: {
+  prefix: string; funnel: Funnel; onChange: (f: Funnel) => void; accent: string;
+}) {
+  const { p2, p4, be, comp } = funnel;
   const stages = [
-    { key:"p2",   val:p2,   label:"CS Reach Payment 2",   color:FT_GREEN },
-    { key:"p4",   val:p4,   label:"CS Reach Payment 4",   color:FT_BLUE  },
-    { key:"be",   val:be,   label:"CS Reach Break-Even",  color:FT_AMBER },
-    { key:"comp", val:comp, label:"CS Complete Program",  color:FT_HYPER },
+    { key:"p2",   val:p2,   label:`${prefix} Payment 2`,  color:accent  },
+    { key:"p4",   val:p4,   label:`${prefix} Payment 4`,  color:FT_BLUE },
+    { key:"be",   val:be,   label:`${prefix} Break-Even`, color:FT_AMBER },
+    { key:"comp", val:comp, label:`${prefix} Complete`,   color:FT_HYPER },
   ];
 
   const handleChange = (key: string, nv: number) => {
@@ -347,13 +518,13 @@ function CascadingFunnel({ p2, p4, be, comp, onChange }: {
     else if (key==="p4")   { np4=nv; np2=Math.max(np2,np4); nbe=Math.min(nbe,np4); ncomp=Math.min(ncomp,nbe); }
     else if (key==="be")   { nbe=nv; np4=Math.max(np4,nbe); np2=Math.max(np2,np4); ncomp=Math.min(ncomp,nbe); }
     else                   { ncomp=nv; nbe=Math.max(nbe,ncomp); np4=Math.max(np4,nbe); np2=Math.max(np2,np4); }
-    onChange(np2,np4,nbe,ncomp);
+    onChange({ p2:np2, p4:np4, be:nbe, comp:ncomp });
   };
 
   return (
-    <div style={{ display:"flex", gap:10, flex:1, flexWrap:"wrap" }}>
+    <div style={{ display:"flex", gap:8, flex:1, flexWrap:"wrap" }}>
       {stages.map(s => (
-        <div key={s.key} style={{ flex:1, minWidth:88 }}>
+        <div key={s.key} style={{ flex:1, minWidth:72 }}>
           <div style={{ fontSize:9, fontWeight:800, color:s.color, marginBottom:3,
             textTransform:"uppercase", letterSpacing:0.3, whiteSpace:"nowrap",
             overflow:"hidden", textOverflow:"ellipsis" }}>{s.label}</div>
@@ -368,19 +539,80 @@ function CascadingFunnel({ p2, p4, be, comp, onChange }: {
 }
 
 // ─────────────────────────────────────────────
-// CASH URGENCY PANEL
+// LEAD QUALITY PANEL (per backend)
+// ─────────────────────────────────────────────
+
+function LeadQualityPanel({ prefix, quality, onChange, funnel, eff, accent }: {
+  prefix: string; quality: number; onChange: (v: number) => void;
+  funnel: Funnel; eff: Effective; accent: string;
+}) {
+  const qualityLabel = quality >= 80 ? "Strong" : quality >= 55 ? "Average" : quality >= 30 ? "Weak" : "Poor";
+  const qualityColor = quality >= 80 ? FT_GREEN : quality >= 55 ? accent : quality >= 30 ? FT_AMBER : FT_RED;
+
+  const rows = [
+    { label:`${prefix} Reach Payment 2`,  set:funnel.p2,   eff:eff.p2,   color:accent   },
+    { label:`${prefix} Reach Payment 4`,  set:funnel.p4,   eff:eff.p4,   color:FT_BLUE  },
+    { label:`${prefix} Reach Break-Even`, set:funnel.be,   eff:eff.be,   color:FT_AMBER },
+    { label:`${prefix} Complete Program`, set:funnel.comp, eff:eff.comp, color:FT_HYPER },
+  ];
+
+  return (
+    <div style={{ ...card, borderLeft:`4px solid ${qualityColor}` }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+        <div>
+          <div style={{ fontWeight:800, fontSize:15, color:"#0f172a" }}>{prefix} Lead Quality — Survival Rate Adjuster</div>
+          <div style={{ fontSize:12, color:"#64748b", marginTop:3, lineHeight:1.6 }}>
+            Scales effective {prefix} survival rates to reflect real-world churn risk on weaker leads.
+          </div>
+        </div>
+        <div style={{ textAlign:"right", flexShrink:0 }}>
+          <div style={{ fontSize:11, color:"#64748b", textTransform:"uppercase", letterSpacing:0.4, fontWeight:700 }}>Quality Tier</div>
+          <div style={{ fontSize:20, fontWeight:900, color:qualityColor }}>{qualityLabel}</div>
+        </div>
+      </div>
+
+      <input type="range" min={0} max={100} step={1} value={quality}
+        onChange={e => onChange(Number(e.target.value))}
+        style={{ width:"100%", accentColor:qualityColor }} />
+      <div style={{ textAlign:"center", fontSize:12, fontWeight:700, color:qualityColor, marginTop:2, marginBottom:12 }}>{quality}%</div>
+
+      <div style={{ overflowX:"auto", borderRadius:11, border:"1px solid #e2e8f0" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+          <thead><tr style={{ background:"#f8fafc" }}>
+            <th style={TH}>Milestone</th>
+            <th style={TH}>Your Estimate</th>
+            <th style={{ ...TH, borderRight:"none" }}>Effective at {quality}%</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} style={{ background:i%2?"#f8fafc":"#fff" }}>
+                <td style={{ ...TD, fontWeight:700, color:row.color }}>{row.label}</td>
+                <td style={TD}>{row.set}%</td>
+                <td style={{ ...TD, fontWeight:800, borderRight:"none",
+                  color:row.eff < row.set ? FT_RED : row.color }}>
+                  {row.eff}%
+                  {row.eff < row.set && <span style={{ marginLeft:6, fontSize:10, color:FT_RED }}>↓ {round2(row.set-row.eff)}pp</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// CASH URGENCY PANEL — THREE-WAY ROUTING
 // ─────────────────────────────────────────────
 
 function CashUrgencyPanel({ urgency, onChange, adjustedUrgency, stabilityPenalty, stabilityReason,
-  routing, debtAmount }: {
+  routing, debtAmount, analysis }: {
   urgency: number; onChange: (v: number) => void;
   adjustedUrgency: number; stabilityPenalty: number; stabilityReason: string;
-  routing: { ldPct: number; horizon: string; rationale: string };
-  debtAmount: number;
+  routing: { ldPct: number; csPct: number; elpPct: number; horizon: string; rationale: string };
+  debtAmount: number; analysis: DealAnalysis;
 }) {
-  const csPct   = 100 - routing.ldPct;
-  const under7k = debtAmount >= 4000 && debtAmount < 7000;
-
   const horizonMarkers = [
     { label:"No urgency", pct:0 },
     { label:"270 days",   pct:25 },
@@ -389,19 +621,26 @@ function CashUrgencyPanel({ urgency, onChange, adjustedUrgency, stabilityPenalty
     { label:"90 days",    pct:100 },
   ];
 
+  const cards = [
+    { key:"LD"  as const, pct:routing.ldPct,  blurb:"Fast 8% recognition — cash in the door by Month 3", res:analysis.ld },
+    { key:"CS"  as const, pct:routing.csPct,  blurb:"Debt validation perpetuity — 36-month tail on most bands", res:analysis.cs },
+    { key:"ELP" as const, pct:routing.elpPct, blurb:"Attorney model — longest term, highest full-term ceiling", res:analysis.elp },
+  ];
+
   return (
     <div style={{ ...card, borderLeft:`4px solid ${FT_AMBER}` }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12, flexWrap:"wrap", gap:12 }}>
         <div>
           <div style={{ fontWeight:800, fontSize:15, color:"#0f172a" }}>
             Cash Urgency — Portfolio Routing Driver
           </div>
-          <div style={{ fontSize:12, color:"#64748b", marginTop:3, lineHeight:1.6, maxWidth:560 }}>
+          <div style={{ fontSize:12, color:"#64748b", marginTop:3, lineHeight:1.6, maxWidth:620 }}>
             How quickly does Funding Tier need cash to fuel operations and growth?
-            This drives the recommended allocation of deals above $7k between Level Debt and Consumer Shield.
+            This sets Level Debt's share; the remainder splits between Consumer Shield and Elite Legal Practice
+            in proportion to their adjusted expected value.
             {stabilityPenalty > 0 && (
               <span style={{ color:FT_RED, fontWeight:700 }}>
-                {" "}Your CS survival rates are adding a stability adjustment of +{stabilityPenalty}pt.
+                {" "}Blended CS + ELP survival rates are adding a stability adjustment of +{stabilityPenalty}pt.
               </span>
             )}
           </div>
@@ -438,90 +677,124 @@ function CashUrgencyPanel({ urgency, onChange, adjustedUrgency, stabilityPenalty
         </div>
       )}
 
-      {under7k ? (
-        <div style={{ background:FT_RED+"11", border:`1px solid ${FT_RED}33`, borderRadius:12, padding:"12px 14px" }}>
-          <div style={{ fontWeight:800, color:FT_RED, fontSize:13 }}>⛔ Deal Under $7,000 — Level Debt Cannot Accept This Deal</div>
-          <div style={{ fontSize:12, color:"#64748b", marginTop:4, lineHeight:1.6 }}>
-            Level Debt only accepts enrolled debt of $7,000 or more. This deal must route to Consumer Shield regardless of cash urgency.
-          </div>
-        </div>
-      ) : (
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginTop:4 }}>
-          <div style={{ background:FT_GREEN+"11", border:`1px solid ${FT_GREEN}33`, borderRadius:12, padding:"12px 14px" }}>
-            <div style={{ fontSize:11, fontWeight:700, color:FT_GREEN_DARK, textTransform:"uppercase", letterSpacing:0.4 }}>Recommended — Level Debt (&gt;$7k)</div>
-            <div style={{ fontSize:28, fontWeight:900, color:FT_GREEN_DARK, lineHeight:1 }}>{routing.ldPct}%</div>
-            <div style={{ fontSize:12, color:"#64748b", marginTop:4, lineHeight:1.5 }}>Route this share to Level Debt for fast 8% recognition</div>
-          </div>
-          <div style={{ background:FT_BLUE+"11", border:`1px solid ${FT_BLUE}33`, borderRadius:12, padding:"12px 14px" }}>
-            <div style={{ fontSize:11, fontWeight:700, color:FT_BLUE, textTransform:"uppercase", letterSpacing:0.4 }}>Recommended — Consumer Shield (&gt;$7k)</div>
-            <div style={{ fontSize:28, fontWeight:900, color:FT_BLUE, lineHeight:1 }}>{csPct}%</div>
-            <div style={{ fontSize:12, color:"#64748b", marginTop:4, lineHeight:1.5 }}>Route this share to Consumer Shield for long-term LTV</div>
-          </div>
-          <div style={{ gridColumn:"1/-1", fontSize:13, color:"#475569", lineHeight:1.7,
-            background:"#f8fafc", borderRadius:10, padding:"10px 13px" }}>
-            <strong style={{ color:"#0f172a" }}>Rationale:</strong> {routing.rationale}
-          </div>
-        </div>
-      )}
+      <div className="ft-grid-3">
+        {cards.map(c => {
+          const meta = BACKEND_META[c.key];
+          return (
+            <div key={c.key} style={{ background:meta.color+"11", border:`1px solid ${meta.color}33`,
+              borderRadius:12, padding:"12px 14px", opacity:c.res.eligible?1:0.45 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:meta.colorDark, textTransform:"uppercase", letterSpacing:0.4 }}>
+                Recommended — {meta.name}
+              </div>
+              <div style={{ fontSize:28, fontWeight:900, color:meta.colorDark, lineHeight:1 }}>
+                {c.res.eligible ? `${c.pct}%` : "N/A"}
+              </div>
+              <div style={{ fontSize:12, color:"#64748b", marginTop:4, lineHeight:1.5 }}>
+                {c.res.eligible ? c.blurb : c.res.ineligibleReason}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize:13, color:"#475569", lineHeight:1.7, marginTop:12,
+        background:"#f8fafc", borderRadius:10, padding:"10px 13px" }}>
+        <strong style={{ color:"#0f172a" }}>Rationale:</strong> {routing.rationale}
+        {debtAmount > 0 && debtAmount < 7000 && (
+          <span style={{ color:FT_RED, fontWeight:700 }}>
+            {" "}At {money.format(debtAmount)} this deal is below the Level Debt floor — its LD share is forced to 0%.
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────
-// LEAD QUALITY PANEL
+// BACKEND COMPARISON — HEAD TO HEAD
 // ─────────────────────────────────────────────
 
-function LeadQualityPanel({ quality, onChange, p2Pct, p4Pct, bePct, compPct, ep2, ep4, ebe, ecomp }: {
-  quality: number; onChange: (v: number) => void;
-  p2Pct: number; p4Pct: number; bePct: number; compPct: number;
-  ep2: number; ep4: number; ebe: number; ecomp: number;
-}) {
-  const qualityLabel = quality >= 80 ? "Strong" : quality >= 55 ? "Average" : quality >= 30 ? "Weak" : "Poor";
-  const qualityColor = quality >= 80 ? FT_GREEN : quality >= 55 ? FT_BLUE : quality >= 30 ? FT_AMBER : FT_RED;
+function BackendComparison({ analysis }: { analysis: DealAnalysis }) {
+  const { ld, cs, elp } = analysis;
+  const cells = [ld, cs, elp] as BackendResult[];
+  const best = (vals: number[]) => Math.max(...vals);
+
+  const bestExpected = best(cells.map(c => c.eligible ? c.expectedRevenue : -1));
+  const bestNet      = best(cells.map(c => c.eligible ? c.netRevenue : -1));
+  const bestFull     = best(cells.map(c => c.eligible ? c.fullRevenue : -1));
+
+  const fmtBE = (b: BackendResult) =>
+    !b.eligible ? "—" : b.key === "LD" ? "Month 2 (guaranteed)" : b.breakEvenMonth ? `Month ${b.breakEvenMonth}` : "Never within term";
+
+  const rows: { label: string; tip: string; vals: (b: BackendResult) => string; highlight?: (b: BackendResult) => boolean }[] = [
+    { label:"Revenue model", tip:"How Funding Tier is paid on this backend.",
+      vals: b => b.key==="LD" ? "One-time 8% of enrolled debt"
+             : b.key==="CS" ? "100% of net payment Mo 1–4, then 35%"
+             : `100% pass-through Mo 1–2, then ${Math.round(elp.schedule.tierRate*100)}% of service fee` },
+    { label:"Minimum enrolled debt", tip:"Hard floor the servicer will accept.",
+      vals: b => money.format(BACKEND_META[b.key].minDebt) },
+    { label:"Eligible at this deal", tip:"Whether this backend can take the deal at the current enrolled debt.",
+      vals: b => b.eligible ? "Yes" : "No" },
+    { label:"Program term", tip:"Months the client pays. Level Debt recognizes once and stops.",
+      vals: b => !b.eligible ? "—" : b.key==="LD" ? "Recognized at Month 2" : `${b.term} months` },
+    { label:"Expected revenue / deal", tip:"Survival-weighted revenue after the lead-quality adjustment. This is the number to compare.",
+      vals: b => b.eligible ? money.format(b.expectedRevenue) : "—",
+      highlight: b => b.eligible && b.expectedRevenue === bestExpected },
+    { label:"Full-term ceiling", tip:"Revenue if the client completes the entire program. Best case, not a forecast.",
+      vals: b => b.eligible ? money.format(b.fullRevenue) : "—",
+      highlight: b => b.eligible && b.fullRevenue === bestFull },
+    { label:"Rep commission cost", tip:"LD = enrolled debt × rep %. CS = upfront + milestone × effective P4. ELP = band schedule weighted by effective P2 / P4.",
+      vals: b => b.eligible ? money.format(b.repCost) : "—" },
+    { label:"Net expected / deal", tip:"Expected revenue minus rep commission cost.",
+      vals: b => b.eligible ? money.format(b.netRevenue) : "—",
+      highlight: b => b.eligible && b.netRevenue === bestNet },
+    { label:"Break-even vs Level Debt", tip:"First month cumulative revenue catches the Level Debt 8%.",
+      vals: fmtBE },
+    { label:"Liability clear", tip:"Break-even month plus the 4-month chargeback buffer Funding Tier models per payment.",
+      vals: b => !b.eligible ? "—" : b.key==="LD" ? "After Payment 2" : b.liabilityClearMonth ? `Month ${b.liabilityClearMonth}` : "—" },
+    { label:"Cash speed", tip:"How quickly the money is actually in the bank.",
+      vals: b => b.key==="LD" ? "Fastest — 20th of Month 3" : b.key==="CS" ? "Monthly, ~1 month behind each payment" : "Monthly, ~1 month behind each draft" },
+  ];
 
   return (
-    <div style={{ ...card, borderLeft:`4px solid ${qualityColor}` }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-        <div>
-          <div style={{ fontWeight:800, fontSize:15, color:"#0f172a" }}>CS Lead Quality — Survival Rate Adjuster</div>
-          <div style={{ fontSize:12, color:"#64748b", marginTop:3, lineHeight:1.6, maxWidth:560 }}>
-            Scales effective CS survival rates to reflect real-world churn risk on weaker leads.
-            Your set rates assume ideal conditions — lead quality degrades them proportionally.
-          </div>
-        </div>
-        <div style={{ textAlign:"right", flexShrink:0 }}>
-          <div style={{ fontSize:11, color:"#64748b", textTransform:"uppercase", letterSpacing:0.4, fontWeight:700 }}>Quality Tier</div>
-          <div style={{ fontSize:20, fontWeight:900, color:qualityColor }}>{qualityLabel}</div>
-        </div>
+    <div style={card}>
+      <h2 style={{ margin:"0 0 4px", fontSize:18, fontWeight:800, color:"#0f172a" }}>
+        Backend Comparison — {money.format(analysis.debtAmount)} Enrolled Debt
+      </h2>
+      <div style={{ fontSize:13, color:"#64748b", lineHeight:1.6, marginBottom:14 }}>
+        Every backend on the same deal, same survival assumptions, same rep costs. Highlighted cells are the winner on that row.
       </div>
-
-      <input type="range" min={0} max={100} step={1} value={quality}
-        onChange={e => onChange(Number(e.target.value))}
-        style={{ width:"100%", accentColor:qualityColor }} />
-      <div style={{ textAlign:"center", fontSize:12, fontWeight:700, color:qualityColor, marginTop:2, marginBottom:12 }}>{quality}%</div>
-
-      <div style={{ overflowX:"auto", borderRadius:11, border:"1px solid #e2e8f0" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-          <thead><tr style={{ background:"#f8fafc" }}>
-            <th style={TH}>Milestone</th>
-            <th style={TH}>Your Estimate</th>
-            <th style={{ ...TH, borderRight:"none" }}>Effective Rate at {quality}% Quality</th>
+      <div style={{ overflowX:"auto", border:"1px solid #e2e8f0", borderRadius:13 }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead><tr style={{ background:"#f1f5f9" }}>
+            <th style={TH}>Metric</th>
+            {cells.map(b => (
+              <th key={b.key} style={{ ...TH, color:BACKEND_META[b.key].colorDark, borderRight:b.key==="ELP"?"none":TH.borderRight }}>
+                {BACKEND_META[b.key].name}
+                {analysis.recommended === b.key && (
+                  <span style={{ marginLeft:6, fontSize:10, background:BACKEND_META[b.key].color+"22",
+                    padding:"1px 6px", borderRadius:99 }}>RECOMMENDED</span>
+                )}
+              </th>
+            ))}
           </tr></thead>
           <tbody>
-            {[
-              { label:"CS Reach Payment 2",  set:p2Pct,   eff:ep2,   color:FT_GREEN },
-              { label:"CS Reach Payment 4",  set:p4Pct,   eff:ep4,   color:FT_BLUE  },
-              { label:"CS Reach Break-Even", set:bePct,   eff:ebe,   color:FT_AMBER },
-              { label:"CS Complete Program", set:compPct, eff:ecomp, color:FT_HYPER },
-            ].map((row, i) => (
-              <tr key={i} style={{ background:i%2?"#f8fafc":"#fff" }}>
-                <td style={{ ...TD, fontWeight:700, color:row.color }}>{row.label}</td>
-                <td style={TD}>{row.set}%</td>
-                <td style={{ ...TD, fontWeight:800, borderRight:"none",
-                  color:row.eff < row.set ? FT_RED : row.color }}>
-                  {row.eff}%
-                  {row.eff < row.set && <span style={{ marginLeft:6, fontSize:10, color:FT_RED }}>↓ {row.set-row.eff}pp</span>}
+            {rows.map((row, i) => (
+              <tr key={row.label} style={{ background:i%2?"#f8fafc":"#fff" }}>
+                <td style={{ ...TD, fontWeight:700 }} title={row.tip}>
+                  {row.label} <span style={{ fontSize:10, background:"#e2e8f0", borderRadius:99, padding:"1px 5px", color:"#334155", cursor:"help" }}>?</span>
                 </td>
+                {cells.map(b => {
+                  const win = row.highlight?.(b) ?? false;
+                  return (
+                    <td key={b.key} style={{ ...TD,
+                      borderRight: b.key==="ELP" ? "none" : TD.borderRight,
+                      background: win ? BACKEND_META[b.key].color+"1a" : undefined,
+                      fontWeight: win ? 800 : 400,
+                      color: win ? BACKEND_META[b.key].colorDark : (b.eligible ? "#0f172a" : "#94a3b8") }}>
+                      {row.vals(b)}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -532,63 +805,57 @@ function LeadQualityPanel({ quality, onChange, p2Pct, p4Pct, bePct, compPct, ep2
 }
 
 // ─────────────────────────────────────────────
-// FUNNEL EXPLAINER (with cohort tooltip)
+// FUNNEL EXPLAINER (per backend)
 // ─────────────────────────────────────────────
 
-function FunnelExplainer({ ep2, ep4, ebe, ecomp, rev2, rev4, revBE, fullRev, ldRev }: {
-  ep2: number; ep4: number; ebe: number; ecomp: number;
-  rev2: number; rev4: number; revBE: number; fullRev: number; ldRev: number;
+function FunnelExplainer({ prefix, accent, eff, rev2, rev4, revBE, fullRev, ldRev, expected }: {
+  prefix: string; accent: string; eff: Effective;
+  rev2: number; rev4: number; revBE: number; fullRev: number; ldRev: number; expected: number;
 }) {
   const stages = [
-    { pct:100,  label:"CS Deals Sent",           color:"#94a3b8" },
-    { pct:ep2,  label:"CS Reach Payment 2",       color:FT_GREEN  },
-    { pct:ep4,  label:"CS Reach Payment 4",       color:FT_BLUE   },
-    { pct:ebe,  label:"CS Reach Break-Even",      color:FT_AMBER  },
-    { pct:ecomp,label:"CS Complete Full Program", color:FT_HYPER  },
+    { pct:100,      label:`${prefix} Deals Sent`,            color:"#94a3b8" },
+    { pct:eff.p2,   label:`${prefix} Reach Payment 2`,       color:accent    },
+    { pct:eff.p4,   label:`${prefix} Reach Payment 4`,       color:FT_BLUE   },
+    { pct:eff.be,   label:`${prefix} Reach Break-Even`,      color:FT_AMBER  },
+    { pct:eff.comp, label:`${prefix} Complete Full Program`, color:FT_HYPER  },
   ];
 
-  const d2c  = round2(ep2 - ep4);
-  const d4be = round2(ep4 - ebe);
-  const dbeC = round2(ebe - ecomp);
+  const d2c  = round2(eff.p2 - eff.p4);
+  const d4be = round2(eff.p4 - eff.be);
+  const dbeC = round2(eff.be - eff.comp);
 
   const marginals = [
-    { label:`${round2(100-ep2)}% drop before CS Payment 2 — earn $0`,
-      contrib:0, calc:`(100% − ${ep2}%) = ${round2(100-ep2)}% of deals earn nothing`, color:"#e2e8f0" },
-    { label:`${d2c}% reach CS P2 only — earn ${money.format(rev2)} each`,
-      contrib:round2(d2c/100*rev2), calc:`(${ep2}% − ${ep4}%) × ${money.format(rev2)} = ${money.format(round2(d2c/100*rev2))}`, color:FT_GREEN },
-    { label:`${d4be}% reach CS P4 only — earn ${money.format(rev4)} each`,
-      contrib:round2(d4be/100*rev4), calc:`(${ep4}% − ${ebe}%) × ${money.format(rev4)} = ${money.format(round2(d4be/100*rev4))}`, color:FT_BLUE },
-    { label:`${dbeC}% reach CS Break-Even only — earn ${money.format(revBE)} each`,
-      contrib:round2(dbeC/100*revBE), calc:`(${ebe}% − ${ecomp}%) × ${money.format(revBE)} = ${money.format(round2(dbeC/100*revBE))}`, color:FT_AMBER },
-    { label:`${ecomp}% complete CS full program — earn ${money.format(fullRev)} each`,
-      contrib:round2(ecomp/100*fullRev), calc:`${ecomp}% × ${money.format(fullRev)} = ${money.format(round2(ecomp/100*fullRev))}`, color:FT_HYPER },
+    { label:`${round2(100-eff.p2)}% drop before ${prefix} Payment 2 — earn $0`,
+      contrib:0, calc:`(100% − ${eff.p2}%) = ${round2(100-eff.p2)}% of deals earn nothing`, color:"#e2e8f0" },
+    { label:`${d2c}% reach ${prefix} P2 only — earn ${money.format(rev2)} each`,
+      contrib:round2(d2c/100*rev2), calc:`(${eff.p2}% − ${eff.p4}%) × ${money.format(rev2)} = ${money.format(round2(d2c/100*rev2))}`, color:accent },
+    { label:`${d4be}% reach ${prefix} P4 only — earn ${money.format(rev4)} each`,
+      contrib:round2(d4be/100*rev4), calc:`(${eff.p4}% − ${eff.be}%) × ${money.format(rev4)} = ${money.format(round2(d4be/100*rev4))}`, color:FT_BLUE },
+    { label:`${dbeC}% reach ${prefix} Break-Even only — earn ${money.format(revBE)} each`,
+      contrib:round2(dbeC/100*revBE), calc:`(${eff.be}% − ${eff.comp}%) × ${money.format(revBE)} = ${money.format(round2(dbeC/100*revBE))}`, color:FT_AMBER },
+    { label:`${eff.comp}% complete ${prefix} full program — earn ${money.format(fullRev)} each`,
+      contrib:round2(eff.comp/100*fullRev), calc:`${eff.comp}% × ${money.format(fullRev)} = ${money.format(round2(eff.comp/100*fullRev))}`, color:FT_HYPER },
   ];
 
-  const totalExpected = round2(marginals.reduce((s, m) => s + m.contrib, 0));
-
-  const cohortTipText = `Each row represents a "cohort" — the group of CS deals that dropped out at a specific stage.\n\n` +
-    `How each row is calculated:\n` +
+  const cohortTipText = `Each row represents a "cohort" — the group of ${prefix} deals that dropped out at a specific stage.\n\n` +
     `• "% in cohort" = difference between adjacent funnel stages\n` +
-    `  e.g. P2 cohort = P2 rate minus P4 rate\n` +
-    `• "Revenue per deal" = cumulative CS revenue at that stage exit point\n` +
+    `• "Revenue per deal" = cumulative ${prefix} revenue at that exit point\n` +
     `• "Contribution" = cohort % × revenue per deal\n\n` +
-    `Summing all cohort contributions gives the total Expected Revenue per CS deal.\n\n` +
-    `Example: if 15% of deals reach P2 only and earn $660 each,\n` +
-    `that cohort contributes $99 per average CS deal.`;
+    `Summing all cohort contributions gives the total Expected Revenue per ${prefix} deal.`;
 
   return (
     <div style={card}>
       <div style={{ fontWeight:800, fontSize:15, color:"#0f172a", marginBottom:12 }}>
-        CS Expected Revenue — Deal Survival Funnel (after Lead Quality adjustment)
+        {prefix} Expected Revenue — Deal Survival Funnel (after Lead Quality adjustment)
       </div>
       <div style={{ display:"grid", gap:6, marginBottom:16 }}>
         {stages.map((s, i) => (
           <div key={i} style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ fontSize:12, color:"#64748b", width:210, flexShrink:0, fontWeight:i===0?400:700 }}>{s.label}</div>
+            <div style={{ fontSize:12, color:"#64748b", width:230, flexShrink:0, fontWeight:i===0?400:700 }}>{s.label}</div>
             <div style={{ flex:1, background:"#f1f5f9", borderRadius:99, height:16, overflow:"hidden" }}>
               <div style={{ width:`${s.pct}%`, height:"100%", background:s.color, borderRadius:99, transition:"width 0.3s" }} />
             </div>
-            <div style={{ fontSize:13, fontWeight:800, color:s.color, width:42, textAlign:"right" }}>{s.pct}%</div>
+            <div style={{ fontSize:13, fontWeight:800, color:s.color, width:46, textAlign:"right" }}>{s.pct}%</div>
           </div>
         ))}
       </div>
@@ -614,9 +881,9 @@ function FunnelExplainer({ ep2, ep4, ebe, ecomp, rev2, rev4, revBE, fullRev, ldR
           ))}
         </div>
         <div style={{ display:"flex", justifyContent:"space-between", marginTop:10,
-          padding:"8px 10px", background:FT_GREEN+"18", borderRadius:10, fontWeight:800, fontSize:14 }}>
-          <span>CS Expected Revenue Per Deal</span>
-          <span style={{ color:FT_GREEN_DARK }}>{money.format(totalExpected)}</span>
+          padding:"8px 10px", background:accent+"18", borderRadius:10, fontWeight:800, fontSize:14 }}>
+          <span>{prefix} Expected Revenue Per Deal</span>
+          <span style={{ color:accent }}>{money.format(expected)}</span>
         </div>
         {ldRev > 0 && (
           <div style={{ display:"flex", justifyContent:"space-between", marginTop:6,
@@ -631,76 +898,16 @@ function FunnelExplainer({ ep2, ep4, ebe, ecomp, rev2, rev4, revBE, fullRev, ldR
 }
 
 // ─────────────────────────────────────────────
-// ACCORDION
+// REVENUE MILESTONES TIMELINE (per backend)
 // ─────────────────────────────────────────────
 
-function Accordion({ title, defaultOpen=false, children, badge }: {
-  title:string; defaultOpen?:boolean; children:React.ReactNode; badge?:string;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div style={{ border:"1px solid #e2e8f0", borderRadius:16, overflow:"hidden", background:"#fff" }}>
-      <button onClick={() => setOpen(o=>!o)} style={{
-        width:"100%", textAlign:"left", background:"#fff", border:"none",
-        padding:"13px 18px", cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center",
-      }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <span style={{ fontWeight:800, fontSize:16, color:"#0f172a" }}>{title}</span>
-          {badge && <span style={{ fontSize:11, fontWeight:700, background:FT_GREEN+"22", color:FT_GREEN_DARK, padding:"2px 8px", borderRadius:99 }}>{badge}</span>}
-        </div>
-        <span style={{ fontSize:20, fontWeight:900, color:FT_GREEN }}>{open?"−":"+"}</span>
-      </button>
-      {open && <div style={{ borderTop:"1px solid #e2e8f0", padding:18 }}>{children}</div>}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-// METRIC CARD
-// ─────────────────────────────────────────────
-
-function MetricCard({ title, value, subtitle, tooltip, inlineTag }: {
-  title:string; value:string; subtitle?:string; tooltip?:string; inlineTag?:string;
-}) {
-  const [showTip, setShowTip] = useState(false);
-  return (
-    <div style={{ ...card, position:"relative" }}>
-      <div style={{ fontSize:11, fontWeight:700, color:"#64748b", marginBottom:7,
-        textTransform:"uppercase", letterSpacing:0.4,
-        display:"flex", alignItems:"center", justifyContent:"space-between", gap:4 }}>
-        <span style={{ display:"flex", alignItems:"center", gap:4 }}>
-          {title}
-          {tooltip && (
-            <span onMouseEnter={() => setShowTip(true)} onMouseLeave={() => setShowTip(false)}
-              style={{ display:"inline-flex", alignItems:"center", justifyContent:"center",
-                width:14, height:14, borderRadius:"50%", background:FT_GREEN,
-                color:"#fff", fontSize:9, fontWeight:900, cursor:"help", flexShrink:0 }}>?</span>
-          )}
-        </span>
-        {inlineTag && <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8", fontStyle:"italic", textTransform:"none", whiteSpace:"nowrap" }}>{inlineTag}</span>}
-      </div>
-      {showTip && tooltip && (
-        <div style={{ position:"absolute", top:"100%", left:0, zIndex:100,
-          background:"#0f172a", color:"#fff", borderRadius:10,
-          padding:"10px 13px", fontSize:12, lineHeight:1.6,
-          width:260, boxShadow:"0 8px 24px rgba(0,0,0,0.25)", marginTop:4, pointerEvents:"none" }}>{tooltip}</div>
-      )}
-      <div style={{ fontSize:24, fontWeight:800, color:"#0f172a", lineHeight:1.1, wordBreak:"break-word" }}>{value}</div>
-      {subtitle && <div style={{ fontSize:12, color:"#64748b", marginTop:7, lineHeight:1.5 }}>{subtitle}</div>}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-// CS MILESTONES TIMELINE
-// ─────────────────────────────────────────────
-
-function CSRevenueMilestonesTimeline({ timeline, breakEvenMonth, liabilityClearMonth, levelDebtRevenue, debtAmount }: {
+function MilestonesTimeline({ timeline, breakEvenMonth, liabilityClearMonth, levelDebtRevenue,
+  debtAmount, accent, accentDark, frontPhase, frontLabel, tailLabel, frontEndsMonth }: {
   timeline:TimelineRow[]; breakEvenMonth:number|null; liabilityClearMonth:number|null;
-  levelDebtRevenue:number; debtAmount:number;
+  levelDebtRevenue:number; debtAmount:number; accent:string; accentDark:string;
+  frontPhase:string; frontLabel:string; tailLabel:string; frontEndsMonth:number;
 }) {
   const [hovM, setHovM] = useState<number|null>(null);
-  const [showTip, setShowTip] = useState(false);
 
   if (!timeline.length) return <div style={{ color:"#94a3b8", fontSize:13 }}>Enter a valid debt amount to see the timeline.</div>;
 
@@ -711,34 +918,19 @@ function CSRevenueMilestonesTimeline({ timeline, breakEvenMonth, liabilityClearM
   const hovX=hovM!==null?getX(hovM-1):0;
 
   const labels:Record<number,{text:string;color:string}>={};
-  labels[1]={text:"Mo 1",color:FT_GREEN}; labels[4]={text:"Mo 4",color:FT_GREEN};
+  // On a long term the "Mo 1" and front-close labels collide when the front
+  // window is only two months (ELP). Keep the more informative one.
+  if(frontEndsMonth>2) labels[1]={text:"Mo 1",color:accent};
+  if(frontEndsMonth<=term) labels[frontEndsMonth]={text:`Mo ${frontEndsMonth}`,color:accent};
   if(breakEvenMonth) labels[breakEvenMonth]={text:`Mo ${breakEvenMonth}`,color:FT_AMBER};
   if(liabilityClearMonth&&liabilityClearMonth<=term) labels[liabilityClearMonth]={text:`Mo ${liabilityClearMonth}`,color:FT_HYPER};
-  labels[term]={text:`Mo ${term}`,color:FT_GREEN_DARK};
+  labels[term]={text:`Mo ${term}`,color:accentDark};
 
   return (
     <div>
-      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
-        <span style={{ fontSize:13, color:"#64748b" }}>
-          Figures based on <strong>{money.format(debtAmount)}</strong> enrolled debt —
-          Level Debt = {levelDebtRevenue > 0 ? money.format(levelDebtRevenue) : "N/A (under $7k)"} vs the assigned CS program.
-        </span>
-        <span onMouseEnter={()=>setShowTip(true)} onMouseLeave={()=>setShowTip(false)}
-          style={{ display:"inline-flex", alignItems:"center", justifyContent:"center",
-            width:16, height:16, borderRadius:"50%", background:FT_GREEN,
-            color:"#fff", fontSize:10, fontWeight:900, cursor:"help", flexShrink:0, position:"relative" }}>
-          ?
-          {showTip && (
-            <div style={{ position:"absolute", bottom:"120%", left:"50%", transform:"translateX(-50%)",
-              background:"#0f172a", color:"#fff", borderRadius:10, padding:"10px 13px",
-              fontSize:12, lineHeight:1.65, width:300, boxShadow:"0 8px 24px rgba(0,0,0,0.25)",
-              zIndex:200, pointerEvents:"none" }}>
-              These milestones show the cumulative CS revenue at each month for the program assigned to {money.format(debtAmount)} enrolled debt.
-              Level Debt comparison is based on 8% of enrolled debt recognized after 2 payments.
-              Adjust Enrolled Debt to see how milestones shift.
-            </div>
-          )}
-        </span>
+      <div style={{ fontSize:13, color:"#64748b", marginBottom:10 }}>
+        Figures based on <strong>{money.format(debtAmount)}</strong> enrolled debt —
+        Level Debt = {levelDebtRevenue > 0 ? money.format(levelDebtRevenue) : "N/A (under $7k)"} vs this program.
       </div>
 
       <div style={{ overflowX:"auto" }}>
@@ -746,20 +938,20 @@ function CSRevenueMilestonesTimeline({ timeline, breakEvenMonth, liabilityClearM
           <line x1={PL} y1={dotY} x2={W-PR} y2={dotY} stroke="#e2e8f0" strokeWidth="4" strokeLinecap="round" />
           {timeline.map((row,i)=>{
             if(i===0) return null;
-            const col=row.month===liabilityClearMonth?FT_HYPER:row.month<=(breakEvenMonth??0)?FT_AMBER:row.phase==="Front"?FT_GREEN:FT_BLUE;
+            const col=row.month===liabilityClearMonth?FT_HYPER:row.month<=(breakEvenMonth??0)?FT_AMBER:row.phase===frontPhase?accent:FT_BLUE;
             return <line key={i} x1={getX(i-1)} y1={dotY} x2={getX(i)} y2={dotY} stroke={col} strokeWidth="4" strokeLinecap="round" />;
           })}
           {timeline.map((row,i)=>{
             const x=getX(i),isHov=hovM===row.month,isLbl=!!labels[row.month];
             const isBE=row.month===breakEvenMonth,isLC=row.month===liabilityClearMonth,isLast=row.month===term;
-            const dc=isLC?FT_HYPER:isBE?FT_AMBER:isLast?FT_GREEN_DARK:row.phase==="Front"?FT_GREEN:FT_BLUE;
+            const dc=isLC?FT_HYPER:isBE?FT_AMBER:isLast?accentDark:row.phase===frontPhase?accent:FT_BLUE;
             return (
               <g key={row.month}>
                 <circle cx={x} cy={dotY} r={12} fill="transparent" style={{cursor:"pointer"}} onMouseEnter={()=>setHovM(row.month)} />
-                <circle cx={x} cy={dotY} r={isHov?9:isLbl?6:3.5} fill={dc} stroke={isLC||isHov?"#fff":"none"} strokeWidth={isLC?2.5:2} style={{pointerEvents:"none"}} />
+                <circle cx={x} cy={dotY} r={isHov?9:isLbl?6:3} fill={dc} stroke={isLC||isHov?"#fff":"none"} strokeWidth={isLC?2.5:2} style={{pointerEvents:"none"}} />
                 {isLC&&<circle cx={x} cy={dotY} r={isHov?14:10} fill="none" stroke={FT_HYPER} strokeWidth="2" opacity="0.4" style={{pointerEvents:"none"}} />}
                 {isLbl&&<text x={x} y={dotY+20} textAnchor="middle" fontSize="10" fill={labels[row.month].color} fontWeight="800">{labels[row.month].text}</text>}
-                {isLast&&<text x={x} y={dotY-14} textAnchor="middle" fontSize="11" fill={FT_GREEN_DARK} fontWeight="900">{money.format(row.cumulativeRevenue)}</text>}
+                {isLast&&<text x={x} y={dotY-14} textAnchor="middle" fontSize="11" fill={accentDark} fontWeight="900">{money.format(row.cumulativeRevenue)}</text>}
                 {isBE&&!isLast&&<text x={x} y={dotY-14} textAnchor="middle" fontSize="10" fill={FT_AMBER} fontWeight="800">{money.format(row.cumulativeRevenue)}</text>}
                 {isLC&&!isBE&&!isLast&&<text x={x} y={dotY-14} textAnchor="middle" fontSize="10" fill={FT_HYPER} fontWeight="900">{money.format(row.cumulativeRevenue)}</text>}
               </g>
@@ -769,7 +961,7 @@ function CSRevenueMilestonesTimeline({ timeline, breakEvenMonth, liabilityClearM
             const tx=Math.min(Math.max(hovX,68),W-68);
             return (
               <g style={{pointerEvents:"none"}}>
-                <rect x={tx-62} y={dotY-62} width={124} height={48} rx="8" fill="#0f172a" opacity="0.93" />
+                <rect x={tx-66} y={dotY-62} width={132} height={48} rx="8" fill="#0f172a" opacity="0.93" />
                 <text x={tx} y={dotY-47} textAnchor="middle" fontSize="10" fill="#94a3b8" fontWeight="700">MONTH {hov.month} · {hov.phase.toUpperCase()}</text>
                 <text x={tx} y={dotY-28} textAnchor="middle" fontSize="14" fill="#fff" fontWeight="800">{money.format(hov.cumulativeRevenue)}</text>
               </g>
@@ -777,16 +969,16 @@ function CSRevenueMilestonesTimeline({ timeline, breakEvenMonth, liabilityClearM
           })()}
         </svg>
         <div style={{ display:"flex", gap:14, marginTop:6, fontSize:11, color:"#64748b", flexWrap:"wrap" }}>
-          <span><span style={{ display:"inline-block", width:9, height:9, borderRadius:"50%", background:FT_GREEN, marginRight:4, verticalAlign:"middle" }} />Front (Mo 1–4): 100% net</span>
-          <span><span style={{ display:"inline-block", width:9, height:9, borderRadius:"50%", background:FT_BLUE, marginRight:4, verticalAlign:"middle" }} />Tail-End (Mo 5+): 35% net</span>
-          {breakEvenMonth&&<span><span style={{ display:"inline-block", width:9, height:9, borderRadius:"50%", background:FT_AMBER, marginRight:4, verticalAlign:"middle" }} />CS breaks even after Month {breakEvenMonth} vs LD after Month 2</span>}
+          <span><span style={{ display:"inline-block", width:9, height:9, borderRadius:"50%", background:accent, marginRight:4, verticalAlign:"middle" }} />{frontLabel}</span>
+          <span><span style={{ display:"inline-block", width:9, height:9, borderRadius:"50%", background:FT_BLUE, marginRight:4, verticalAlign:"middle" }} />{tailLabel}</span>
+          {breakEvenMonth&&<span><span style={{ display:"inline-block", width:9, height:9, borderRadius:"50%", background:FT_AMBER, marginRight:4, verticalAlign:"middle" }} />Breaks even vs Level Debt after Month {breakEvenMonth}</span>}
           {liabilityClearMonth&&liabilityClearMonth<=timeline.length&&(
-            <span style={{ color:FT_HYPER, fontWeight:800 }}>
+            <span style={{ color:FT_GREEN_DARK, fontWeight:800 }}>
               <span style={{ display:"inline-block", width:9, height:9, borderRadius:"50%", background:FT_HYPER, marginRight:4, verticalAlign:"middle", boxShadow:`0 0 6px ${FT_HYPER}` }} />
               Break-Even + Fully Liability-Clear (Mo {liabilityClearMonth})
             </span>
           )}
-          <span style={{ color:FT_GREEN_DARK, fontWeight:700 }}>↑ Hover dots for cumulative revenue</span>
+          <span style={{ color:accentDark, fontWeight:700 }}>↑ Hover dots for cumulative revenue</span>
         </div>
       </div>
     </div>
@@ -794,53 +986,66 @@ function CSRevenueMilestonesTimeline({ timeline, breakEvenMonth, liabilityClearM
 }
 
 // ─────────────────────────────────────────────
-// PAYOUT + LIABILITY
+// MONTHLY REVENUE TABLE (per backend)
 // ─────────────────────────────────────────────
 
-function PayoutLiabilityAccordion() {
-  const rows = [
-    { event:"Expected Funds Hit Bank", ld:"Month 3 (20th)", cs:"Month +1 per payment",
-      detail:"LD: Payment 1 = Jan 1, Payment 2 = Feb 1 → payout March 20. CS: each payment hits your bank ~1 month after processing." },
-    { event:"Chargeback Liability Free", ld:"After Payment 2", cs:"Each payment: Month +4",
-      detail:"LD: zero liability after 2 cleared payments. CS: each payment has its own 4-month window — they do not clear together." },
-    { event:"ACH Return Window", ld:"~60 days (Nacha)", cs:"~60 days per payment",
-      detail:"Funding Tier models 4 months as a conservative internal buffer. Real Nacha window is ~60 calendar days per payment." },
-  ];
+function MonthlyRevenueTable({ timeline, breakEvenMonth, liabilityClearMonth, frontPhase, frontEndsMonth, accent, accentDark }: {
+  timeline:TimelineRow[]; breakEvenMonth:number|null; liabilityClearMonth:number|null;
+  frontPhase:string; frontEndsMonth:number; accent:string; accentDark:string;
+}) {
   return (
-    <Accordion title="Payout + Liability Timing — Level Debt vs Consumer Shield">
-      <div style={{ overflowX:"auto", borderRadius:12, border:"1px solid #e2e8f0" }}>
-        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-          <thead><tr style={{ background:"#f8fafc" }}>{["Timing Event","Level Debt","Consumer Shield","Notes"].map(h=><th key={h} style={TH}>{h}</th>)}</tr></thead>
-          <tbody>
-            {rows.map((row,i)=>(
-              <tr key={i} style={{ background:i%2?"#f8fafc":"#fff" }}>
-                <td style={{ ...TD, fontWeight:700 }}>{row.event}</td>
-                <td style={{ ...TD, color:FT_GREEN_DARK, fontWeight:700 }}>{row.ld}</td>
-                <td style={{ ...TD, color:FT_BLUE, fontWeight:700 }}>{row.cs}</td>
-                <td style={{ ...TD, color:"#64748b", lineHeight:1.6 }}>{row.detail}</td>
+    <div style={{ overflowX:"auto", borderRadius:13, border:"1px solid #e2e8f0", maxHeight:520 }}>
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+        <thead><tr style={{ background:"#f1f5f9" }}>
+          {["Month","Phase","Monthly Revenue","Cumulative Revenue","Assumed Funds Hit","Liability Clears"].map(h=><th key={h} style={TH}>{h}</th>)}
+        </tr></thead>
+        <tbody>
+          {timeline.map(row=>{
+            const isBE=row.month===breakEvenMonth;
+            const isLC=row.month===liabilityClearMonth;
+            const is1=row.month===1,isFE=row.month===frontEndsMonth;
+            const isMile=isBE||isLC||is1||isFE;
+            const rowBg=isLC?FT_HYPER+"22":isBE?FT_AMBER+"22":is1||isFE?accent+"11":row.month%2?"#f8fafc":"#fff";
+            return (
+              <tr key={row.month} style={{ background:rowBg }}>
+                <td style={{ ...TD, fontWeight:isMile?800:400 }}>
+                  {row.month}
+                  {is1&&<span style={{ marginLeft:6, fontSize:10, background:accent+"22", color:accentDark, fontWeight:700, padding:"1px 6px", borderRadius:99 }}>Start</span>}
+                  {isFE&&<span style={{ marginLeft:6, fontSize:10, background:accent+"22", color:accentDark, fontWeight:700, padding:"1px 6px", borderRadius:99 }}>Front Close</span>}
+                  {isBE&&<span style={{ marginLeft:6, fontSize:10, background:FT_AMBER+"33", color:FT_AMBER, fontWeight:800, padding:"1px 6px", borderRadius:99 }}>Break-Even</span>}
+                  {isLC&&<span style={{ marginLeft:6, fontSize:10, background:FT_HYPER+"33", color:FT_GREEN_DARK, fontWeight:800, padding:"1px 6px", borderRadius:99 }}>Liability Clear</span>}
+                </td>
+                <td style={{ ...TD, color:row.phase===frontPhase?accentDark:FT_BLUE, fontWeight:700 }}>{row.phase}</td>
+                <td style={TD}>{money.format(row.monthlyRevenue)}</td>
+                <td style={{ ...TD, fontWeight:isMile?800:400, color:isLC?FT_GREEN_DARK:isBE?FT_AMBER:"inherit" }}>
+                  {money.format(row.cumulativeRevenue)}
+                </td>
+                <td style={TD}>Month {row.payoutHitMonthAssumed}</td>
+                <td style={{ ...TD, borderRight:"none" }}>Month {row.liabilityFreeMonth}</td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Accordion>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
 // ─────────────────────────────────────────────
-// PROGRAM CHART
+// REVENUE CURVE (generic cumulative series)
 // ─────────────────────────────────────────────
 
-function ProgramChart({ program }: { program:ConsumerShieldProgram }) {
+function RevenueCurve({ points, accent, accentDark, notableMonths }: {
+  points:{month:number;y:number}[]; accent:string; accentDark:string; notableMonths:number[];
+}) {
   const [hov, setHov] = useState<{month:number;rev:number;x:number;y:number}|null>(null);
-  const net=program.payment-40;
-  const pts=Array.from({length:program.term},(_,i)=>({month:i+1,y:csRevenueAt(i+1,net,program.term)}));
-  const maxY=Math.max(...pts.map(p=>p.y),1);
+  if (!points.length) return null;
+  const maxY=Math.max(...points.map(p=>p.y),1);
   const W=700,H=240,PL=90,PB=40,PT=22,PR=24;
-  const gx=(i:number)=>PL+(i/Math.max(pts.length-1,1))*(W-PL-PR);
+  const gx=(i:number)=>PL+(i/Math.max(points.length-1,1))*(W-PL-PR);
   const gy=(v:number)=>H-PB-(v/maxY)*(H-PT-PB);
-  const coords=pts.map((p,i)=>`${gx(i)},${gy(p.y)}`).join(" ");
-  const notable=new Set([1,4,program.term]);
+  const coords=points.map((p,i)=>`${gx(i)},${gy(p.y)}`).join(" ");
+  const notable=new Set(notableMonths);
 
   return (
     <div style={{ overflowX:"auto", background:"#f8fafc", border:"1px solid #e2e8f0", borderRadius:14, padding:"12px 10px 8px" }}>
@@ -849,21 +1054,21 @@ function ProgramChart({ program }: { program:ConsumerShieldProgram }) {
           const yv=H-PB-t*(H-PT-PB);
           return <g key={i}>
             <line x1={PL} y1={yv} x2={W-PR} y2={yv} stroke={t===0?"#94a3b8":"#e2e8f0"} strokeWidth={t===0?1.5:1} />
-            <text x={PL-8} y={yv+4} fontSize="11" fill={FT_GREEN} textAnchor="end" fontWeight="600">{money.format(maxY*t)}</text>
+            <text x={PL-8} y={yv+4} fontSize="11" fill={accentDark} textAnchor="end" fontWeight="600">{money.format(maxY*t)}</text>
           </g>;
         })}
-        <text x={16} y={H/2} textAnchor="middle" fontSize="11" fill={FT_GREEN} fontWeight="700" transform={`rotate(-90,16,${H/2})`}>Revenue Earned</text>
+        <text x={16} y={H/2} textAnchor="middle" fontSize="11" fill={accentDark} fontWeight="700" transform={`rotate(-90,16,${H/2})`}>Revenue Earned</text>
         <line x1={PL} y1={H-PB} x2={W-PR} y2={H-PB} stroke="#94a3b8" strokeWidth="1.5" />
-        <text x={PL+(W-PL-PR)/2} y={H-6} textAnchor="middle" fontSize="11" fill={FT_GREEN} fontWeight="700">Program Length (Months)</text>
-        <polyline fill={FT_GREEN+"18"} stroke="none" points={`${gx(0)},${H-PB} ${coords} ${gx(pts.length-1)},${H-PB}`} />
-        <polyline fill="none" stroke={FT_GREEN} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" points={coords} />
-        {pts.map((p,i)=>{
+        <text x={PL+(W-PL-PR)/2} y={H-6} textAnchor="middle" fontSize="11" fill={accentDark} fontWeight="700">Program Length (Months)</text>
+        <polyline fill={accent+"18"} stroke="none" points={`${gx(0)},${H-PB} ${coords} ${gx(points.length-1)},${H-PB}`} />
+        <polyline fill="none" stroke={accent} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" points={coords} />
+        {points.map((p,i)=>{
           const x=gx(i),y=gy(p.y),isH=hov?.month===p.month,isN=notable.has(p.month);
           return <g key={p.month}>
             <circle cx={x} cy={y} r={11} fill="transparent" style={{cursor:"pointer"}} onMouseEnter={()=>setHov({month:p.month,rev:p.y,x,y})} />
-            <circle cx={x} cy={y} r={isH?8:isN?5.5:3.5} fill={isH||isN?FT_GREEN_DARK:FT_GREEN} stroke={isH?"#fff":"none"} strokeWidth="2" style={{pointerEvents:"none"}} />
-            {isN&&<text x={x} y={H-PB+16} textAnchor="middle" fontSize="10" fill={FT_GREEN} fontWeight="700">{p.month}</text>}
-            {p.month===program.term&&<text x={x} y={y-14} textAnchor="middle" fontSize="11" fill={FT_GREEN_DARK} fontWeight="900">{money.format(p.y)}</text>}
+            <circle cx={x} cy={y} r={isH?8:isN?5.5:2.5} fill={isH||isN?accentDark:accent} stroke={isH?"#fff":"none"} strokeWidth="2" style={{pointerEvents:"none"}} />
+            {isN&&<text x={x} y={H-PB+16} textAnchor="middle" fontSize="10" fill={accentDark} fontWeight="700">{p.month}</text>}
+            {i===points.length-1&&<text x={x} y={y-14} textAnchor="middle" fontSize="11" fill={accentDark} fontWeight="900">{money.format(p.y)}</text>}
           </g>;
         })}
         {hov&&(()=>{
@@ -880,7 +1085,7 @@ function ProgramChart({ program }: { program:ConsumerShieldProgram }) {
 }
 
 // ─────────────────────────────────────────────
-// PROGRAM ACCORDION
+// CS PROGRAM ACCORDION
 // ─────────────────────────────────────────────
 
 function ProgramAccordion({ program, open, onToggle }: {
@@ -888,17 +1093,18 @@ function ProgramAccordion({ program, open, onToggle }: {
 }) {
   const net=program.payment-40,front=round2(net*Math.min(4,program.term));
   const tail=round2(net*0.35),fullRev=round2(front+Math.max(0,program.term-4)*tail);
+  const pts=Array.from({length:program.term},(_,i)=>({month:i+1,y:csRevenueAt(i+1,net,program.term)}));
   return (
     <div style={{ border:"1px solid #e2e8f0", borderRadius:16, overflow:"hidden", background:"#fff" }}>
       <button onClick={onToggle} style={{ width:"100%", textAlign:"left", background:"#fff", border:"none", padding:"11px 16px", cursor:"pointer" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:0 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:0, flexWrap:"wrap" }}>
             <span style={{ fontWeight:800, color:"#0f172a", fontSize:14, width:120, flexShrink:0 }}>{program.label}</span>
             <span style={{ fontSize:12, color:"#64748b", width:170, flexShrink:0 }}>{program.debtRange}</span>
             <span style={{ fontSize:12, fontWeight:800, color:FT_BLUE, width:130, flexShrink:0 }}>Net: {money.format(net)}/mo</span>
             <span style={{ fontSize:12, color:"#64748b", width:120, flexShrink:0 }}>{program.term} mo · {money.format(program.payment)}/mo</span>
           </div>
-          <span style={{ fontSize:20, fontWeight:900, color:FT_GREEN, flexShrink:0, paddingLeft:8 }}>{open?"−":"+"}</span>
+          <span style={{ fontSize:20, fontWeight:900, color:FT_BLUE, flexShrink:0, paddingLeft:8 }}>{open?"−":"+"}</span>
         </div>
       </button>
       {open&&(
@@ -911,16 +1117,164 @@ function ProgramAccordion({ program, open, onToggle }: {
                 <th style={{ ...TH, textAlign:"center", borderRight:"none" }}>Full Revenue <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8" }}>If full term</span></th>
               </tr></thead>
               <tbody><tr>
-                <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:FT_GREEN }}>{money.format(front)}</td>
+                <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:FT_BLUE }}>{money.format(front)}</td>
                 <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:FT_BLUE }}>{money.format(tail)}<span style={{ fontSize:11, color:"#94a3b8" }}>/mo</span></td>
-                <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:FT_GREEN_DARK, borderRight:"none" }}>{money.format(fullRev)}</td>
+                <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:"#1552a8", borderRight:"none" }}>{money.format(fullRev)}</td>
               </tr></tbody>
             </table>
           </div>
-          <ProgramChart program={program} />
+          <RevenueCurve points={pts} accent={FT_BLUE} accentDark="#1552a8" notableMonths={[1,4,program.term]} />
         </div>
       )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// ELP PROGRAM TERMS PANEL
+// ─────────────────────────────────────────────
+
+function ElpTermsPanel({ terms, onChange, sched, debtAmount, files }: {
+  terms:ElpTerms; onChange:(t:ElpTerms)=>void; sched:ElpSchedule; debtAmount:number; files:number;
+}) {
+  const floorOk = sched.eligible && sched.grossPayment >= 250;
+  return (
+    <div style={{ ...card, borderLeft:`4px solid ${FT_CYAN}` }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12, flexWrap:"wrap", gap:10 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <img src={ELP_LOGO} alt="Elite Legal Practice" style={{ height:26, width:"auto", objectFit:"contain" }} />
+          <div>
+            <div style={{ fontWeight:800, fontSize:15, color:"#0f172a" }}>Elite Legal Practice — Program Terms</div>
+            <div style={{ fontSize:12, color:"#64748b", marginTop:2, lineHeight:1.6 }}>
+              Legacy Capital Services attorney model. Term is derived from the $250/mo minimum draft, capped at {ELP_TERM_MAX} months.
+            </div>
+          </div>
+        </div>
+        <div style={{ textAlign:"right", flexShrink:0 }}>
+          <div style={{ fontSize:11, color:"#64748b", textTransform:"uppercase", letterSpacing:0.4, fontWeight:700 }}>Derived Term</div>
+          <div style={{ fontSize:22, fontWeight:900, color:FT_CYAN_DARK }}>{sched.eligible ? `${sched.term} mo` : "N/A"}</div>
+        </div>
+      </div>
+
+      <div className="ft-grid-3" style={{ marginBottom:14 }}>
+        <div>
+          <div style={{ fontSize:12, fontWeight:800, color:FT_CYAN_DARK, marginBottom:5, textTransform:"uppercase", letterSpacing:0.3 }}>
+            Service Fee Rate
+          </div>
+          <input type="range" min={ELP_FEE_MIN} max={ELP_FEE_MAX} step={1} value={terms.feeRatePct}
+            onChange={e => onChange({ ...terms, feeRatePct:Number(e.target.value) })}
+            style={{ width:"100%", accentColor:FT_CYAN }} />
+          <div style={{ fontSize:13, fontWeight:800, color:FT_CYAN_DARK }}>{terms.feeRatePct}% of enrolled debt</div>
+          <div style={{ fontSize:11, color:"#94a3b8" }}>Range {ELP_FEE_MIN}–{ELP_FEE_MAX}%</div>
+        </div>
+        <div>
+          <div style={{ fontSize:12, fontWeight:800, color:FT_CYAN_DARK, marginBottom:5, textTransform:"uppercase", letterSpacing:0.3 }}>
+            Maintenance Fee
+          </div>
+          <div style={{ display:"flex", gap:6 }}>
+            {ELP_MAINT_OPTIONS.map(v => (
+              <button key={v} onClick={() => onChange({ ...terms, maintFee:v })}
+                style={{ flex:1, padding:"9px 6px", borderRadius:9, cursor:"pointer", fontWeight:800, fontSize:13,
+                  border:`1px solid ${terms.maintFee===v?FT_CYAN:"#cbd5e1"}`,
+                  background:terms.maintFee===v?FT_CYAN+"1a":"#fff",
+                  color:terms.maintFee===v?FT_CYAN_DARK:"#64748b" }}>
+                {money.format(v)}/mo
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize:11, color:"#94a3b8", marginTop:4 }}>Backed out of the draft from Payment 3 on</div>
+        </div>
+        <div>
+          <div style={{ fontSize:12, fontWeight:800, color:FT_CYAN_DARK, marginBottom:5, textTransform:"uppercase", letterSpacing:0.3 }}>
+            Payment Schedule
+          </div>
+          <div style={{ display:"flex", gap:6 }}>
+            {[{ v:false, l:"Monthly · 1 draft" }, { v:true, l:"Split · 2 drafts" }].map(o => (
+              <button key={String(o.v)} onClick={() => onChange({ ...terms, split:o.v })}
+                style={{ flex:1, padding:"9px 6px", borderRadius:9, cursor:"pointer", fontWeight:800, fontSize:12,
+                  border:`1px solid ${terms.split===o.v?FT_CYAN:"#cbd5e1"}`,
+                  background:terms.split===o.v?FT_CYAN+"1a":"#fff",
+                  color:terms.split===o.v?FT_CYAN_DARK:"#64748b" }}>
+                {o.l}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize:11, color:"#94a3b8", marginTop:4 }}>${sched.draftMonthly}/mo in draft fees</div>
+        </div>
+      </div>
+
+      {!sched.eligible ? (
+        <div style={{ background:FT_RED+"11", border:`1px solid ${FT_RED}33`, borderRadius:12, padding:"12px 14px" }}>
+          <div style={{ fontWeight:800, color:FT_RED, fontSize:13 }}>⛔ Under {money.format(ELP_MIN_DEBT)} — Elite Legal Practice cannot accept this deal</div>
+          <div style={{ fontSize:12, color:"#64748b", marginTop:4, lineHeight:1.6 }}>
+            Legacy Capital Services requires {money.format(ELP_MIN_DEBT)} minimum enrolled debt and $250/mo payment capacity.
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="ft-grid-4">
+            <MetricCard title="Client Draft / Monthly" accent={FT_CYAN_DARK}
+              value={money.format(sched.grossPayment)}
+              inlineTag={`${sched.term} months`}
+              tooltip={`Service fee ${money.format(sched.serviceFeeMonthly)} + maintenance ${money.format(sched.maintFee)} + draft fee $${sched.draftMonthly} = ${money.format(sched.grossPayment)}.\n\nMust stay at or above the $250 floor — that floor is what caps the term.`} />
+            <MetricCard title="Payments 1–2 Revenue" accent={FT_CYAN_DARK}
+              value={money.format(sched.earlyRevenue)} inlineTag="100% pass-through"
+              tooltip={`Draft ${money.format(sched.grossPayment)} less the $${sched.draftMonthly} draft fee. Maintenance is not backed out yet, so Funding Tier keeps the full remainder.`} />
+            <MetricCard title="Payments 3+ Revenue" accent={FT_CYAN_DARK}
+              value={money.format(sched.lateRevenue)} inlineTag={`${Math.round(sched.tierRate*100)}% tier rate`}
+              tooltip={`Draft less maintenance (${money.format(sched.maintFee)}) and draft fee ($${sched.draftMonthly}) = ${money.format(sched.lateNet)} eligible, × ${Math.round(sched.tierRate*100)}% tier rate.\n\nTier steps to 65% at ${ELP_TIER_RATE_FILE_THRESHOLD}+ billable files per month — currently ${files} files.`} />
+            <MetricCard title="Total Service Fee" accent={FT_CYAN_DARK}
+              value={money.format(sched.serviceFeeTotal)}
+              subtitle={`${terms.feeRatePct}% of ${money.format(debtAmount)} spread over ${sched.term} months`} />
+          </div>
+          {!floorOk && (
+            <div style={{ marginTop:12, background:FT_AMBER+"11", border:`1px solid ${FT_AMBER}44`, borderRadius:10,
+              padding:"9px 13px", fontSize:12, color:"#92400e", fontWeight:700 }}>
+              ⚠ Derived draft of {money.format(sched.grossPayment)} sits under the $250 floor. Raise the fee rate or lower the maintenance fee.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// PAYOUT + LIABILITY (three-way)
+// ─────────────────────────────────────────────
+
+function PayoutLiabilityAccordion() {
+  const rows = [
+    { event:"Expected Funds Hit Bank", ld:"Month 3 (20th)", cs:"Month +1 per payment", elp:"Month +1 per draft",
+      detail:"LD: Payment 1 = Jan 1, Payment 2 = Feb 1 → payout March 20. CS and ELP: each client payment hits your bank ~1 month after processing." },
+    { event:"Chargeback Liability Free", ld:"After Payment 2", cs:"Each payment: Month +4", elp:"Each draft: Month +4",
+      detail:"LD: zero liability after 2 cleared payments. Both perpetuity backends carry a rolling per-payment window — they do not clear together." },
+    { event:"ACH Return Window", ld:"~60 days (Nacha)", cs:"~60 days per payment", elp:"~60 days per draft",
+      detail:"Funding Tier models 4 months as a conservative internal buffer. Real Nacha window is ~60 calendar days per payment." },
+    { event:"Rep Commission Timing", ld:"20th of Month 3", cs:"P2 payout, then P4 milestone", elp:"P2 payout, then P4 milestone (Bands L2–L7)",
+      detail:"ELP Band L1 pays its full $150 at Payment 2 with no second milestone and no clawback. Bands L2–L7 split across Payment 2 and Payment 4, with the P2 portion subject to clawback if the client cancels before Payment 4 clears." },
+    { event:"Revenue Recognition Shape", ld:"Single event", cs:"Front-loaded then long tail", elp:"Two big months then a long flat tail",
+      detail:"ELP months 1–2 pass through in full (service fee + maintenance), then every remaining month pays the tier share of the service fee only." },
+  ];
+  return (
+    <Accordion title="Payout + Liability Timing — All Three Backends">
+      <div style={{ overflowX:"auto", borderRadius:12, border:"1px solid #e2e8f0" }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead><tr style={{ background:"#f8fafc" }}>{["Timing Event","Level Debt","Consumer Shield","Elite Legal Practice","Notes"].map(h=><th key={h} style={TH}>{h}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((row,i)=>(
+              <tr key={i} style={{ background:i%2?"#f8fafc":"#fff" }}>
+                <td style={{ ...TD, fontWeight:700 }}>{row.event}</td>
+                <td style={{ ...TD, color:FT_GREEN_DARK, fontWeight:700 }}>{row.ld}</td>
+                <td style={{ ...TD, color:FT_BLUE, fontWeight:700 }}>{row.cs}</td>
+                <td style={{ ...TD, color:FT_CYAN_DARK, fontWeight:700 }}>{row.elp}</td>
+                <td style={{ ...TD, color:"#64748b", lineHeight:1.6, borderRight:"none" }}>{row.detail}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Accordion>
   );
 }
 
@@ -949,13 +1303,17 @@ function KnowledgeBase({ open, onClose }: { open:boolean; onClose:()=>void }) {
       </div>
       <div style={{ overflowY:"auto", padding:"13px 16px 20px", display:"grid", gap:13 }}>
         {[
-          ["CS Survival Funnel", `Each slider = % of ALL Consumer Shield deals reaching that milestone (cumulative, cascading).\n\nIf 25% complete, those same 25% also cleared break-even, P4, and P2.\n\nExpected Revenue = (P2-P4)% × rev2 + (P4-BE)% × rev4 + (BE-Comp)% × revBE + Comp% × fullRev`],
-          ["CS Lead Quality", `Scales all effective CS survival rates.\nFormula: effectiveRate = setRate × (0.35 + 0.65 × quality/100)\n\nAt 100%: unchanged. At 50%: ×0.68. At 0%: ×0.35 floor.`],
-          ["Cash Urgency + Stability Adjustment", `Cash urgency sets your base routing split for deals above $7k.\nRecommended LD% = 20 + (adjustedUrgency × 0.65)\n\nThe system auto-adds a stability penalty when CS survival rates are poor:\n• Low CS completion (<30%) → up to +25pt\n• Low CS P2 rate (<50%) → up to +15pt\n• High funnel drop-off → up to +10pt\n\nThis ensures that when your CS book is struggling, more deals route to Level Debt to protect cash flow stability — automatically.`],
-          ["Under $7k Rule", "Level Debt does not accept enrolled debt below $7,000. These deals are CS-only. Enforced throughout the tool."],
-          ["Revenue Contribution Per Cohort", `Each cohort = group of CS deals that dropped out at a specific funnel stage.\n\nCalculation:\n• Cohort % = difference between adjacent funnel stages (e.g. P2% − P4%)\n• Revenue per deal = cumulative CS revenue at that exit point\n• Contribution = cohort % × revenue per deal\n\nSumming all cohorts = total Expected CS Revenue per deal.`],
-          ["Break-Even + Liability Clear (Hyper Green)", "First month where CS has both (a) broken even vs Level Debt AND (b) the chargeback window on the break-even payment has closed. The true zero-risk inflection point."],
-          ["Level Debt", "Revenue = 8% of enrolled debt. After 2 cleared payments, Funding Tier is free and clear of chargeback liability. Payout on the 20th of Month 3."],
+          ["Three Backends, One Deal", `Level Debt — settlement. One-time 8% of enrolled debt, recognized after 2 cleared payments, then nothing recurs.\n\nConsumer Shield — debt validation. 100% of (payment − $40 servicing) for months 1–4, then 35% for the rest of the term.\n\nElite Legal Practice / Legacy Capital Services — attorney model. Months 1–2 pass through in full (service fee + maintenance, less the draft fee); from month 3 Funding Tier keeps the tier rate of the service fee portion only.`],
+          ["Survival Funnels", `Each backend has its own set of sliders = % of ALL that backend's deals reaching that milestone (cumulative, cascading).\n\nIf 25% complete, those same 25% also cleared break-even, P4, and P2.\n\nExpected Revenue = (P2−P4)% × rev2 + (P4−BE)% × rev4 + (BE−Comp)% × revBE + Comp% × fullRev`],
+          ["Lead Quality", `Scales that backend's effective survival rates.\nFormula: effectiveRate = setRate × (0.35 + 0.65 × quality/100)\n\nAt 100%: unchanged. At 50%: ×0.68. At 0%: ×0.35 floor.\n\nCS and ELP carry separate quality sliders — an attorney-model book and a validation book rarely churn the same way.`],
+          ["Cash Urgency + Stability Adjustment", `Cash urgency sets Level Debt's share:\n  LD% = 20 + (adjustedUrgency × 0.65)\n\nThe remainder splits between CS and ELP in proportion to their adjusted expected value, so the stronger perpetuity backend takes the larger tail share.\n\nThe stability penalty is computed on the unweighted mean of the CS and ELP effective funnels — deliberately independent of your portfolio sliders so the recommendation never chases itself:\n• Low blended completion (<50%) → up to +25pt\n• Low blended P2 rate (<50%) → up to +15pt\n• High funnel drop-off → up to +10pt`],
+          ["Eligibility Floors", `Level Debt: $7,000 minimum enrolled debt.\nElite Legal Practice: $6,000 minimum, plus $250/mo payment capacity.\nConsumer Shield: $4,000 minimum.\n\nEnforced everywhere in this tool — including the portfolio routing sliders.`],
+          ["ELP Term Derivation", `The client draft can never come in under $250/mo. That floor — not a fixed month count — caps the term.\n\n  headroom = $250 − maintenance − draft fee\n  term = floor(debt × fee% / headroom), capped at 60\n\nA bigger service fee stretches over more months; a smaller one over fewer.`],
+          ["ELP Tier Rate", `Funding Tier keeps 60% of the post-fee service amount from Payment 3 on, stepping to 65% once the book clears 100 billable files per month. The Portfolio Forecast deal count drives which tier this tool applies.`],
+          ["ELP State Restrictions", `Legacy Capital Services cannot be sold in ${ELP_BLOCKED_STATES.join(", ")}. This tool models national economics — check state eligibility in the Router before routing a live deal.`],
+          ["Break-Even Cohort With No Level Debt Benchmark", `Below $7,000 Level Debt cannot take the deal, so there is no 8% benchmark and no break-even month to show.\n\nThe break-even cohort still has to be worth something — those clients paid for half a program. This tool prices that cohort at the mid-program month instead of $0, which is the only sub-$7k range where Consumer Shield and Elite Legal Practice compete head to head.`],
+          ["Break-Even + Liability Clear (Hyper Green)", "First month where the backend has both (a) broken even vs Level Debt AND (b) the chargeback window on the break-even payment has closed. The true zero-risk inflection point."],
+          ["Revenue Contribution Per Cohort", `Each cohort = group of deals that dropped out at a specific funnel stage.\n\n• Cohort % = difference between adjacent funnel stages\n• Revenue per deal = cumulative revenue at that exit point\n• Contribution = cohort % × revenue per deal`],
         ].map(([title,body],i)=>(
           <div key={i}>
             <div style={{ fontWeight:800, color:"#0f172a", fontSize:13 }}>{title}</div>
@@ -972,89 +1330,125 @@ function KnowledgeBase({ open, onClose }: { open:boolean; onClose:()=>void }) {
 // ─────────────────────────────────────────────
 
 export default function FundingTierProfitabilityBalancer() {
-  const [debtAmount,           setDebtAmount]           = useState(20000);
-  const [p2Pct,                setP2Pct]                = useState(75);
-  const [p4Pct,                setP4Pct]                = useState(60);
-  const [bePct,                setBePct]                = useState(40);
-  const [compPct,              setCompPct]              = useState(25);
-  const [leadQuality,          setLeadQuality]          = useState(75);
-  const [cashUrgency,          setCashUrgency]          = useState(50);
-  const [levelRepPct,          setLevelRepPct]          = useState(1.25);
-  const [csRepUpfront,         setCsRepUpfront]         = useState(200);
-  const [csRepAfter4,          setCsRepAfter4]          = useState(75);
-  const [portfolioDeals,       setPortfolioDeals]       = useState(100);
-  const [portfolioAvgDebt,     setPortfolioAvgDebt]     = useState(18000);
-  const [portfolioLevelMixPct, setPortfolioLevelMixPct] = useState(53); // default matches 50% urgency
-  const [kbOpen,               setKbOpen]               = useState(false);
-  const [openProgram,          setOpenProgram]          = useState<string|null>("CS Program A");
+  const [debtAmount,       setDebtAmount]       = useState(20000);
+  const [csFunnel,         setCsFunnel]         = useState<Funnel>({ p2:75, p4:60, be:40, comp:25 });
+  const [elpFunnel,        setElpFunnel]        = useState<Funnel>({ p2:75, p4:60, be:40, comp:25 });
+  const [csLeadQuality,    setCsLeadQuality]    = useState(75);
+  const [elpLeadQuality,   setElpLeadQuality]   = useState(75);
+  const [elpFeeRate,       setElpFeeRate]       = useState(49);
+  const [elpMaintFee,      setElpMaintFee]      = useState<number>(80);
+  const [elpSplit,         setElpSplit]         = useState(false);
+  const [cashUrgency,      setCashUrgency]      = useState(50);
+  const [levelRepPct,      setLevelRepPct]      = useState(1.25);
+  const [csRepUpfront,     setCsRepUpfront]     = useState(200);
+  const [csRepAfter4,      setCsRepAfter4]      = useState(75);
+  const [portfolioDeals,   setPortfolioDeals]   = useState(100);
+  const [portfolioAvgDebt, setPortfolioAvgDebt] = useState(18000);
+  const [mixLdPct,         setMixLdPct]         = useState(53);
+  const [mixElpPct,        setMixElpPct]        = useState(24);
+  const [kbOpen,           setKbOpen]           = useState(false);
+  const [openProgram,      setOpenProgram]      = useState<string|null>("CS Program A");
 
-  const handleFunnelChange = useCallback((np2:number,np4:number,nbe:number,ncomp:number)=>{
-    setP2Pct(np2); setP4Pct(np4); setBePct(nbe); setCompPct(ncomp);
-  },[]);
+  const elpTerms: ElpTerms = useMemo(() => ({
+    feeRatePct: elpFeeRate, maintFee: elpMaintFee, split: elpSplit,
+    tierRate: elpTierRateForFiles(portfolioDeals),
+  }), [elpFeeRate, elpMaintFee, elpSplit, portfolioDeals]);
 
-  // Compute effective rates first so stability calc can use them
-  const [ep2Raw, ep4Raw, ebeRaw, ecompRaw] = applyLeadQuality(p2Pct, p4Pct, bePct, compPct, leadQuality);
+  const csEff  = useMemo(() => applyLeadQuality(csFunnel, csLeadQuality),   [csFunnel, csLeadQuality]);
+  const elpEff = useMemo(() => applyLeadQuality(elpFunnel, elpLeadQuality), [elpFunnel, elpLeadQuality]);
 
-  // Stability-adjusted urgency
-  const stability = useMemo(() =>
-    calcStabilityAdjustedUrgency(cashUrgency, ep2Raw, ep4Raw, ebeRaw, ecompRaw),
-  [cashUrgency, ep2Raw, ep4Raw, ebeRaw, ecompRaw]);
+  const stability = useMemo(
+    () => calcStabilityAdjustedUrgency(cashUrgency, blendPerpetuityRates(csEff, elpEff)),
+    [cashUrgency, csEff, elpEff]
+  );
 
-  const routing = cashUrgencyToRouting(stability.adjusted);
+  const analysisArgs = useMemo(() => ({
+    csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, elpTerms,
+    adjustedUrgency: stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4,
+  }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, elpTerms, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
 
-  const deal = useMemo(() => calculateDealMetrics({
-    debtAmount, p2Pct, p4Pct, bePct, compPct, leadQuality,
-    adjustedUrgency: stability.adjusted,
-  }), [debtAmount, p2Pct, p4Pct, bePct, compPct, leadQuality, stability.adjusted]);
+  const deal      = useMemo(() => analyzeDeal({ debtAmount, ...analysisArgs }), [debtAmount, analysisArgs]);
+  const portfolioDeal = useMemo(() => analyzeDeal({ debtAmount: portfolioAvgDebt, ...analysisArgs }), [portfolioAvgDebt, analysisArgs]);
 
-  const repEcon = useMemo(() => {
-    const ldCost = round2(debtAmount * (levelRepPct / 100));
-    const csCost = round2(csRepUpfront + csRepAfter4 * (deal.effectiveP4 / 100));
-    return { ldCost, csCost,
-             ldNet: round2(deal.levelDebtRevenue - ldCost),
-             csNet: round2((deal.consumerShieldExpectedRevenue ?? 0) - csCost) };
-  }, [debtAmount, levelRepPct, csRepUpfront, csRepAfter4, deal]);
+  const routing = useMemo(() => cashUrgencyToRouting(
+    stability.adjusted,
+    Math.max(portfolioDeal.cs.adjustedScore, 0),
+    Math.max(portfolioDeal.elp.adjustedScore, 0),
+    portfolioDeal.cs.eligible,
+    portfolioDeal.elp.eligible,
+  ), [stability.adjusted, portfolioDeal]);
 
-  // Determine if portfolio routing matches urgency recommendation
-  const effectiveLDPct = portfolioAvgDebt < 7000 ? 0 : portfolioLevelMixPct;
-  const routingMatchesRecommendation = Math.abs(effectiveLDPct - routing.ldPct) <= 2;
+  // ── portfolio mix, eligibility-clamped ────────────────────
+  const ldOk  = portfolioAvgDebt >= BACKEND_META.LD.minDebt;
+  const elpOk = portfolioAvgDebt >= BACKEND_META.ELP.minDebt;
+  const csOk  = portfolioAvgDebt >= BACKEND_META.CS.minDebt;
 
-  const handleApplyUrgencyRouting = () => {
-    if (portfolioAvgDebt >= 7000) setPortfolioLevelMixPct(routing.ldPct);
+  const effLdPct  = ldOk  ? clamp(mixLdPct, 0, 100) : 0;
+  const effElpPct = elpOk ? clamp(mixElpPct, 0, 100 - effLdPct) : 0;
+  const effCsPct  = csOk  ? Math.max(0, 100 - effLdPct - effElpPct) : 0;
+
+  const setLd  = (v:number) => { if (!ldOk) return; const nv = clamp(v,0,100); setMixLdPct(nv); if (nv + effElpPct > 100) setMixElpPct(100 - nv); };
+  const setElp = (v:number) => { if (!elpOk) return; const nv = clamp(v,0,100 - effLdPct); setMixElpPct(nv); };
+
+  const routingMatches =
+    Math.abs(effLdPct - (ldOk ? routing.ldPct : 0)) <= 2 &&
+    Math.abs(effElpPct - (elpOk ? routing.elpPct : 0)) <= 2;
+
+  const applyRecommendedRouting = () => {
+    if (ldOk)  setMixLdPct(routing.ldPct);   else setMixLdPct(0);
+    if (elpOk) setMixElpPct(routing.elpPct); else setMixElpPct(0);
   };
 
   const portfolio = useMemo(() => {
-    const eLDPct  = portfolioAvgDebt < 7000 ? 0 : portfolioLevelMixPct;
-    const ldCount = Math.round(portfolioDeals * eLDPct / 100);
-    const csCount = portfolioDeals - ldCount;
-    const avg     = calculateDealMetrics({ debtAmount:portfolioAvgDebt, p2Pct, p4Pct, bePct, compPct, leadQuality, adjustedUrgency:stability.adjusted });
-    const ldGross  = round2(ldCount * avg.levelDebtRevenue);
-    const csGross  = round2(csCount * (avg.consumerShieldExpectedRevenue ?? 0));
-    const csUpside = round2(csCount * (avg.consumerShieldRevenueAtFull ?? 0));
-    const ldRep    = round2(ldCount * portfolioAvgDebt * (levelRepPct / 100));
-    const csRep    = round2(csCount * (csRepUpfront + csRepAfter4 * (avg.effectiveP4 / 100)));
-    return { ldCount, csCount, ldGross, csGross, csUpside, ldRep, csRep, eLDPct,
-             totalGross: round2(ldGross + csGross), totalRep: round2(ldRep + csRep),
-             totalNet: round2(ldGross + csGross - ldRep - csRep) };
-  }, [portfolioDeals, portfolioLevelMixPct, portfolioAvgDebt, p2Pct, p4Pct, bePct, compPct,
-      leadQuality, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
+    const ldCount  = Math.round(portfolioDeals * effLdPct / 100);
+    const elpCount = Math.round(portfolioDeals * effElpPct / 100);
+    const csCount  = Math.max(0, portfolioDeals - ldCount - elpCount);
+    const a = portfolioDeal;
 
-  const recLogo = deal.recommendedBackend.startsWith("Consumer Shield") ? CS_LOGO
-                : deal.recommendedBackend === "Level Debt" ? LEVEL_DEBT_LOGO : null;
+    const ldGross  = round2(ldCount  * a.ld.expectedRevenue);
+    const csGross  = round2(csCount  * a.cs.expectedRevenue);
+    const elpGross = round2(elpCount * a.elp.expectedRevenue);
 
-  const prog    = getProgram(debtAmount);
-  const net     = prog ? prog.payment - 40 : 0;
-  const termLen = prog ? prog.term : 0;
-  const rev2v   = deal.consumerShieldRevenueAfter2 ?? 0;
-  const rev4v   = deal.consumerShieldRevenueAfter4 ?? 0;
-  const beM     = deal.consumerShieldBreakEvenMonthVsLevel;
-  const revBEv  = beM ? csRevenueAt(beM, net, termLen) : 0;
-  const fullRv  = deal.consumerShieldRevenueAtFull ?? 0;
+    const ldRep  = round2(ldCount  * a.ld.repCost);
+    const csRep  = round2(csCount  * a.cs.repCost);
+    const elpRep = round2(elpCount * a.elp.repCost);
+
+    const csUpside  = round2(csCount  * a.cs.fullRevenue);
+    const elpUpside = round2(elpCount * a.elp.fullRevenue);
+
+    return {
+      ldCount, csCount, elpCount,
+      ldGross, csGross, elpGross,
+      ldRep, csRep, elpRep,
+      csUpside, elpUpside,
+      totalGross: round2(ldGross + csGross + elpGross),
+      totalRep:   round2(ldRep + csRep + elpRep),
+      totalNet:   round2(ldGross + csGross + elpGross - ldRep - csRep - elpRep),
+      totalUpside: round2(ldGross + csUpside + elpUpside),
+    };
+  }, [portfolioDeals, effLdPct, effElpPct, portfolioDeal]);
+
+  const recLogo = deal.recommended ? BACKEND_META[deal.recommended].logo : null;
+
+  const csRevBE  = deal.cs.breakEvenRefRevenue;
+  const elpRevBE = deal.elp.breakEvenRefRevenue;
 
   const WL = ({ ch }: { ch:string }) => (
     <div style={{ fontSize:9, fontWeight:700, color:"#94a3b8", marginBottom:3,
       textTransform:"uppercase", letterSpacing:0.4 }}>{ch}</div>
   );
+
+  // ELP economics across the debt bands, at the current terms
+  const elpBandSweep = useMemo(() => {
+    const samples = [7500, 12500, 17500, 22500, 27500, 40000, 60000];
+    return samples.map(d => {
+      const s = elpSchedule(d, elpTerms);
+      const ldR = d >= 7000 ? round2(d * 0.08) : 0;
+      const be = elpBreakEven(ldR, s);
+      const band = getLcBand(d);
+      return { debt:d, s, ldR, be, band, full: elpFullRevenue(s) };
+    });
+  }, [elpTerms]);
 
   return (
     <div style={{ minHeight:"100vh", background:FT_BG, color:"#0f172a",
@@ -1075,46 +1469,29 @@ export default function FundingTierProfitabilityBalancer() {
         <div style={{ maxWidth:1380, margin:"0 auto", padding:"8px 16px" }}>
           <div style={{ background:"linear-gradient(135deg,#0f172a 0%,#0b3b50 45%,#0f766e 100%)",
             borderRadius:16, padding:"10px 18px", boxShadow:"0 8px 24px rgba(15,23,42,0.18)" }}>
-            <div style={{ display:"flex", alignItems:"flex-start", gap:12, flexWrap:"wrap" }}>
 
+            {/* Row 1 — identity, deal size, cash urgency */}
+            <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"wrap" }}>
               <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0, alignSelf:"center" }}>
                 <img src={FT_LOGO} alt="Funding Tier" style={{ height:28, width:"auto" }} />
                 <span style={{ fontWeight:900, fontSize:20, color:"#fff", letterSpacing:"-0.5px", whiteSpace:"nowrap" }}>Profit Engine</span>
               </div>
               <div style={{ width:1, height:36, background:"rgba(255,255,255,0.2)", flexShrink:0, alignSelf:"center" }} />
 
-              <div style={{ flexShrink:0, alignSelf:"flex-end" }}>
+              <div style={{ flexShrink:0 }}>
                 <WL ch="Enrolled Debt" />
                 <input type="number" value={debtAmount} onChange={e => setDebtAmount(Number(e.target.value))}
                   min={0} step={100}
                   style={{ width:108, padding:"6px 9px", borderRadius:8,
                     border:"1px solid rgba(255,255,255,0.2)", fontSize:14,
                     color:"#000", fontWeight:800, background:"#fff", boxSizing:"border-box" }} />
-                {debtAmount > 0 && debtAmount < 7000 && (
-                  <div style={{ fontSize:9, color:FT_AMBER, fontWeight:700, marginTop:2 }}>⚠ CS only — under $7k</div>
-                )}
-              </div>
-              <div style={{ width:1, height:36, background:"rgba(255,255,255,0.2)", flexShrink:0, alignSelf:"center" }} />
-
-              <div style={{ flex:1, minWidth:300 }}>
-                <div style={{ fontSize:9, fontWeight:800, color:"#94a3b8", marginBottom:4,
-                  textTransform:"uppercase", letterSpacing:0.4 }}>
-                  CS Deal Survival Funnel — % of all CS deals reaching each milestone (auto-cascading)
+                <div style={{ fontSize:9, fontWeight:700, marginTop:2, color:"#94a3b8" }}>
+                  {[deal.ld, deal.cs, deal.elp].filter(b=>b.eligible).length} of 3 backends eligible
                 </div>
-                <CascadingFunnel p2={p2Pct} p4={p4Pct} be={bePct} comp={compPct} onChange={handleFunnelChange} />
               </div>
               <div style={{ width:1, height:36, background:"rgba(255,255,255,0.2)", flexShrink:0, alignSelf:"center" }} />
 
-              <div style={{ minWidth:90, flexShrink:0 }}>
-                <WL ch="CS Lead Quality" />
-                <input type="range" min={0} max={100} step={1} value={leadQuality}
-                  onChange={e => setLeadQuality(Number(e.target.value))}
-                  style={{ width:"100%", accentColor:leadQuality>=70?FT_GREEN:leadQuality>=40?FT_AMBER:FT_RED }} />
-                <div style={{ fontSize:11, fontWeight:800, marginTop:1,
-                  color:leadQuality>=70?FT_GREEN:leadQuality>=40?FT_AMBER:FT_RED }}>{leadQuality}%</div>
-              </div>
-
-              <div style={{ minWidth:120, flexShrink:0 }}>
+              <div style={{ minWidth:150, flexShrink:0 }}>
                 <WL ch="Cash Urgency" />
                 <input type="range" min={0} max={100} step={1} value={cashUrgency}
                   onChange={e => setCashUrgency(Number(e.target.value))}
@@ -1122,9 +1499,63 @@ export default function FundingTierProfitabilityBalancer() {
                 <div style={{ fontSize:10, fontWeight:700, color:FT_AMBER, marginTop:1 }}>
                   {cashUrgency}%{stability.penalty > 0 ? ` → ${stability.adjusted}% (adj)` : ""}
                 </div>
-                <div style={{ fontSize:9, color:"#94a3b8", marginTop:1 }}>Route {routing.ldPct}% LD / {100-routing.ldPct}% CS</div>
+                <div style={{ fontSize:9, color:"#94a3b8", marginTop:1 }}>
+                  Route {routing.ldPct}% LD / {routing.csPct}% CS / {routing.elpPct}% ELP
+                </div>
+              </div>
+              <div style={{ width:1, height:36, background:"rgba(255,255,255,0.2)", flexShrink:0, alignSelf:"center" }} />
+
+              <div style={{ flex:1, minWidth:220 }}>
+                <WL ch="Recommended Backend" />
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  {recLogo && <span style={{ background:"#fff", borderRadius:6, padding:"3px 5px", display:"inline-flex" }}>
+                    <img src={recLogo} alt="" style={{ height:18, width:"auto", objectFit:"contain" }} />
+                  </span>}
+                  <span style={{ fontWeight:900, fontSize:15, color:"#fff" }}>{deal.recommendedLabel}</span>
+                </div>
               </div>
             </div>
+
+            {/* Row 2 — the two perpetuity survival funnels */}
+            <div style={{ display:"flex", gap:14, flexWrap:"wrap", marginTop:10,
+              borderTop:"1px solid rgba(255,255,255,0.12)", paddingTop:9 }}>
+              <div style={{ flex:1, minWidth:300 }}>
+                <div style={{ fontSize:9, fontWeight:800, color:FT_BLUE, marginBottom:4,
+                  textTransform:"uppercase", letterSpacing:0.4 }}>
+                  Consumer Shield survival funnel — % of all CS deals reaching each milestone
+                </div>
+                <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+                  <CascadingFunnel prefix="CS" funnel={csFunnel} onChange={setCsFunnel} accent={FT_BLUE} />
+                  <div style={{ minWidth:76, flexShrink:0 }}>
+                    <WL ch="CS Quality" />
+                    <input type="range" min={0} max={100} step={1} value={csLeadQuality}
+                      onChange={e => setCsLeadQuality(Number(e.target.value))}
+                      style={{ width:"100%", accentColor:csLeadQuality>=70?FT_GREEN:csLeadQuality>=40?FT_AMBER:FT_RED }} />
+                    <div style={{ fontSize:11, fontWeight:800, marginTop:1,
+                      color:csLeadQuality>=70?FT_GREEN:csLeadQuality>=40?FT_AMBER:FT_RED }}>{csLeadQuality}%</div>
+                  </div>
+                </div>
+              </div>
+              <div style={{ width:1, background:"rgba(255,255,255,0.2)", flexShrink:0 }} />
+              <div style={{ flex:1, minWidth:300 }}>
+                <div style={{ fontSize:9, fontWeight:800, color:FT_CYAN, marginBottom:4,
+                  textTransform:"uppercase", letterSpacing:0.4 }}>
+                  Elite Legal Practice survival funnel — % of all ELP deals reaching each milestone
+                </div>
+                <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
+                  <CascadingFunnel prefix="ELP" funnel={elpFunnel} onChange={setElpFunnel} accent={FT_CYAN} />
+                  <div style={{ minWidth:76, flexShrink:0 }}>
+                    <WL ch="ELP Quality" />
+                    <input type="range" min={0} max={100} step={1} value={elpLeadQuality}
+                      onChange={e => setElpLeadQuality(Number(e.target.value))}
+                      style={{ width:"100%", accentColor:elpLeadQuality>=70?FT_GREEN:elpLeadQuality>=40?FT_AMBER:FT_RED }} />
+                    <div style={{ fontSize:11, fontWeight:800, marginTop:1,
+                      color:elpLeadQuality>=70?FT_GREEN:elpLeadQuality>=40?FT_AMBER:FT_RED }}>{elpLeadQuality}%</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </div>
         </div>
       </div>
@@ -1132,111 +1563,166 @@ export default function FundingTierProfitabilityBalancer() {
       {/* MAIN */}
       <div style={{ maxWidth:1380, margin:"0 auto", padding:"18px 16px 60px", display:"grid", gap:18 }}>
 
-        {/* Top 4 */}
-        <div className="grid-4">
-          <div style={{ ...card, position:"relative" }}>
-            {recLogo && <img src={recLogo} alt="" style={{ position:"absolute", top:12, left:12, height:22, width:"auto", objectFit:"contain", opacity:0.85 }} />}
+        {/* Headline metrics */}
+        <div className="ft-grid-5">
+          <div style={{ ...card, position:"relative", borderTop:`3px solid ${deal.recommended?BACKEND_META[deal.recommended].color:"#cbd5e1"}` }}>
             <div style={{ fontSize:11, fontWeight:700, color:"#64748b", marginBottom:7,
-              textTransform:"uppercase", letterSpacing:0.4, marginTop:recLogo?28:0 }}>Recommended Backend</div>
-            <div style={{ fontSize:deal.recommendedBackend.length>20?16:22, fontWeight:800, color:"#0f172a", lineHeight:1.2, wordBreak:"break-word" }}>
-              {deal.recommendedBackend}
+              textTransform:"uppercase", letterSpacing:0.4 }}>Recommended Backend</div>
+            <div style={{ fontSize:deal.recommendedLabel.length>20?15:20, fontWeight:800,
+              color:deal.recommended?BACKEND_META[deal.recommended].colorDark:"#0f172a", lineHeight:1.2, wordBreak:"break-word" }}>
+              {deal.recommendedLabel}
             </div>
             <div style={{ fontSize:12, color:"#64748b", marginTop:7, lineHeight:1.5 }}>{deal.recommendationReason}</div>
           </div>
-          <MetricCard title="Level Debt Revenue"
-            value={deal.levelDebtEligible ? money.format(deal.levelDebtRevenue) : "Not Eligible"}
-            subtitle={!deal.levelDebtEligible ? "Under $7k — Level Debt cannot accept this deal"
-              : deal.levelDebtRevShareEligible ? "120k+ flagged for additional rev share"
-              : "Base 8% — guaranteed after 2 payments"} />
-          <MetricCard title="CS Expected Revenue"
-            value={money.format(deal.consumerShieldExpectedRevenue ?? 0)}
-            subtitle={`Effective rates (${leadQuality}% LQ): P2=${deal.effectiveP2}% P4=${deal.effectiveP4}% BE=${deal.effectiveBE}% Comp=${deal.effectiveComp}%`} />
-          <MetricCard title="Break-Even Month"
-            value={deal.consumerShieldBreakEvenMonthVsLevel ? `Month ${deal.consumerShieldBreakEvenMonthVsLevel}` : deal.levelDebtEligible ? "N/A" : "CS Only Deal"}
-            subtitle="When CS cumulative revenue catches Level Debt 8%" />
+          <MetricCard title="Level Debt Revenue" accent={FT_GREEN_DARK}
+            value={deal.ld.eligible ? money.format(deal.ld.expectedRevenue) : "Not Eligible"}
+            subtitle={deal.ld.eligible ? "Base 8% — guaranteed after 2 payments" : "Under $7k — Level Debt cannot accept this deal"} />
+          <MetricCard title="CS Expected Revenue" accent={FT_BLUE}
+            value={deal.cs.eligible ? money.format(deal.cs.expectedRevenue) : "Not Eligible"}
+            subtitle={deal.cs.eligible
+              ? `Effective (${csLeadQuality}% LQ): P2=${csEff.p2}% P4=${csEff.p4}% BE=${csEff.be}% Comp=${csEff.comp}%`
+              : deal.cs.ineligibleReason} />
+          <MetricCard title="ELP Expected Revenue" accent={FT_CYAN_DARK}
+            value={deal.elp.eligible ? money.format(deal.elp.expectedRevenue) : "Not Eligible"}
+            subtitle={deal.elp.eligible
+              ? `Effective (${elpLeadQuality}% LQ): P2=${elpEff.p2}% P4=${elpEff.p4}% BE=${elpEff.be}% Comp=${elpEff.comp}%`
+              : deal.elp.ineligibleReason} />
+          <MetricCard title="Break-Even vs Level Debt"
+            value={deal.ld.eligible
+              ? `CS ${deal.cs.breakEvenMonth ? "Mo "+deal.cs.breakEvenMonth : "—"} · ELP ${deal.elp.breakEvenMonth ? "Mo "+deal.elp.breakEvenMonth : "—"}`
+              : "No LD benchmark"}
+            subtitle={deal.ld.eligible
+              ? "Month each perpetuity backend's cumulative revenue catches the 8%"
+              : "Level Debt is not eligible at this deal size"} />
         </div>
 
-        {/* Cash Urgency */}
+        {/* Head-to-head */}
+        <BackendComparison analysis={deal} />
+
+        {/* Cash urgency */}
         <CashUrgencyPanel
-          urgency={cashUrgency}
-          onChange={v => setCashUrgency(v)}
+          urgency={cashUrgency} onChange={setCashUrgency}
           adjustedUrgency={stability.adjusted}
           stabilityPenalty={stability.penalty}
           stabilityReason={stability.reason}
-          routing={routing}
-          debtAmount={debtAmount}
+          routing={routing} debtAmount={debtAmount} analysis={deal}
         />
 
-        {/* Lead Quality */}
-        <LeadQualityPanel
-          quality={leadQuality} onChange={setLeadQuality}
-          p2Pct={p2Pct} p4Pct={p4Pct} bePct={bePct} compPct={compPct}
-          ep2={deal.effectiveP2} ep4={deal.effectiveP4} ebe={deal.effectiveBE} ecomp={deal.effectiveComp}
-        />
+        {/* ELP program terms */}
+        <ElpTermsPanel terms={elpTerms} sched={deal.elp.schedule} debtAmount={debtAmount} files={portfolioDeals}
+          onChange={t => { setElpFeeRate(t.feeRatePct); setElpMaintFee(t.maintFee); setElpSplit(t.split); }} />
 
         {/* Snapshots */}
-        <div className="grid-2">
+        <div className="ft-grid-3">
           <div style={card}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
-              <img src={LEVEL_DEBT_LOGO} alt="Level Debt" style={{ height:30, width:"auto", objectFit:"contain" }} />
-              <h2 style={{ margin:0, fontSize:17, fontWeight:800, color:"#0f172a" }}>Level Debt Snapshot</h2>
-              {!deal.levelDebtEligible && <span style={{ fontSize:11, fontWeight:800, color:FT_RED, background:FT_RED+"11", padding:"2px 8px", borderRadius:99 }}>Not eligible — under $7k</span>}
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, minHeight:34 }}>
+              <img src={LEVEL_DEBT_LOGO} alt="Level Debt" style={{ height:28, width:"auto", objectFit:"contain" }} />
+              <h2 style={{ margin:0, fontSize:16, fontWeight:800, color:"#0f172a" }}>Level Debt</h2>
+              {!deal.ld.eligible && <span style={{ fontSize:10, fontWeight:800, color:FT_RED, background:FT_RED+"11", padding:"2px 8px", borderRadius:99 }}>Under $7k</span>}
             </div>
-            <div className="grid-2-inner">
+            <div className="ft-grid-2-inner">
               <MetricCard title="Debt Amount" value={money.format(deal.debtAmount)} />
-              <MetricCard title="Gross Revenue" value={deal.levelDebtEligible ? money.format(deal.levelDebtRevenue) : "N/A"} />
-              <MetricCard title="Commission Paid To Closer" value={deal.levelDebtEligible ? money.format(repEcon.ldCost) : "N/A"} />
-              <MetricCard title="Net Revenue" value={deal.levelDebtEligible ? money.format(repEcon.ldNet) : "N/A"} />
+              <MetricCard title="Gross Revenue" value={deal.ld.eligible ? money.format(deal.ld.grossRevenue) : "N/A"} />
+              <MetricCard title="Commission" value={deal.ld.eligible ? money.format(deal.ld.repCost) : "N/A"} />
+              <MetricCard title="Net Revenue" value={deal.ld.eligible ? money.format(deal.ld.netRevenue) : "N/A"} />
             </div>
           </div>
+
           <div style={card}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
-              <img src={CS_LOGO} alt="Consumer Shield" style={{ height:30, width:"auto", objectFit:"contain" }} />
-              <h2 style={{ margin:0, fontSize:17, fontWeight:800, color:"#0f172a" }}>Consumer Shield Program Snapshot</h2>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, minHeight:34 }}>
+              <img src={CS_LOGO} alt="Consumer Shield" style={{ height:28, width:"auto", objectFit:"contain" }} />
+              <h2 style={{ margin:0, fontSize:16, fontWeight:800, color:"#0f172a" }}>Consumer Shield</h2>
             </div>
-            <div className="grid-2-inner">
-              <div style={card}>
-                <div style={{ fontSize:11, fontWeight:700, color:"#64748b", marginBottom:7,
-                  textTransform:"uppercase", letterSpacing:0.4,
-                  display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                  <span>Payment / Monthly</span>
-                  {deal.consumerShieldTerm && <span style={{ fontSize:10, color:"#94a3b8", fontWeight:600 }}>{deal.consumerShieldTerm} months</span>}
-                </div>
-                <div style={{ fontSize:24, fontWeight:800, color:"#0f172a" }}>{money.format(deal.consumerShieldPayment ?? 0)}</div>
-              </div>
-              <MetricCard title="Net Payment" value={money.format(deal.consumerShieldNetPayment ?? 0)}
-                tooltip={`${money.format(deal.consumerShieldPayment ?? 0)} program payment minus $40 servicing = ${money.format(deal.consumerShieldNetPayment ?? 0)} net. Base amount before the 100% (months 1–4) or 35% (month 5+) split.`} />
-              <MetricCard title="Front Revenue" value={money.format(deal.consumerShieldFrontRevenue ?? 0)} inlineTag="Months 1 through 4" />
-              <MetricCard title="Tail End – Revenue" value={money.format(deal.consumerShieldBackRevenueMonthly ?? 0)} inlineTag="Per month from month 5+" />
+            <div className="ft-grid-2-inner">
+              <MetricCard title="Payment / Monthly" value={money.format(deal.cs.payment)} inlineTag={deal.cs.term?`${deal.cs.term} months`:undefined} />
+              <MetricCard title="Net Payment" value={money.format(deal.cs.netPayment)}
+                tooltip={`${money.format(deal.cs.payment)} program payment minus $40 servicing = ${money.format(deal.cs.netPayment)} net. Base before the 100% (months 1–4) or 35% (month 5+) split.`} />
+              <MetricCard title="Front Revenue" value={money.format(deal.cs.frontRevenue)} inlineTag="Months 1–4" />
+              <MetricCard title="Tail End – Revenue" value={money.format(deal.cs.tailMonthly)} inlineTag="Per month 5+" />
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, minHeight:34 }}>
+              <img src={ELP_LOGO} alt="Elite Legal Practice" style={{ height:26, width:"auto", objectFit:"contain" }} />
+              <h2 style={{ margin:0, fontSize:16, fontWeight:800, color:"#0f172a" }}>Elite Legal Practice</h2>
+              {!deal.elp.eligible && <span style={{ fontSize:10, fontWeight:800, color:FT_RED, background:FT_RED+"11", padding:"2px 8px", borderRadius:99 }}>Under $6k</span>}
+            </div>
+            <div className="ft-grid-2-inner">
+              <MetricCard title="Client Draft / Monthly" value={deal.elp.eligible ? money.format(deal.elp.schedule.grossPayment) : "N/A"} inlineTag={deal.elp.term?`${deal.elp.term} months`:undefined} />
+              <MetricCard title="Service Fee / Monthly" value={deal.elp.eligible ? money.format(deal.elp.schedule.serviceFeeMonthly) : "N/A"}
+                tooltip={`${deal.elp.schedule.feeRatePct}% of enrolled debt spread across the derived term. This is the only component Funding Tier shares in from Payment 3 on.`} />
+              <MetricCard title="Payments 1–2" value={deal.elp.eligible ? money.format(deal.elp.schedule.earlyRevenue) : "N/A"} inlineTag="100% pass-through" />
+              <MetricCard title="Payments 3+" value={deal.elp.eligible ? money.format(deal.elp.schedule.lateRevenue) : "N/A"} inlineTag={`${Math.round(deal.elp.schedule.tierRate*100)}% tier share`} />
             </div>
           </div>
         </div>
 
-        {/* Funnel explainer */}
-        <FunnelExplainer ep2={deal.effectiveP2} ep4={deal.effectiveP4} ebe={deal.effectiveBE} ecomp={deal.effectiveComp}
-          rev2={rev2v} rev4={rev4v} revBE={revBEv} fullRev={fullRv} ldRev={deal.levelDebtRevenue} />
+        {/* Lead quality — side by side */}
+        <div className="ft-grid-2">
+          <LeadQualityPanel prefix="CS"  quality={csLeadQuality}  onChange={setCsLeadQuality}  funnel={csFunnel}  eff={csEff}  accent={FT_BLUE} />
+          <LeadQualityPanel prefix="ELP" quality={elpLeadQuality} onChange={setElpLeadQuality} funnel={elpFunnel} eff={elpEff} accent={FT_CYAN} />
+        </div>
 
-        {/* CS Revenue Milestones */}
-        <Accordion title="Consumer Shield Revenue Milestones" defaultOpen={true} badge="Hover dots for detail">
-          <CSRevenueMilestonesTimeline
-            timeline={deal.consumerShieldTimeline}
-            breakEvenMonth={deal.consumerShieldBreakEvenMonthVsLevel}
-            liabilityClearMonth={deal.consumerShieldLiabilityClearMonth}
-            levelDebtRevenue={deal.levelDebtRevenue}
-            debtAmount={deal.debtAmount}
-          />
-          <div className="grid-4" style={{ marginTop:16 }}>
-            <MetricCard title="After CS Payment 2" value={money.format(deal.consumerShieldRevenueAfter2 ?? 0)} subtitle="Early quality signal" />
-            <MetricCard title="After CS Payment 4" value={money.format(deal.consumerShieldRevenueAfter4 ?? 0)} subtitle="Front window closes" />
-            <MetricCard title="CS 1/2 Program"     value={money.format(deal.consumerShieldRevenueAtHalf ?? 0)} subtitle="Mid-term reference" />
-            <MetricCard title="CS Full Program"     value={money.format(deal.consumerShieldRevenueAtFull ?? 0)} subtitle="Best-case ceiling" />
+        {/* Funnel explainers */}
+        <Accordion title="Consumer Shield — Expected Revenue Funnel" defaultOpen={true} accent={FT_BLUE}
+          badge={money.format(deal.cs.expectedRevenue)+" / deal"}>
+          <FunnelExplainer prefix="CS" accent={FT_BLUE} eff={csEff}
+            rev2={deal.cs.revAfter2} rev4={deal.cs.revAfter4} revBE={csRevBE}
+            fullRev={deal.cs.fullRevenue} ldRev={deal.ld.expectedRevenue} expected={deal.cs.expectedRevenue} />
+        </Accordion>
+
+        <Accordion title="Elite Legal Practice — Expected Revenue Funnel" defaultOpen={true} accent={FT_CYAN}
+          badge={money.format(deal.elp.expectedRevenue)+" / deal"}>
+          <FunnelExplainer prefix="ELP" accent={FT_CYAN} eff={elpEff}
+            rev2={deal.elp.revAfter2} rev4={deal.elp.revAfter4} revBE={elpRevBE}
+            fullRev={deal.elp.fullRevenue} ldRev={deal.ld.expectedRevenue} expected={deal.elp.expectedRevenue} />
+        </Accordion>
+
+        {/* Milestone timelines */}
+        <Accordion title="Consumer Shield Revenue Milestones" defaultOpen={true} accent={FT_BLUE} badge="Hover dots for detail">
+          <MilestonesTimeline timeline={deal.cs.timeline}
+            breakEvenMonth={deal.cs.breakEvenMonth} liabilityClearMonth={deal.cs.liabilityClearMonth}
+            levelDebtRevenue={deal.ld.expectedRevenue} debtAmount={deal.debtAmount}
+            accent={FT_BLUE} accentDark="#1552a8"
+            frontPhase="Front" frontEndsMonth={4}
+            frontLabel="Front (Mo 1–4): 100% net" tailLabel="Tail-End (Mo 5+): 35% net" />
+          <div className="ft-grid-4" style={{ marginTop:16 }}>
+            <MetricCard title="After CS Payment 2" value={money.format(deal.cs.revAfter2)} subtitle="Early quality signal" />
+            <MetricCard title="After CS Payment 4" value={money.format(deal.cs.revAfter4)} subtitle="Front window closes" />
+            <MetricCard title="CS 1/2 Program"     value={money.format(deal.cs.revAtHalf)} subtitle="Mid-term reference" />
+            <MetricCard title="CS Full Program"    value={money.format(deal.cs.fullRevenue)} subtitle="Best-case ceiling" />
           </div>
         </Accordion>
 
-        {/* Payout + Liability */}
+        <Accordion title="Elite Legal Practice Revenue Milestones" defaultOpen={true} accent={FT_CYAN} badge="Hover dots for detail">
+          <MilestonesTimeline timeline={deal.elp.timeline}
+            breakEvenMonth={deal.elp.breakEvenMonth} liabilityClearMonth={deal.elp.liabilityClearMonth}
+            levelDebtRevenue={deal.ld.expectedRevenue} debtAmount={deal.debtAmount}
+            accent={FT_CYAN} accentDark={FT_CYAN_DARK}
+            frontPhase="Pass-Through" frontEndsMonth={2}
+            frontLabel="Pass-Through (Mo 1–2): 100% less draft fee"
+            tailLabel={`Tier Share (Mo 3+): ${Math.round(deal.elp.schedule.tierRate*100)}% of service fee`} />
+          <div className="ft-grid-4" style={{ marginTop:16 }}>
+            <MetricCard title="After ELP Payment 2" value={money.format(deal.elp.revAfter2)} subtitle="Pass-through window closes" />
+            <MetricCard title="After ELP Payment 4" value={money.format(deal.elp.revAfter4)} subtitle="Commission milestone cleared" />
+            <MetricCard title="ELP 1/2 Program"     value={money.format(deal.elp.revAtHalf)} subtitle="Mid-term reference" />
+            <MetricCard title="ELP Full Program"    value={money.format(deal.elp.fullRevenue)} subtitle="Best-case ceiling" />
+          </div>
+          {deal.elp.eligible && (
+            <div style={{ marginTop:16 }}>
+              <RevenueCurve
+                points={deal.elp.timeline.map(r => ({ month:r.month, y:r.cumulativeRevenue }))}
+                accent={FT_CYAN} accentDark={FT_CYAN_DARK}
+                notableMonths={[1, 2, ...(deal.elp.breakEvenMonth?[deal.elp.breakEvenMonth]:[]), deal.elp.term]} />
+            </div>
+          )}
+        </Accordion>
+
+        {/* Payout + liability */}
         <PayoutLiabilityAccordion />
 
-        {/* CS Offerings */}
+        {/* CS offerings */}
         <div style={card}>
           <h2 style={{ margin:"0 0 6px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Consumer Shield Offerings / Retention Scenarios</h2>
           <div style={{ fontSize:13, color:"#64748b", lineHeight:1.6, marginBottom:14 }}>
@@ -1251,48 +1737,57 @@ export default function FundingTierProfitabilityBalancer() {
           </div>
         </div>
 
-        {/* Monthly Revenue Timeline */}
-        <Accordion title="Consumer Shield Monthly Revenue Timeline" defaultOpen={false}>
-          <div style={{ overflowX:"auto", borderRadius:13, border:"1px solid #e2e8f0" }}>
+        {/* ELP band sweep */}
+        <Accordion title="Elite Legal Practice — Economics Across Debt Bands" accent={FT_CYAN}
+          badge={`${elpTerms.feeRatePct}% fee · ${money.format(elpTerms.maintFee)} maint · ${elpTerms.split?"split":"monthly"}`}>
+          <div style={{ fontSize:13, color:"#64748b", lineHeight:1.6, marginBottom:12 }}>
+            How the derived term, client draft and revenue move across enrolled-debt bands at the terms currently set above.
+            ELP has no fixed program table — the $250 draft floor sets the term for every deal individually.
+          </div>
+          <div style={{ overflowX:"auto", borderRadius:12, border:"1px solid #e2e8f0" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-              <thead><tr style={{ background:"#f1f5f9" }}>
-                {["Month","Phase","Monthly Revenue","Cumulative Revenue","Assumed Funds Hit","Liability Clears"].map(h=><th key={h} style={TH}>{h}</th>)}
+              <thead><tr style={{ background:"#f8fafc" }}>
+                {["Enrolled Debt","Commission Band","Derived Term","Client Draft","Pmts 1–2","Pmts 3+","Full-Term Revenue","Level Debt 8%","Break-Even"].map(h=><th key={h} style={TH}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {deal.consumerShieldTimeline.map(row=>{
-                  const isBE=row.month===deal.consumerShieldBreakEvenMonthVsLevel;
-                  const isLC=row.month===deal.consumerShieldLiabilityClearMonth;
-                  const is1=row.month===1,is4=row.month===4;
-                  const isMile=isBE||isLC||is1||is4;
-                  const rowBg=isLC?FT_HYPER+"22":isBE?FT_AMBER+"22":is1||is4?FT_GREEN+"11":row.month%2?"#f8fafc":"#fff";
-                  return (
-                    <tr key={row.month} style={{ background:rowBg }}>
-                      <td style={{ ...TD, fontWeight:isMile?800:400 }}>
-                        {row.month}
-                        {is1&&<span style={{ marginLeft:6, fontSize:10, background:FT_GREEN+"22", color:FT_GREEN_DARK, fontWeight:700, padding:"1px 6px", borderRadius:99 }}>Start</span>}
-                        {is4&&<span style={{ marginLeft:6, fontSize:10, background:FT_GREEN+"22", color:FT_GREEN_DARK, fontWeight:700, padding:"1px 6px", borderRadius:99 }}>Front Close</span>}
-                        {isBE&&<span style={{ marginLeft:6, fontSize:10, background:FT_AMBER+"33", color:FT_AMBER, fontWeight:800, padding:"1px 6px", borderRadius:99 }}>Break-Even</span>}
-                        {isLC&&<span style={{ marginLeft:6, fontSize:10, background:FT_HYPER+"33", color:FT_GREEN_DARK, fontWeight:800, padding:"1px 6px", borderRadius:99 }}>Liability Clear</span>}
-                      </td>
-                      <td style={{ ...TD, color:row.phase==="Front"?FT_GREEN:FT_BLUE, fontWeight:700 }}>{row.phase}</td>
-                      <td style={TD}>{money.format(row.monthlyRevenue)}</td>
-                      <td style={{ ...TD, fontWeight:isMile?800:400, color:isLC?FT_GREEN_DARK:isBE?FT_AMBER:"inherit" }}>
-                        {money.format(row.cumulativeRevenue)}
-                      </td>
-                      <td style={TD}>Month {row.payoutHitMonthAssumed}</td>
-                      <td style={{ ...TD, borderRight:"none" }}>Month {row.liabilityFreeMonth}</td>
-                    </tr>
-                  );
-                })}
+                {elpBandSweep.map((r,i)=>(
+                  <tr key={r.debt} style={{ background:i%2?"#f8fafc":"#fff" }}>
+                    <td style={{ ...TD, fontWeight:800 }}>{money.format(r.debt)}</td>
+                    <td style={TD}>{r.band ? `${r.band.code} · ${money.format(r.band.total)}` : "—"}</td>
+                    <td style={TD}>{r.s.term} mo</td>
+                    <td style={TD}>{money.format(r.s.grossPayment)}</td>
+                    <td style={{ ...TD, color:FT_CYAN_DARK, fontWeight:700 }}>{money.format(r.s.earlyRevenue)}</td>
+                    <td style={{ ...TD, color:FT_CYAN_DARK, fontWeight:700 }}>{money.format(r.s.lateRevenue)}</td>
+                    <td style={{ ...TD, fontWeight:800 }}>{money.format(r.full)}</td>
+                    <td style={TD}>{money.format(r.ldR)}</td>
+                    <td style={{ ...TD, borderRight:"none", color:r.be?FT_AMBER:"#94a3b8", fontWeight:700 }}>{r.be ? `Month ${r.be}` : "—"}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </Accordion>
 
-        {/* Rep Economics */}
+        {/* Monthly revenue timelines */}
+        <Accordion title="Consumer Shield Monthly Revenue Timeline" accent={FT_BLUE}>
+          <MonthlyRevenueTable timeline={deal.cs.timeline} breakEvenMonth={deal.cs.breakEvenMonth}
+            liabilityClearMonth={deal.cs.liabilityClearMonth} frontPhase="Front" frontEndsMonth={4}
+            accent={FT_BLUE} accentDark="#1552a8" />
+        </Accordion>
+
+        <Accordion title="Elite Legal Practice Monthly Revenue Timeline" accent={FT_CYAN}>
+          <MonthlyRevenueTable timeline={deal.elp.timeline} breakEvenMonth={deal.elp.breakEvenMonth}
+            liabilityClearMonth={deal.elp.liabilityClearMonth} frontPhase="Pass-Through" frontEndsMonth={2}
+            accent={FT_CYAN} accentDark={FT_CYAN_DARK} />
+        </Accordion>
+
+        {/* Rep economics */}
         <div style={card}>
-          <h2 style={{ margin:"0 0 14px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Sales Rep Economics</h2>
-          <div className="grid-3">
+          <h2 style={{ margin:"0 0 4px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Sales Rep Economics</h2>
+          <div style={{ fontSize:13, color:"#64748b", lineHeight:1.6, marginBottom:14 }}>
+            Level Debt and Consumer Shield payouts are editable. Elite Legal Practice pays a fixed band schedule, so it is read from the live commission table.
+          </div>
+          <div className="ft-grid-3">
             {[
               { label:"Level Debt Rep Payout (% of enrolled debt)", value:levelRepPct, set:setLevelRepPct, min:0, max:10, step:0.05 },
               { label:"CS Upfront Rep Payout ($)", value:csRepUpfront, set:setCsRepUpfront, min:0, step:25 },
@@ -1308,112 +1803,137 @@ export default function FundingTierProfitabilityBalancer() {
               </div>
             ))}
           </div>
+          <div className="ft-grid-3" style={{ marginTop:14 }}>
+            <MetricCard title="LD Commission — This Deal" accent={FT_GREEN_DARK}
+              value={deal.ld.eligible ? money.format(deal.ld.repCost) : "N/A"} subtitle="Paid on the 20th of Month 3" />
+            <MetricCard title="CS Commission — Expected" accent={FT_BLUE}
+              value={deal.cs.eligible ? money.format(deal.cs.repCost) : "N/A"}
+              subtitle={`Upfront + milestone × ${csEff.p4}% effective P4`} />
+            <MetricCard title="ELP Commission — Expected" accent={FT_CYAN_DARK}
+              value={deal.elp.eligible ? money.format(deal.elp.repCost) : "N/A"}
+              subtitle={deal.elp.eligible ? `${deal.elp.bandLabel} — P2 and P4 milestones weighted by effective survival` : "Under $6k"} />
+          </div>
         </div>
 
-        {/* Portfolio Forecast */}
+        {/* Portfolio forecast */}
         <div style={card}>
-          <h2 style={{ margin:"0 0 4px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Portfolio Forecast — Deals Above $7,000</h2>
+          <h2 style={{ margin:"0 0 4px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Portfolio Forecast</h2>
 
-          {/* Urgency recommendation banner with APPLY button */}
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:12,
-            background: routingMatchesRecommendation ? FT_GREEN+"11" : FT_AMBER+"11",
-            border:`1px solid ${routingMatchesRecommendation ? FT_GREEN+"44" : FT_AMBER+"44"}`,
+            background: routingMatches ? FT_GREEN+"11" : FT_AMBER+"11",
+            border:`1px solid ${routingMatches ? FT_GREEN+"44" : FT_AMBER+"44"}`,
             borderRadius:12, padding:"12px 16px", marginBottom:16 }}>
-            <div style={{ flex:1 }}>
-              <div style={{ fontSize:13, fontWeight:700, color:routingMatchesRecommendation ? FT_GREEN_DARK : "#92400e" }}>
-                {routingMatchesRecommendation
-                  ? `✓ Portfolio routing matches the stability-adjusted recommendation (${routing.ldPct}% LD / ${100-routing.ldPct}% CS) for the ${routing.horizon} cash horizon.`
-                  : `⚠ Portfolio routing (${effectiveLDPct}% LD) does not match the stability-adjusted recommendation (${routing.ldPct}% LD / ${100-routing.ldPct}% CS) for the ${routing.horizon} cash horizon.`}
+            <div style={{ flex:1, minWidth:280 }}>
+              <div style={{ fontSize:13, fontWeight:700, color:routingMatches ? FT_GREEN_DARK : "#92400e" }}>
+                {routingMatches
+                  ? `✓ Portfolio routing matches the stability-adjusted recommendation (${routing.ldPct}% LD / ${routing.csPct}% CS / ${routing.elpPct}% ELP) for the ${routing.horizon} cash horizon.`
+                  : `⚠ Portfolio routing (${effLdPct}% LD / ${effCsPct}% CS / ${effElpPct}% ELP) does not match the recommendation (${routing.ldPct}% LD / ${routing.csPct}% CS / ${routing.elpPct}% ELP) for the ${routing.horizon} cash horizon.`}
               </div>
               <div style={{ fontSize:12, color:"#64748b", marginTop:4, lineHeight:1.5 }}>
                 {routing.rationale}
-                {stability.penalty > 0 && ` Stability adjustment of +${stability.penalty}pt applied due to CS survival rate pressure.`}
+                {stability.penalty > 0 && ` Stability adjustment of +${stability.penalty}pt applied due to survival rate pressure.`}
               </div>
             </div>
-            {portfolioAvgDebt >= 7000 && (
-              <button
-                onClick={handleApplyUrgencyRouting}
-                style={{
-                  flexShrink: 0,
-                  padding: "10px 18px",
-                  borderRadius: 10,
-                  border: "none",
-                  fontWeight: 800,
-                  fontSize: 13,
-                  cursor: routingMatchesRecommendation ? "default" : "pointer",
-                  background: routingMatchesRecommendation ? "#e2e8f0" : FT_AMBER,
-                  color: routingMatchesRecommendation ? "#94a3b8" : "#fff",
-                  boxShadow: routingMatchesRecommendation ? "none" : "0 4px 14px rgba(245,158,11,0.4)",
-                  transition: "all 0.2s",
-                  opacity: routingMatchesRecommendation ? 0.7 : 1,
-                }}>
-                {routingMatchesRecommendation ? "✓ APPLIED" : "ADJUST FOR CASH URGENCY NEEDED"}
-              </button>
-            )}
-            {portfolioAvgDebt < 7000 && (
-              <div style={{ fontSize:11, fontWeight:800, color:FT_RED }}>⛔ All deals must go to CS (under $7k)</div>
-            )}
+            <button onClick={applyRecommendedRouting}
+              style={{ flexShrink:0, padding:"10px 18px", borderRadius:10, border:"none",
+                fontWeight:800, fontSize:13, cursor:routingMatches?"default":"pointer",
+                background:routingMatches?"#e2e8f0":FT_AMBER, color:routingMatches?"#94a3b8":"#fff",
+                boxShadow:routingMatches?"none":"0 4px 14px rgba(245,158,11,0.4)",
+                opacity:routingMatches?0.7:1 }}>
+              {routingMatches ? "✓ APPLIED" : "ADJUST FOR CASH URGENCY NEEDED"}
+            </button>
           </div>
 
-          <div className="grid-3">
+          {!csOk && (
+            <div style={{ background:FT_RED+"11", border:`1px solid ${FT_RED}33`, borderRadius:12,
+              padding:"12px 14px", marginBottom:16, fontSize:13, fontWeight:700, color:FT_RED }}>
+              ⛔ Average debt below {money.format(BACKEND_META.CS.minDebt)} — no backend will accept this portfolio.
+            </div>
+          )}
+
+          <div className="ft-grid-2">
             <div>
               <div style={{ fontSize:13, fontWeight:700, color:"#334155", marginBottom:7 }}>Number of Deals</div>
               <input type="number" value={portfolioDeals} onChange={e => setPortfolioDeals(Number(e.target.value))}
                 min={1} step={1} style={{ width:"100%", padding:"10px 12px", borderRadius:10,
                   border:"1px solid #cbd5e1", fontSize:15, color:"#0f172a", background:"#fff", boxSizing:"border-box" }} />
+              <div style={{ fontSize:11, color:"#94a3b8", marginTop:4 }}>
+                Also sets the ELP tier rate — {Math.round(elpTerms.tierRate*100)}% at {portfolioDeals} billable files/mo
+                {portfolioDeals < ELP_TIER_RATE_FILE_THRESHOLD ? ` (65% at ${ELP_TIER_RATE_FILE_THRESHOLD}+)` : ""}
+              </div>
             </div>
             <div>
               <div style={{ fontSize:13, fontWeight:700, color:"#334155", marginBottom:7 }}>Average Debt Amount</div>
               <input type="number" value={portfolioAvgDebt} onChange={e => setPortfolioAvgDebt(Number(e.target.value))}
                 min={4000} step={100} style={{ width:"100%", padding:"10px 12px", borderRadius:10,
                   border:"1px solid #cbd5e1", fontSize:15, color:"#0f172a", background:"#fff", boxSizing:"border-box" }} />
-            </div>
-            <div>
-              <div style={{ fontSize:13, fontWeight:700, color:"#334155", marginBottom:7 }}>
-                % Routed to Level Debt
-                {portfolioAvgDebt < 7000 && <span style={{ color:FT_RED, fontWeight:800, marginLeft:6 }}>(forced 0%)</span>}
-                {!routingMatchesRecommendation && portfolioAvgDebt >= 7000 && (
-                  <span style={{ color:FT_AMBER, fontWeight:700, marginLeft:6, fontSize:11 }}>
-                    Rec: {routing.ldPct}%
-                  </span>
-                )}
-              </div>
-              <input type="range" min={0} max={100} step={1}
-                value={portfolioAvgDebt < 7000 ? 0 : portfolioLevelMixPct}
-                onChange={e => { if (portfolioAvgDebt >= 7000) setPortfolioLevelMixPct(Number(e.target.value)); }}
-                disabled={portfolioAvgDebt < 7000}
-                style={{ width:"100%", accentColor:routingMatchesRecommendation ? FT_GREEN : FT_AMBER,
-                  opacity: portfolioAvgDebt < 7000 ? 0.4 : 1 }} />
-              <div style={{ fontSize:12, fontWeight:700, color:routingMatchesRecommendation ? FT_GREEN_DARK : FT_AMBER, marginTop:3 }}>
-                {portfolioAvgDebt < 7000 ? "0" : portfolioLevelMixPct}%
+              <div style={{ fontSize:11, color:"#94a3b8", marginTop:4 }}>
+                Eligible here: {[ldOk&&"Level Debt", elpOk&&"Elite Legal Practice", csOk&&"Consumer Shield"].filter(Boolean).join(", ") || "none"}
               </div>
             </div>
           </div>
 
-          <div className="grid-4" style={{ marginTop:16 }}>
-            <MetricCard title="Level Debt Deals" value={String(portfolio.ldCount)} subtitle={`${percentFmt.format(portfolio.eLDPct/100)} of portfolio`} />
-            <MetricCard title="Consumer Shield Deals" value={String(portfolio.csCount)} subtitle={`${percentFmt.format((100-portfolio.eLDPct)/100)} of portfolio`} />
-            <MetricCard title="Expected Gross Revenue" value={money.format(portfolio.totalGross)} />
-            <MetricCard title="Expected Net Revenue"   value={money.format(portfolio.totalNet)} />
+          <div className="ft-grid-2" style={{ marginTop:14 }}>
+            <div>
+              <div style={{ fontSize:13, fontWeight:700, color:"#334155", marginBottom:7 }}>
+                % Routed to Level Debt
+                {!ldOk && <span style={{ color:FT_RED, fontWeight:800, marginLeft:6 }}>(forced 0% — under $7k)</span>}
+                {ldOk && effLdPct !== routing.ldPct && <span style={{ color:FT_AMBER, fontWeight:700, marginLeft:6, fontSize:11 }}>Rec: {routing.ldPct}%</span>}
+              </div>
+              <input type="range" min={0} max={100} step={1} value={effLdPct}
+                onChange={e => setLd(Number(e.target.value))} disabled={!ldOk}
+                style={{ width:"100%", accentColor:FT_GREEN, opacity:ldOk?1:0.4 }} />
+              <div style={{ fontSize:12, fontWeight:700, color:FT_GREEN_DARK, marginTop:3 }}>{effLdPct}%</div>
+            </div>
+            <div>
+              <div style={{ fontSize:13, fontWeight:700, color:"#334155", marginBottom:7 }}>
+                % Routed to Elite Legal Practice
+                {!elpOk && <span style={{ color:FT_RED, fontWeight:800, marginLeft:6 }}>(forced 0% — under $6k)</span>}
+                {elpOk && effElpPct !== routing.elpPct && <span style={{ color:FT_AMBER, fontWeight:700, marginLeft:6, fontSize:11 }}>Rec: {routing.elpPct}%</span>}
+              </div>
+              <input type="range" min={0} max={100 - effLdPct} step={1} value={effElpPct}
+                onChange={e => setElp(Number(e.target.value))} disabled={!elpOk}
+                style={{ width:"100%", accentColor:FT_CYAN, opacity:elpOk?1:0.4 }} />
+              <div style={{ fontSize:12, fontWeight:700, color:FT_CYAN_DARK, marginTop:3 }}>{effElpPct}%</div>
+            </div>
+          </div>
+
+          <div style={{ marginTop:10, padding:"9px 13px", background:FT_BLUE+"0d",
+            border:`1px solid ${FT_BLUE}33`, borderRadius:10, fontSize:12, color:"#475569" }}>
+            <strong style={{ color:FT_BLUE }}>Consumer Shield takes the remainder: {effCsPct}%</strong>
+            {" "}— the three shares always sum to 100%. Move Level Debt or Elite Legal Practice and CS absorbs the difference.
+          </div>
+
+          <div className="ft-grid-4" style={{ marginTop:16 }}>
+            <MetricCard title="Deal Split" value={`${portfolio.ldCount} / ${portfolio.csCount} / ${portfolio.elpCount}`}
+              subtitle="Level Debt / Consumer Shield / Elite Legal Practice" />
+            <MetricCard title="Expected Gross Revenue" value={money.format(portfolio.totalGross)}
+              subtitle={`Across ${portfolioDeals} deals at ${money.format(portfolioAvgDebt)} average`} />
+            <MetricCard title="Total Rep Cost" value={money.format(portfolio.totalRep)} />
+            <MetricCard title="Expected Net Revenue" value={money.format(portfolio.totalNet)} accent={FT_GREEN_DARK} />
           </div>
 
           <div style={{ marginTop:16, overflowX:"auto", border:"1px solid #e2e8f0", borderRadius:13 }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
               <thead><tr style={{ background:"#f1f5f9" }}>
-                {["Metric","Level Debt Portion","Consumer Shield Portion","Combined"].map(h=><th key={h} style={TH}>{h}</th>)}
+                {["Metric","Level Debt","Consumer Shield","Elite Legal Practice","Combined"].map(h=><th key={h} style={TH}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {[
-                  { label:"Deal Count", tip:"Total deals split by your routing allocation. Deals under $7k are forced to CS.",
-                    ld:String(portfolio.ldCount), cs:String(portfolio.csCount), tot:String(portfolioDeals) },
-                  { label:"Gross Revenue", tip:"LD = 8% × avg debt × deal count. CS = expected revenue (quality-adjusted) × CS deal count.",
-                    ld:money.format(portfolio.ldGross), cs:money.format(portfolio.csGross), tot:money.format(portfolio.totalGross) },
-                  { label:"Rep Cost", tip:"LD = enrolled debt × rep %. CS = (upfront + milestone × effective P4 rate) × CS deals.",
-                    ld:money.format(portfolio.ldRep), cs:money.format(portfolio.csRep), tot:money.format(portfolio.totalRep) },
-                  { label:"Net Revenue", tip:"Gross revenue minus total rep cost for each side.",
-                    ld:money.format(portfolio.ldGross-portfolio.ldRep), cs:money.format(portfolio.csGross-portfolio.csRep), tot:money.format(portfolio.totalNet) },
-                  { label:"CS Full-Upside Ref", tip:"CS revenue if every CS deal completed the full term. Ceiling only.",
-                    ld:"—", cs:money.format(portfolio.csUpside), tot:money.format(portfolio.ldGross+portfolio.csUpside) },
+                  { label:"Deal Count", tip:"Total deals split by your routing allocation, with eligibility floors enforced.",
+                    ld:String(portfolio.ldCount), cs:String(portfolio.csCount), elp:String(portfolio.elpCount), tot:String(portfolioDeals) },
+                  { label:"Expected Revenue / Deal", tip:"Survival-weighted revenue at the portfolio average debt.",
+                    ld:money.format(portfolioDeal.ld.expectedRevenue), cs:money.format(portfolioDeal.cs.expectedRevenue),
+                    elp:money.format(portfolioDeal.elp.expectedRevenue), tot:"—" },
+                  { label:"Gross Revenue", tip:"Expected revenue per deal × deal count.",
+                    ld:money.format(portfolio.ldGross), cs:money.format(portfolio.csGross), elp:money.format(portfolio.elpGross), tot:money.format(portfolio.totalGross) },
+                  { label:"Rep Cost", tip:"LD = enrolled debt × rep %. CS = upfront + milestone × effective P4. ELP = band schedule weighted by effective P2 / P4.",
+                    ld:money.format(portfolio.ldRep), cs:money.format(portfolio.csRep), elp:money.format(portfolio.elpRep), tot:money.format(portfolio.totalRep) },
+                  { label:"Net Revenue", tip:"Gross revenue minus rep cost for each side.",
+                    ld:money.format(portfolio.ldGross-portfolio.ldRep), cs:money.format(portfolio.csGross-portfolio.csRep),
+                    elp:money.format(portfolio.elpGross-portfolio.elpRep), tot:money.format(portfolio.totalNet) },
+                  { label:"Full-Upside Ref", tip:"Revenue if every perpetuity deal completed its full term. Ceiling only, never a forecast.",
+                    ld:"—", cs:money.format(portfolio.csUpside), elp:money.format(portfolio.elpUpside), tot:money.format(portfolio.totalUpside) },
                 ].map((row,i)=>(
                   <tr key={row.label} style={{ background:i%2?"#f8fafc":"#fff" }}>
                     <td style={{ ...TD, fontWeight:700 }} title={row.tip}>
@@ -1421,7 +1941,8 @@ export default function FundingTierProfitabilityBalancer() {
                     </td>
                     <td style={TD}>{row.ld}</td>
                     <td style={TD}>{row.cs}</td>
-                    <td style={{ ...TD, borderRight:"none" }}>{row.tot}</td>
+                    <td style={TD}>{row.elp}</td>
+                    <td style={{ ...TD, borderRight:"none", fontWeight:700 }}>{row.tot}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1429,16 +1950,19 @@ export default function FundingTierProfitabilityBalancer() {
           </div>
         </div>
 
-        {/* Operator Notes */}
+        {/* Operator notes */}
         <div style={card}>
           <h2 style={{ margin:"0 0 10px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Operator Notes</h2>
           {[
-            ["Under $7k", "Level Debt will not accept enrolled debt below $7,000. These deals are Consumer Shield only — no routing decision needed. Enforced throughout this tool."],
-            ["CS Survival Funnel", "Cascading rates — completing 25% means those 25% also cleared break-even, P4, and P2. Adjust based on your real observed rates as your book ages."],
-            ["CS Lead Quality", "Degrades effective survival rates proportionally. Compare your actual P2 and P4 rates to your effective rates shown in the Lead Quality panel to validate your assumptions."],
-            ["Cash Urgency + Stability", "Cash urgency sets your base routing intent. The stability adjustment automatically increases urgency when your CS survival rates are poor — protecting cash flow when CS revenue is unreliable. Use the 'ADJUST FOR CASH URGENCY NEEDED' button in Portfolio Forecast to snap the routing slider to the stability-adjusted recommendation."],
-            ["Break-even + Liability Clear", "The hyper-green milestone is your true zero-risk inflection point — CS has both matched Level Debt economically AND the chargeback window on the break-even payment has closed."],
-            ["Using this tool over time", "The real value compounds as you enter your actual observed P2, P4, and break-even survival rates instead of estimates. The routing recommendation and expected revenue numbers will self-correct as your inputs improve."],
+            ["Eligibility floors", "Level Debt will not accept enrolled debt below $7,000. Elite Legal Practice requires $6,000 and $250/mo payment capacity. Consumer Shield starts at $4,000. Between $4,000 and $5,999 there is no routing decision — Consumer Shield is the only option. Enforced throughout this tool."],
+            ["Three-way comparison", "The Backend Comparison table is the one place every assumption lands on the same deal. Expected revenue is the number to compare — full-term ceilings flatter Elite Legal Practice because its terms run far longer than Consumer Shield's."],
+            ["Separate survival funnels", "Consumer Shield and Elite Legal Practice each carry their own cascading rates and their own lead quality slider. A validation book and an attorney-model book rarely churn the same way, and forcing one curve on both hides exactly the difference this tool exists to measure."],
+            ["ELP term is derived, never chosen", "The $250/mo client draft floor caps the term: term = floor(debt × fee% ÷ ($250 − maintenance − draft fee)), capped at 60 months. Raising the fee rate lengthens the term rather than raising the payment."],
+            ["ELP revenue shape", "Payments 1–2 pass through in full — service fee plus maintenance, less the draft fee. From Payment 3 the maintenance fee is backed out and Funding Tier keeps the tier rate of the service fee portion only. That is why the first two months are worth several times any later month."],
+            ["ELP state restrictions", `Legacy Capital Services cannot be sold in ${ELP_BLOCKED_STATES.join(", ")}. This tool models national economics — confirm state eligibility in the Router before routing a live deal.`],
+            ["Break-even below $7k", "Under $7,000 there is no Level Debt benchmark, so no break-even month is displayed. The break-even cohort is still priced — at the mid-program month rather than at zero — otherwise every sub-$7k deal would look worse than it is. $6,000–$6,999 is the one band where Consumer Shield and Elite Legal Practice compete with no settlement option at all."],
+            ["Cash urgency + stability", "Cash urgency sets Level Debt's share. The remainder splits between Consumer Shield and Elite Legal Practice on adjusted expected value, so the stronger perpetuity backend earns the larger tail allocation automatically. The stability penalty reads the blended CS + ELP funnel, not the portfolio sliders, so the recommendation never chases its own tail."],
+            ["Using this tool over time", "The real value compounds as you replace estimates with observed P2, P4 and break-even survival rates for each backend separately. Every recommendation on this page self-corrects as those inputs improve."],
           ].map(([b,rest],i)=>(
             <p key={i} style={{ margin:"8px 0 0", fontSize:14, color:"#475569", lineHeight:1.7 }}>
               <strong style={{ color:"#0f172a" }}>{b}:</strong> {rest}
@@ -1448,17 +1972,21 @@ export default function FundingTierProfitabilityBalancer() {
 
       </div>
 
-      <style jsx>{`
-        .grid-4       { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; }
-        .grid-3       { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
-        .grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-        .grid-2-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+      <style jsx global>{`
+        .ft-grid-5       { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 14px; }
+        .ft-grid-4       { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; }
+        .ft-grid-3       { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+        .ft-grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+        .ft-grid-2-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+        @media (max-width: 1400px) {
+          .ft-grid-5 { grid-template-columns: repeat(3,minmax(0,1fr)); }
+        }
         @media (max-width: 1200px) {
-          .grid-4 { grid-template-columns: 1fr 1fr; }
-          .grid-3 { grid-template-columns: 1fr 1fr; }
+          .ft-grid-5, .ft-grid-4 { grid-template-columns: 1fr 1fr; }
+          .ft-grid-3 { grid-template-columns: 1fr 1fr; }
         }
         @media (max-width: 720px) {
-          .grid-4, .grid-3, .grid-2, .grid-2-inner { grid-template-columns: 1fr !important; }
+          .ft-grid-5, .ft-grid-4, .ft-grid-3, .ft-grid-2, .ft-grid-2-inner { grid-template-columns: 1fr !important; }
         }
       `}</style>
     </div>

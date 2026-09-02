@@ -467,17 +467,24 @@ export default function OperatingModel() {
                 { label: 'Rep payout', value: `${fmtMoney(p?.commission ?? 0)} · mo ${inputs.consumerShield.agentPayoutMonth}`, help: 'Flat commission per enrolled deal, released by the 15th of the following month.' },
               ];
             })() : (() => {
-              const term = legacy.getMaxTerm(debt, inputs.legacy);
-              const fee = legacy.totalFee(debt, inputs.legacy);
-              const pay = legacy.getScheduledPayment(debt, inputs.legacy);
-              const last = legacy.getFinalPayment(debt, inputs.legacy);
+              const L = inputs.legacy;
+              const term = legacy.getMaxTerm(debt, L);
+              const fee = legacy.totalFee(debt, L);
+              const pay = legacy.getScheduledPayment(debt, L);
+              const last = legacy.getFinalPayment(debt, L);
               const trueUp = Math.abs(last - pay) >= 0.005;
+              const draftFee = legacy.draftFeePerMonth(L);
+              const sfee = legacy.serviceFeeMonthly(debt, L);
+              const early = legacy.revenueForDealMonth(debt, 1, L);
+              const late = legacy.revenueForDealMonth(debt, 3, L);
+              const headroom = L.minMonthlyPayment - L.maintenanceFee - draftFee;
               return [
-                { label: 'Sliding fee', value: `${fmtPct(inputs.legacy.feeRate * 100, 0)} · ${fmtMoney2(fee)}`, help: `Total fee as a share of enrolled debt, 35%–49%. ${fmtMoney(debt)} × ${fmtPct(inputs.legacy.feeRate * 100, 0)} = ${fmtMoney2(fee)}, exact to the penny.` },
-                { label: 'Term & draft', value: `${term} mo · ${fmtMoney2(pay)}`, help: `${fmtMoney2(fee)} fee ÷ ${fmtMoney(inputs.legacy.minMonthlyPayment)} floor = ${term} months. Elite Legal Practice drafts to the exact penny — no rounding to the dollar.` },
-                { label: 'Final draft', value: trueUp ? fmtMoney2(last) : 'even', help: trueUp ? `The last draft carries the remainder so the client is billed exactly ${fmtMoney2(fee)}: ${term - 1} × ${fmtMoney2(pay)} + ${fmtMoney2(last)} = ${fmtMoney2(fee)}.` : `${term} × ${fmtMoney2(pay)} divides evenly into the ${fmtMoney2(fee)} fee — no true-up needed.` },
-                { label: 'FT keeps', value: `${fmtMoney2(pay - inputs.legacy.draftFee)} → ${fmtMoney2((pay - inputs.legacy.adminMonthlyFee) * inputs.legacy.tier1Rate)}`, help: `Months 1–2: ${fmtMoney2(pay)} less the ${fmtMoney(inputs.legacy.draftFee)} draft fee = ${fmtMoney2(pay - inputs.legacy.draftFee)}. Month 3 on: (${fmtMoney2(pay)} − ${fmtMoney(inputs.legacy.adminMonthlyFee)} admin fee) × ${fmtPct(inputs.legacy.tier1Rate * 100, 0)} = ${fmtMoney2((pay - inputs.legacy.adminMonthlyFee) * inputs.legacy.tier1Rate)}.` },
-                { label: 'Rep payout', value: `${fmtMoney(legacy.agentCommission(debt, inputs.legacy))} · mo ${inputs.legacy.agentPayoutMonth}`, help: 'Band commission scaled by the sliding fee rate, released the month after enrollment.' },
+                { label: 'Sliding fee', value: `${fmtPct(L.feeRate * 100, 0)} · ${fmtMoney2(fee)}`, help: `Total fee as a share of enrolled debt, 35%–49%. ${fmtMoney(debt)} × ${fmtPct(L.feeRate * 100, 0)} = ${fmtMoney2(fee)}, exact to the penny.` },
+                { label: 'Client draft', value: `${fmtMoney2(pay)}${L.splitSchedule ? ` · 2 × ${fmtMoney2(pay / 2)}` : ''}`, help: `Service fee ${fmtMoney2(sfee)} + ${fmtMoney(L.maintenanceFee)} maintenance + ${fmtMoney(draftFee)} processing = ${fmtMoney2(pay)}. ${L.splitSchedule ? 'Split schedule: the client is drafted twice a month, so the $4 processing fee is charged twice while maintenance is still charged once.' : 'One draft a month.'}` },
+                { label: 'Term', value: `${term} mo`, help: `The ${fmtMoney(L.minMonthlyPayment)} floor is on the client DRAFT, not on the service fee. Maintenance and processing already cover ${fmtMoney(L.maintenanceFee + draftFee)} of it, so the service fee only has to cover the remaining ${fmtMoney(headroom)}: ⌊${fmtMoney2(fee)} ÷ ${fmtMoney(headroom)}⌋ = ${term} months, capped at ${L.maxTerm}.` },
+                { label: 'Final draft', value: trueUp ? fmtMoney2(last) : 'even', help: trueUp ? `Only the service fee has to total exactly. The last draft carries the remainder so the client is billed exactly ${fmtMoney2(fee)} in fees.` : `The fee divides evenly across ${term} drafts — no true-up needed.` },
+                { label: 'FT keeps', value: `${fmtMoney2(early)} → ${fmtMoney2(late)}`, help: `Months 1–2: ${fmtMoney2(pay)} draft less the ${fmtMoney(draftFee)} processing fee = ${fmtMoney2(early)} — maintenance is not backed out yet. Month 3 on: (${fmtMoney2(pay)} − ${fmtMoney(L.maintenanceFee)} maintenance − ${fmtMoney(draftFee)} processing) × ${fmtPct(L.tier1Rate * 100, 0)} = ${fmtMoney2(late)}. Tier steps to ${fmtPct(L.tier2Rate * 100, 0)} at ${L.tier2FileThreshold}+ billable files a month.` },
+                { label: 'Rep payout', value: `${fmtMoney(legacy.agentCommission(debt, L))} · mo ${L.agentPayoutMonth}`, help: 'Flat band commission from the live schedule, split across the Payment 2 and Payment 4 milestones. Band L1 pays in full at Payment 2.' },
               ];
             })();
 

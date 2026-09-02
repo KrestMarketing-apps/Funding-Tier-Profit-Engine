@@ -4,6 +4,14 @@
 // Assumptions — nothing is hardcoded inside calculation logic.
 // ═══════════════════════════════════════════════════════════════════
 
+import {
+  ELP_MIN_DEBT, ELP_MIN_PAYMENT, ELP_DRAFT_FEE, ELP_TERM_MAX,
+  ELP_TIER_RATE_BASE, ELP_TIER_RATE_HIGH, ELP_TIER_RATE_FILE_THRESHOLD,
+  elpDraftMonthly, elpMaxTerm, elpSchedule, elpScheduledPayment,
+  elpFinalPayment, elpPaymentForMonth, elpTierRateForFiles,
+  type ElpTerms,
+} from "./legacyEngine";
+
 export type BackendKey = "LEVEL" | "CS" | "LEGACY";
 
 export interface Band {
@@ -76,9 +84,16 @@ export interface Assumptions {
   legacy: {
     minDebt: number;
     minMonthlyPayment: number;
+    /** Per draft. Doubles on a split schedule because the client is drafted twice. */
     draftFee: number;
-    adminMonthlyFee: number;
+    /** Flat monthly program maintenance. Charged once a month on split too. */
+    maintenanceFee: number;
+    /** Two drafts a month instead of one. Only the draft fee doubles. */
+    splitSchedule: boolean;
+    maxTerm: number;
     tier1Rate: number;
+    tier2Rate: number;
+    tier2FileThreshold: number;
     agentPayoutMonth: number;
     feeRate: number;
     bands: Band[];
@@ -171,11 +186,20 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
     ],
   },
   legacy: {
-    minDebt: 6000,
-    minMonthlyPayment: 250,
-    draftFee: 4,
-    adminMonthlyFee: 84,
-    tier1Rate: 0.60,
+    minDebt: ELP_MIN_DEBT,
+    minMonthlyPayment: ELP_MIN_PAYMENT,
+    // $80 program maintenance and a $4 payment-processing draft fee are two
+    // separate charges. They were previously collapsed into a single $84
+    // "admin fee", which made the split schedule impossible to express: split
+    // drafts the client twice, so the $4 is charged twice while the $80 is
+    // still charged once.
+    draftFee: ELP_DRAFT_FEE,
+    maintenanceFee: 80,
+    splitSchedule: false,
+    maxTerm: ELP_TERM_MAX,
+    tier1Rate: ELP_TIER_RATE_BASE,
+    tier2Rate: ELP_TIER_RATE_HIGH,
+    tier2FileThreshold: ELP_TIER_RATE_FILE_THRESHOLD,
     agentPayoutMonth: 2,
     feeRate: 0.49,
     bands: [
@@ -320,29 +344,68 @@ export const CONSUMER_SHIELD = {
   clawbackRule: "No clawback for ordinary cancellation. Chargeback only on a formal payment dispute.",
 };
 
+/**
+ * Adapt the Assumptions block to the shape legacyEngine works in.
+ * `feeRate` is a fraction here and a percentage there — the only difference.
+ */
+export function legacyTermsFor(a: Assumptions, feeRate?: number, monthlyFiles?: number): ElpTerms {
+  return {
+    feeRatePct: (feeRate ?? a.legacy.feeRate) * 100,
+    maintFee: a.legacy.maintenanceFee,
+    split: a.legacy.splitSchedule,
+    tierRate: monthlyFiles == null ? a.legacy.tier1Rate : elpTierRateForFiles(monthlyFiles),
+  };
+}
+
 export const LEGACY_CAPITAL = {
   key: "LEGACY" as const,
   name: "Legacy Capital (Elite Legal Practice)",
+  /**
+   * The $250 floor is on the CLIENT DRAFT, not on the service fee. Maintenance
+   * and draft fees are part of that draft, so only the remainder has to be
+   * covered by the service fee — which is what sets the term.
+   */
   getMaxTerm(debt: number, feeRate: number, a: Assumptions): number {
-    return Math.max(1, Math.floor((debt * feeRate) / a.legacy.minMonthlyPayment));
+    return elpMaxTerm(debt, feeRate * 100, a.legacy.maintenanceFee, a.legacy.splitSchedule);
   },
-  getMonthlyPayment(debt: number, feeRate: number, term: number): number {
-    return (debt * feeRate) / term;
+  /** Full client draft: service fee + maintenance + draft fee(s). */
+  getMonthlyPayment(debt: number, feeRate: number, term: number, a?: Assumptions): number {
+    if (!a) return (debt * feeRate) / term;
+    return elpScheduledPayment(debt, legacyTermsFor(a, feeRate));
+  },
+  getScheduledPayment(debt: number, feeRate: number, a: Assumptions): number {
+    return elpScheduledPayment(debt, legacyTermsFor(a, feeRate));
+  },
+  getFinalPayment(debt: number, feeRate: number, a: Assumptions): number {
+    return elpFinalPayment(debt, legacyTermsFor(a, feeRate));
+  },
+  getPaymentForMonth(debt: number, feeRate: number, month: number, a: Assumptions): number {
+    return elpPaymentForMonth(debt, legacyTermsFor(a, feeRate), month);
+  },
+  /** Draft fee charged per month — doubled on a split schedule. */
+  draftFeePerMonth(a: Assumptions): number {
+    return elpDraftMonthly(a.legacy.splitSchedule);
   },
   companyRevenueForMonth(debt: number, feeRate: number, term: number, month: number, a: Assumptions): number {
-    if (month > term) return 0;
-    const cfg = a.legacy;
-    const payment = this.getMonthlyPayment(debt, feeRate, term);
-    if (month <= 2) return payment - cfg.draftFee;
-    return (payment - cfg.adminMonthlyFee) * cfg.tier1Rate;
+    const sched = elpSchedule(debt, legacyTermsFor(a, feeRate));
+    if (!sched.eligible || month < 1 || month > sched.term) return 0;
+    // Months 1-2 pass through in full less the draft fee — the maintenance fee
+    // is NOT backed out yet. From month 3 both come off and the tier rate
+    // applies to what is left, which is the service fee portion.
+    return month <= 2 ? sched.earlyRevenue : sched.lateRevenue;
   },
-  agentCommission(debt: number, feeRate: number, a: Assumptions): number {
+  /**
+   * Flat band commission. The old model scaled this by feeRate / 0.40, which
+   * paid 22.5% over schedule at the 49% fee rate. The live Commission
+   * Simulator pays the band amount flat, split across the Payment 2 and
+   * Payment 4 milestones.
+   */
+  agentCommission(debt: number, _feeRate: number, a: Assumptions): number {
     const band = findBand(a.legacy.bands, debt);
-    if (!band) return 0;
-    return Math.round(band.total * (feeRate / 0.40));
+    return band ? band.total : 0;
   },
   agentPayoutMonth(a: Assumptions): number { return a.legacy.agentPayoutMonth; },
-  clawbackRule: "No clawback for ordinary cancellation. Chargeback only on a formal payment dispute.",
+  clawbackRule: "Band L1 pays in full at Payment 2 with no clawback. Bands L2-L7 split across Payment 2 and Payment 4; the Payment 2 portion is clawed back if the client cancels before Payment 4 clears.",
 };
 
 export const BACKENDS = { LEVEL: LEVEL_DEBT, CS: CONSUMER_SHIELD, LEGACY: LEGACY_CAPITAL };

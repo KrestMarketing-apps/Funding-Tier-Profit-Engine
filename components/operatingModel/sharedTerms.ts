@@ -4,9 +4,14 @@
 // The Operating Model does NOT keep its own copy of the Level Debt / Consumer
 // Shield / Legacy Capital contract terms. It reads them from the shared engine
 // that the Commission Simulator and Profitability Balancer already use, so the
-// three apps can never drift apart. Nothing in fundingTierEngine.ts is modified.
+// three apps can never drift apart.
 //
 // If a contract term changes, change it in fundingTierEngine.ts once.
+//
+// The Elite Legal Practice math itself lives one level further down, in
+// components/legacyEngine.ts — the single source of truth shared with the
+// Profit Engine, mirroring the production Billable Payout Simulator. Neither
+// this file nor operatingModel/backends.ts reimplements any of it.
 //
 import { DEFAULT_ASSUMPTIONS } from '../fundingTierEngine';
 import type {

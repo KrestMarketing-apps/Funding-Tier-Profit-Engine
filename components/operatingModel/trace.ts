@@ -194,23 +194,26 @@ export function buildTrace(inputs: ModelInputs, results: ModelResults, monthInde
         note: `Monthly perpetuity across the full ${p?.term ?? '?'}-month program.`,
       });
     } else {
-      const term = legacy.getMaxTerm(debt, inputs.legacy);
-      const fee = legacy.totalFee(debt, inputs.legacy);
-      const pay = legacy.getScheduledPayment(debt, inputs.legacy);
-      const last = legacy.getFinalPayment(debt, inputs.legacy);
+      const L = inputs.legacy;
+      const term = legacy.getMaxTerm(debt, L);
+      const fee = legacy.totalFee(debt, L);
+      const pay = legacy.getScheduledPayment(debt, L);
+      const last = legacy.getFinalPayment(debt, L);
+      const draftFee = legacy.draftFeePerMonth(L);
+      const headroom = L.minMonthlyPayment - L.maintenanceFee - draftFee;
       revRows.push({
         step: brand.name, what: 'Program term and scheduled draft',
-        formula: 'fee = debt × fee rate · term = ⌊fee ÷ min payment⌋ · draft = ⌊fee ÷ term⌋ to the cent',
-        substitution: `${money2(fee)} ÷ ${money(inputs.legacy.minMonthlyPayment)} = ${term} mo; ${money2(fee)} ÷ ${term} = ${money2(pay)}`,
+        formula: 'term = ⌊fee ÷ (min draft − maintenance − processing)⌋ · draft = service fee + maintenance + processing',
+        substitution: `${money2(fee)} ÷ (${money(L.minMonthlyPayment)} − ${money(L.maintenanceFee)} − ${money(draftFee)} = ${money(headroom)}) = ${term} mo; draft = ${money2(pay - L.maintenanceFee - draftFee)} + ${money(L.maintenanceFee)} + ${money(draftFee)} = ${money2(pay)}`,
         result: `${term} × ${money2(pay)}`,
-        note: `Elite Legal Practice drafts to the exact penny — nothing is rounded to the dollar.${Math.abs(last - pay) >= 0.005 ? ` The final draft is ${money2(last)} so the client is billed exactly ${money2(fee)}: ${term - 1} × ${money2(pay)} + ${money2(last)}.` : ''}`,
+        note: `The ${money(L.minMonthlyPayment)} floor is on the client draft, not the service fee — maintenance and processing already cover ${money(L.maintenanceFee + draftFee)} of it.${L.splitSchedule ? ' Split schedule: two drafts a month, so processing is charged twice and maintenance once.' : ''}${Math.abs(last - pay) >= 0.005 ? ` The final draft is ${money2(last)} so the client is billed exactly ${money2(fee)} in fees.` : ''}`,
       });
       revRows.push({
         step: brand.name, what: 'Revenue per payment',
-        formula: 'months 1–2: draft − draft fee · months 3+: (draft − admin fee) × tier 1 rate',
-        substitution: `${money2(pay)} − ${money2(inputs.legacy.draftFee)}  ·  (${money2(pay)} − ${money2(inputs.legacy.adminMonthlyFee)}) × ${pct(inputs.legacy.tier1Rate * 100)}`,
-        result: `${money2(pay - inputs.legacy.draftFee)} / ${money2((pay - inputs.legacy.adminMonthlyFee) * inputs.legacy.tier1Rate)}`,
-        note: `Monthly perpetuity across ${term} months.`,
+        formula: 'months 1–2: draft − processing · months 3+: (draft − maintenance − processing) × tier rate',
+        substitution: `${money2(pay)} − ${money2(draftFee)}  ·  (${money2(pay)} − ${money2(L.maintenanceFee)} − ${money2(draftFee)}) × ${pct(L.tier1Rate * 100)}`,
+        result: `${money2(legacy.revenueForDealMonth(debt, 1, L))} / ${money2(legacy.revenueForDealMonth(debt, 3, L))}`,
+        note: `Maintenance is not backed out until month 3, which is why the first two months are worth several times any later month. Monthly perpetuity across ${term} months.`,
       });
     }
     revRows.push({
