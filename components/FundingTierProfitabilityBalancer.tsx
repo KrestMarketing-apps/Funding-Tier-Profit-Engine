@@ -9,6 +9,10 @@ import {
   elpMaxTerm, elpDraftForTerm, elpTermForDraft, ELP_DEFAULT_TARGET_TERM, ELP_TERM_MIN,
   type ElpSchedule, type ElpTerms,
 } from "./legacyEngine";
+import {
+  ldProgram, LD_ESTIMATED_SETTLEMENT_RATE, LD_PROGRAM_FEE_ATTORNEY,
+  LD_MIN_DEPOSIT, type LdProgram,
+} from "./levelDebtEngine";
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -73,11 +77,14 @@ const FT_AMBER      = "#f59e0b";
 const FT_RED        = "#ef4444";
 const FT_BG         = "#f8fafc";
 
-const BACKEND_META: Record<BackendKey, { name: string; short: string; logo: string; color: string; colorDark: string; minDebt: number }> = {
-  LD:  { name: "Level Debt",           short: "LD",  logo: LEVEL_DEBT_LOGO, color: FT_GREEN, colorDark: FT_GREEN_DARK, minDebt: 7000 },
-  CS:  { name: "Consumer Shield",      short: "CS",  logo: CS_LOGO,         color: FT_BLUE,  colorDark: "#1552a8",     minDebt: 4000 },
-  ELP: { name: "Elite Legal Practice", short: "ELP", logo: ELP_LOGO,        color: FT_CYAN,  colorDark: FT_CYAN_DARK,  minDebt: ELP_MIN_DEBT },
+const BACKEND_META: Record<BackendKey, { name: string; short: string; service: string; logo: string; color: string; colorDark: string; minDebt: number }> = {
+  LD:  { name: "Level Debt",           short: "LD",  service: "Settlement", logo: LEVEL_DEBT_LOGO, color: FT_GREEN, colorDark: FT_GREEN_DARK, minDebt: 7000 },
+  ELP: { name: "Elite Legal Practice", short: "ELP", service: "Resolution", logo: ELP_LOGO,        color: FT_CYAN,  colorDark: FT_CYAN_DARK,  minDebt: ELP_MIN_DEBT },
+  CS:  { name: "Consumer Shield",      short: "CS",  service: "Validation", logo: CS_LOGO,         color: FT_BLUE,  colorDark: "#1552a8",     minDebt: 4000 },
 };
+
+/** Display order everywhere: settlement, resolution, validation. */
+const BACKEND_ORDER: BackendKey[] = ["LD", "ELP", "CS"];
 
 const money      = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const percentFmt = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 1 });
@@ -254,7 +261,7 @@ export type DealAnalysisArgs = {
 
 export type DealAnalysis = {
   debtAmount: number;
-  ld: BackendResult & { grossRevenue: number };
+  ld: BackendResult & { grossRevenue: number; program: LdProgram };
   cs: BackendResult & { program: ConsumerShieldProgram | null; payment: number; netPayment: number; frontRevenue: number; tailMonthly: number; revAfter2: number; revAfter4: number; revAtHalf: number; breakEvenRefMonth: number; breakEvenRefRevenue: number };
   elp: BackendResult & { schedule: ElpSchedule; revAfter2: number; revAfter4: number; revAtHalf: number; bandLabel: string; breakEvenRefMonth: number; breakEvenRefRevenue: number };
   ranked: BackendResult[];
@@ -272,17 +279,18 @@ function analyzeDeal(a: DealAnalysisArgs): DealAnalysis {
   const ldRev  = ldEligible ? round2(debt * 0.08) : 0;
   const ldRep  = ldEligible ? round2(debt * (a.levelRepPct / 100)) : 0;
   const ldScore = ldEligible ? ldRev * (1 + urgencyBias * 0.6) : -1;
+  const ldProg  = ldProgram(debt);
 
   const ld = {
     key: "LD" as const, name: BACKEND_META.LD.name,
     eligible: ldEligible,
     ineligibleReason: ldEligible ? "" : "Level Debt will not accept enrolled debt below $7,000.",
-    grossRevenue: ldRev,
+    grossRevenue: ldRev, program: ldProg,
     expectedRevenue: ldRev, fullRevenue: ldRev,
     adjustedScore: ldScore,
     breakEvenMonth: ldEligible ? 2 : null,
     liabilityClearMonth: ldEligible ? 2 : null,
-    term: ldEligible ? 2 : 0,
+    term: ldEligible ? ldProg.term : 0,
     timeline: [] as TimelineRow[],
     effective: { p2: 100, p4: 100, be: 100, comp: 100 },
     repCost: ldRep,
@@ -466,12 +474,15 @@ function Accordion({ title, defaultOpen=false, children, badge, accent=FT_GREEN 
 // METRIC CARD
 // ─────────────────────────────────────────────
 
-function MetricCard({ title, value, subtitle, tooltip, inlineTag, accent }: {
-  title:string; value:string; subtitle?:string; tooltip?:string; inlineTag?:string; accent?:string;
+function MetricCard({ title, value, subtitle, tooltip, inlineTag, accent, highlight }: {
+  title:string; value:string; subtitle?:string; tooltip?:string; inlineTag?:string;
+  accent?:string; highlight?:boolean;
 }) {
   const [showTip, setShowTip] = useState(false);
+  const valueColor = highlight ? FT_GREEN_DARK : (accent ?? "#0f172a");
   return (
-    <div style={{ ...card, position:"relative" }}>
+    <div style={{ ...card, position:"relative",
+      ...(highlight ? { background:FT_GREEN+"0d", border:`1px solid ${FT_GREEN}55` } : null) }}>
       <div style={{ fontSize:11, fontWeight:700, color:"#64748b", marginBottom:7,
         textTransform:"uppercase", letterSpacing:0.4,
         display:"flex", alignItems:"center", justifyContent:"space-between", gap:4 }}>
@@ -492,7 +503,7 @@ function MetricCard({ title, value, subtitle, tooltip, inlineTag, accent }: {
           padding:"10px 13px", fontSize:12, lineHeight:1.6,
           width:260, boxShadow:"0 8px 24px rgba(0,0,0,0.25)", marginTop:4, pointerEvents:"none", whiteSpace:"pre-line" }}>{tooltip}</div>
       )}
-      <div style={{ fontSize:24, fontWeight:800, color:accent ?? "#0f172a", lineHeight:1.1, wordBreak:"break-word" }}>{value}</div>
+      <div style={{ fontSize:24, fontWeight:800, color:valueColor, lineHeight:1.1, wordBreak:"break-word" }}>{value}</div>
       {subtitle && <div style={{ fontSize:12, color:"#64748b", marginTop:7, lineHeight:1.5 }}>{subtitle}</div>}
     </div>
   );
@@ -624,8 +635,8 @@ function CashUrgencyPanel({ urgency, onChange, adjustedUrgency, stabilityPenalty
 
   const cards = [
     { key:"LD"  as const, pct:routing.ldPct,  blurb:"Fast 8% recognition — cash in the door by Month 3", res:analysis.ld },
+    { key:"ELP" as const, pct:routing.elpPct, blurb:"Attorney model — term set by the client payment, highest full-term ceiling", res:analysis.elp },
     { key:"CS"  as const, pct:routing.csPct,  blurb:"Debt validation perpetuity — 36-month tail on most bands", res:analysis.cs },
-    { key:"ELP" as const, pct:routing.elpPct, blurb:"Attorney model — term set by the client draft, highest full-term ceiling", res:analysis.elp },
   ];
 
   return (
@@ -716,7 +727,7 @@ function CashUrgencyPanel({ urgency, onChange, adjustedUrgency, stabilityPenalty
 
 function BackendComparison({ analysis }: { analysis: DealAnalysis }) {
   const { ld, cs, elp } = analysis;
-  const cells = [ld, cs, elp] as BackendResult[];
+  const cells = BACKEND_ORDER.map(k => (k === "LD" ? ld : k === "ELP" ? elp : cs)) as BackendResult[];
   const best = (vals: number[]) => Math.max(...vals);
 
   const bestExpected = best(cells.map(c => c.eligible ? c.expectedRevenue : -1));
@@ -769,8 +780,12 @@ function BackendComparison({ analysis }: { analysis: DealAnalysis }) {
           <thead><tr style={{ background:"#f1f5f9" }}>
             <th style={TH}>Metric</th>
             {cells.map(b => (
-              <th key={b.key} style={{ ...TH, color:BACKEND_META[b.key].colorDark, borderRight:b.key==="ELP"?"none":TH.borderRight }}>
+              <th key={b.key} style={{ ...TH, color:BACKEND_META[b.key].colorDark, borderRight:b.key==="CS"?"none":TH.borderRight }}>
                 {BACKEND_META[b.key].name}
+                <span style={{ marginLeft:6, fontSize:10, fontWeight:700, color:"#64748b",
+                  background:"#e2e8f0", padding:"1px 6px", borderRadius:99, textTransform:"none" }}>
+                  {BACKEND_META[b.key].service}
+                </span>
                 {analysis.recommended === b.key && (
                   <span style={{ marginLeft:6, fontSize:10, background:BACKEND_META[b.key].color+"22",
                     padding:"1px 6px", borderRadius:99 }}>RECOMMENDED</span>
@@ -788,7 +803,7 @@ function BackendComparison({ analysis }: { analysis: DealAnalysis }) {
                   const win = row.highlight?.(b) ?? false;
                   return (
                     <td key={b.key} style={{ ...TD,
-                      borderRight: b.key==="ELP" ? "none" : TD.borderRight,
+                      borderRight: b.key==="CS" ? "none" : TD.borderRight,
                       background: win ? BACKEND_META[b.key].color+"1a" : undefined,
                       fontWeight: win ? 800 : 400,
                       color: win ? BACKEND_META[b.key].colorDark : (b.eligible ? "#0f172a" : "#94a3b8") }}>
@@ -1170,7 +1185,7 @@ function PaymentTermTradeoff({ debtAmount, terms, sched, csPayment, csTerm, ldRe
   return (
     <div style={{ marginTop:14, border:"1px solid #e2e8f0", borderRadius:12, overflow:"hidden" }}>
       <div style={{ padding:"10px 13px", background:"#f8fafc", borderBottom:"1px solid #e2e8f0" }}>
-        <div style={{ fontSize:13, fontWeight:800, color:"#0f172a" }}>Payment vs term — what a lower draft costs</div>
+        <div style={{ fontSize:13, fontWeight:800, color:"#0f172a" }}>Payment vs term — what a lower payment costs</div>
         <div style={{ fontSize:12, color:"#64748b", marginTop:2, lineHeight:1.6 }}>
           The service fee is fixed at {money.format(sched.serviceFeeTotal)} ({terms.feeRatePct}% of {money.format(debtAmount)}),
           so a lower payment does not reduce what the client owes — it spreads it over more months.
@@ -1180,7 +1195,7 @@ function PaymentTermTradeoff({ debtAmount, terms, sched, csPayment, csTerm, ldRe
       <div style={{ overflowX:"auto" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
           <thead><tr style={{ background:"#fff" }}>
-            {["Client draft","Term","vs current","Full-term revenue","Break-even vs LD"].map(h =>
+            {["Client payment","Term","vs current","Full-term revenue","Break-even vs LD"].map(h =>
               <th key={h} style={{ ...TH, color:FT_CYAN_DARK }}>{h}</th>)}
           </tr></thead>
           <tbody>
@@ -1273,7 +1288,7 @@ function ElpTermsPanel({ terms, onChange, sched, debtAmount, files, targetDraft,
         <div>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:5, gap:6 }}>
             <span style={{ fontSize:12, fontWeight:800, color:FT_CYAN_DARK, textTransform:"uppercase", letterSpacing:0.3 }}>
-              Client Monthly Draft
+              Client Monthly Payment
             </span>
             <button onClick={() => onDraftChange(null)}
               title={csPayment > 0 ? `Reset to the Consumer Shield payment (${money.format(csPayment)}/mo)` : `Reset to a ${ELP_DEFAULT_TARGET_TERM}-month program`}
@@ -1360,7 +1375,7 @@ function ElpTermsPanel({ terms, onChange, sched, debtAmount, files, targetDraft,
       ) : (
         <>
           <div className="ft-grid-4">
-            <MetricCard title="Client Draft / Monthly" accent={FT_CYAN_DARK}
+            <MetricCard title="Payment / Monthly" accent={FT_CYAN_DARK}
               value={money.format(sched.grossPayment)}
               inlineTag={`${sched.term} months`}
               tooltip={`Service fee ${money.format(sched.serviceFeeMonthly)} + maintenance ${money.format(sched.maintFee)} + draft fee $${sched.draftMonthly} = ${money.format(sched.grossPayment)}.\n\nMust stay at or above the $250 floor — that floor is what caps the term.`} />
@@ -1471,6 +1486,27 @@ function KnowledgeBase({ open, onClose }: { open:boolean; onClose:()=>void }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// SNAPSHOT CARD HEADER
+// ─────────────────────────────────────────────
+
+function SnapshotHead({ k, logo, name, warn }: {
+  k: BackendKey; logo: string; name: string; warn: string | null;
+}) {
+  const meta = BACKEND_META[k];
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:14, minHeight:34, flexWrap:"wrap" }}>
+      <img src={logo} alt={name} style={{ height:26, width:"auto", objectFit:"contain" }} />
+      <h2 style={{ margin:0, fontSize:16, fontWeight:800, color:"#0f172a" }}>{name}</h2>
+      <span style={{ fontSize:10, fontWeight:800, letterSpacing:0.4, textTransform:"uppercase",
+        color:meta.colorDark, background:meta.color+"1f", padding:"2px 8px", borderRadius:99 }}>
+        {meta.service}
+      </span>
+      {warn && <span style={{ fontSize:10, fontWeight:800, color:FT_RED, background:FT_RED+"11", padding:"2px 8px", borderRadius:99 }}>{warn}</span>}
     </div>
   );
 }
@@ -1755,19 +1791,19 @@ export default function FundingTierProfitabilityBalancer() {
           <MetricCard title="Level Debt Revenue" accent={FT_GREEN_DARK}
             value={deal.ld.eligible ? money.format(deal.ld.expectedRevenue) : "Not Eligible"}
             subtitle={deal.ld.eligible ? "Base 8% — guaranteed after 2 payments" : "Under $7k — Level Debt cannot accept this deal"} />
-          <MetricCard title="CS Expected Revenue" accent={FT_BLUE}
-            value={deal.cs.eligible ? money.format(deal.cs.expectedRevenue) : "Not Eligible"}
-            subtitle={deal.cs.eligible
-              ? `Effective (${csLeadQuality}% LQ): P2=${csEff.p2}% P4=${csEff.p4}% BE=${csEff.be}% Comp=${csEff.comp}%`
-              : deal.cs.ineligibleReason} />
           <MetricCard title="ELP Expected Revenue" accent={FT_CYAN_DARK}
             value={deal.elp.eligible ? money.format(deal.elp.expectedRevenue) : "Not Eligible"}
             subtitle={deal.elp.eligible
               ? `Effective (${elpLeadQuality}% LQ): P2=${elpEff.p2}% P4=${elpEff.p4}% BE=${elpEff.be}% Comp=${elpEff.comp}%`
               : deal.elp.ineligibleReason} />
+          <MetricCard title="CS Expected Revenue" accent={FT_BLUE}
+            value={deal.cs.eligible ? money.format(deal.cs.expectedRevenue) : "Not Eligible"}
+            subtitle={deal.cs.eligible
+              ? `Effective (${csLeadQuality}% LQ): P2=${csEff.p2}% P4=${csEff.p4}% BE=${csEff.be}% Comp=${csEff.comp}%`
+              : deal.cs.ineligibleReason} />
           <MetricCard title="Break-Even vs Level Debt"
             value={deal.ld.eligible
-              ? `CS ${deal.cs.breakEvenMonth ? "Mo "+deal.cs.breakEvenMonth : "—"} · ELP ${deal.elp.breakEvenMonth ? "Mo "+deal.elp.breakEvenMonth : "—"}`
+              ? `ELP ${deal.elp.breakEvenMonth ? "Mo "+deal.elp.breakEvenMonth : "—"} · CS ${deal.cs.breakEvenMonth ? "Mo "+deal.cs.breakEvenMonth : "—"}`
               : "No LD benchmark"}
             subtitle={deal.ld.eligible
               ? "Month each perpetuity backend's cumulative revenue catches the 8%"
@@ -1792,48 +1828,77 @@ export default function FundingTierProfitabilityBalancer() {
           csPayment={deal.cs.payment} csTerm={deal.cs.term} ldRevenue={deal.ld.expectedRevenue}
           onChange={t => { setElpFeeRate(t.feeRatePct); setElpMaintFee(t.maintFee); setElpSplit(t.split); }} />
 
-        {/* Snapshots */}
+        {/* Snapshots — settlement, resolution, validation */}
         <div className="ft-grid-3">
+          {/* LEVEL DEBT — settlement */}
           <div style={card}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, minHeight:34 }}>
-              <img src={LEVEL_DEBT_LOGO} alt="Level Debt" style={{ height:28, width:"auto", objectFit:"contain" }} />
-              <h2 style={{ margin:0, fontSize:16, fontWeight:800, color:"#0f172a" }}>Level Debt</h2>
-              {!deal.ld.eligible && <span style={{ fontSize:10, fontWeight:800, color:FT_RED, background:FT_RED+"11", padding:"2px 8px", borderRadius:99 }}>Under $7k</span>}
-            </div>
+            <SnapshotHead k="LD" logo={LEVEL_DEBT_LOGO} name="Level Debt"
+              warn={!deal.ld.eligible ? "Under $7k" : null} />
             <div className="ft-grid-2-inner">
               <MetricCard title="Debt Amount" value={money.format(deal.debtAmount)} />
-              <MetricCard title="Gross Revenue" value={deal.ld.eligible ? money.format(deal.ld.grossRevenue) : "N/A"} />
-              <MetricCard title="Commission" value={deal.ld.eligible ? money.format(deal.ld.repCost) : "N/A"} />
-              <MetricCard title="Net Revenue" value={deal.ld.eligible ? money.format(deal.ld.netRevenue) : "N/A"} />
+              <MetricCard title="Payment / Monthly"
+                value={deal.ld.program.eligible ? money.format(deal.ld.program.monthlyPayment) : "N/A"}
+                inlineTag={deal.ld.program.eligible ? `${deal.ld.program.term} months` : undefined}
+                tooltip={deal.ld.program.eligible
+                  ? `What the client deposits each month.\n\nEstimated settlement (${Math.round(LD_ESTIMATED_SETTLEMENT_RATE*100)}% of enrolled debt) ${money.format(deal.ld.program.estimatedSettlement)} + program fees (${Math.round(deal.ld.program.feeRate*100)}%) ${money.format(deal.ld.program.programFees)} = ${money.format(deal.ld.program.totalProgramCost)}, over ${deal.ld.program.term} months.\n\nTerm is banded by enrolled debt. Attorney-model states carry a ${Math.round(LD_PROGRAM_FEE_ATTORNEY*100)}% fee instead.`
+                  : undefined} />
+              <MetricCard title="Gross Revenue" value={deal.ld.eligible ? money.format(deal.ld.grossRevenue) : "N/A"}
+                subtitle="8% of enrolled debt" />
+              <MetricCard title="Commission Paid To Agent" value={deal.ld.eligible ? money.format(deal.ld.repCost) : "N/A"} />
+              <MetricCard title="Net Revenue" highlight={deal.ld.eligible}
+                value={deal.ld.eligible ? money.format(deal.ld.netRevenue) : "N/A"} />
+              {deal.ld.program.belowMinimum && (
+                <div style={{ ...card, background:FT_AMBER+"11", border:`1px solid ${FT_AMBER}44` }}>
+                  <div style={{ fontSize:12, fontWeight:800, color:"#92400e", lineHeight:1.5 }}>
+                    ⚠ Derived deposit is under the {money.format(LD_MIN_DEPOSIT)} minimum
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
+          {/* ELITE LEGAL PRACTICE — resolution */}
           <div style={card}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, minHeight:34 }}>
-              <img src={CS_LOGO} alt="Consumer Shield" style={{ height:28, width:"auto", objectFit:"contain" }} />
-              <h2 style={{ margin:0, fontSize:16, fontWeight:800, color:"#0f172a" }}>Consumer Shield</h2>
-            </div>
+            <SnapshotHead k="ELP" logo={ELP_LOGO} name="Elite Legal Practice"
+              warn={!deal.elp.eligible ? "Under $6k" : null} />
             <div className="ft-grid-2-inner">
-              <MetricCard title="Payment / Monthly" value={money.format(deal.cs.payment)} inlineTag={deal.cs.term?`${deal.cs.term} months`:undefined} />
-              <MetricCard title="Net Payment" value={money.format(deal.cs.netPayment)}
+              <MetricCard title="Debt Amount" value={money.format(deal.debtAmount)} />
+              <MetricCard title="Payment / Monthly"
+                value={deal.elp.eligible ? money.format(deal.elp.schedule.grossPayment) : "N/A"}
+                inlineTag={deal.elp.term ? `${deal.elp.term} months` : undefined}
+                tooltip={deal.elp.eligible
+                  ? `Service fee ${money.format(deal.elp.schedule.serviceFeeMonthly)} + ${money.format(deal.elp.schedule.maintFee)} maintenance + $${deal.elp.schedule.draftMonthly} processing.\n\nSet this in the Program Terms panel above — the payment is what sets the term.`
+                  : undefined} />
+              <MetricCard title="Service Fee / Monthly"
+                value={deal.elp.eligible ? money.format(deal.elp.schedule.serviceFeeMonthly) : "N/A"}
+                tooltip={`${deal.elp.schedule.feeRatePct}% of enrolled debt spread across the term. The only component Funding Tier shares in from Payment 3 on.`} />
+              <MetricCard title="Front Revenue" highlight={deal.elp.eligible}
+                value={deal.elp.eligible ? money.format(deal.elp.revAfter2) : "N/A"}
+                inlineTag="Months 1–2 total"
+                tooltip={`${money.format(deal.elp.schedule.earlyRevenue)} per month for the first two payments — 100% pass-through, maintenance not yet backed out.`} />
+              <MetricCard title="Tail End – Revenue" highlight={deal.elp.eligible}
+                value={deal.elp.eligible ? money.format(deal.elp.schedule.lateRevenue) : "N/A"}
+                inlineTag={deal.elp.term ? `Months 3–${deal.elp.term}, per month` : undefined} />
+            </div>
+          </div>
+
+          {/* CONSUMER SHIELD — validation */}
+          <div style={card}>
+            <SnapshotHead k="CS" logo={CS_LOGO} name="Consumer Shield"
+              warn={!deal.cs.eligible ? "Under $4k" : null} />
+            <div className="ft-grid-2-inner">
+              <MetricCard title="Debt Amount" value={money.format(deal.debtAmount)} />
+              <MetricCard title="Payment / Monthly" value={deal.cs.eligible ? money.format(deal.cs.payment) : "N/A"}
+                inlineTag={deal.cs.term ? `${deal.cs.term} months` : undefined} />
+              <MetricCard title="Net Payment" value={deal.cs.eligible ? money.format(deal.cs.netPayment) : "N/A"}
                 tooltip={`${money.format(deal.cs.payment)} program payment minus $40 servicing = ${money.format(deal.cs.netPayment)} net. Base before the 100% (months 1–4) or 35% (month 5+) split.`} />
-              <MetricCard title="Front Revenue" value={money.format(deal.cs.frontRevenue)} inlineTag="Months 1–4" />
-              <MetricCard title="Tail End – Revenue" value={money.format(deal.cs.tailMonthly)} inlineTag="Per month 5+" />
-            </div>
-          </div>
-
-          <div style={card}>
-            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14, minHeight:34 }}>
-              <img src={ELP_LOGO} alt="Elite Legal Practice" style={{ height:26, width:"auto", objectFit:"contain" }} />
-              <h2 style={{ margin:0, fontSize:16, fontWeight:800, color:"#0f172a" }}>Elite Legal Practice</h2>
-              {!deal.elp.eligible && <span style={{ fontSize:10, fontWeight:800, color:FT_RED, background:FT_RED+"11", padding:"2px 8px", borderRadius:99 }}>Under $6k</span>}
-            </div>
-            <div className="ft-grid-2-inner">
-              <MetricCard title="Client Draft / Monthly" value={deal.elp.eligible ? money.format(deal.elp.schedule.grossPayment) : "N/A"} inlineTag={deal.elp.term?`${deal.elp.term} months`:undefined} />
-              <MetricCard title="Service Fee / Monthly" value={deal.elp.eligible ? money.format(deal.elp.schedule.serviceFeeMonthly) : "N/A"}
-                tooltip={`${deal.elp.schedule.feeRatePct}% of enrolled debt spread across the derived term. This is the only component Funding Tier shares in from Payment 3 on.`} />
-              <MetricCard title="Payments 1–2" value={deal.elp.eligible ? money.format(deal.elp.schedule.earlyRevenue) : "N/A"} inlineTag="100% pass-through" />
-              <MetricCard title="Payments 3+" value={deal.elp.eligible ? money.format(deal.elp.schedule.lateRevenue) : "N/A"} inlineTag={`${Math.round(deal.elp.schedule.tierRate*100)}% tier share`} />
+              <MetricCard title="Front Revenue" highlight={deal.cs.eligible}
+                value={deal.cs.eligible ? money.format(deal.cs.frontRevenue) : "N/A"}
+                inlineTag="Months 1–4 total"
+                tooltip={`${money.format(deal.cs.netPayment)} per month for the first four payments — 100% of the net payment.`} />
+              <MetricCard title="Tail End – Revenue" highlight={deal.cs.eligible}
+                value={deal.cs.eligible ? money.format(deal.cs.tailMonthly) : "N/A"}
+                inlineTag={deal.cs.term ? `Months 5–${deal.cs.term}, per month` : undefined} />
             </div>
           </div>
         </div>
@@ -2085,18 +2150,18 @@ export default function FundingTierProfitabilityBalancer() {
           </div>
 
           <div className="ft-grid-4" style={{ marginTop:16 }}>
-            <MetricCard title="Deal Split" value={`${portfolio.ldCount} / ${portfolio.csCount} / ${portfolio.elpCount}`}
-              subtitle="Level Debt / Consumer Shield / Elite Legal Practice" />
+            <MetricCard title="Deal Split" value={`${portfolio.ldCount} / ${portfolio.elpCount} / ${portfolio.csCount}`}
+              subtitle="Level Debt / Elite Legal Practice / Consumer Shield" />
             <MetricCard title="Expected Gross Revenue" value={money.format(portfolio.totalGross)}
               subtitle={`Across ${portfolioDeals} deals at ${money.format(portfolioAvgDebt)} average`} />
             <MetricCard title="Total Rep Cost" value={money.format(portfolio.totalRep)} />
-            <MetricCard title="Expected Net Revenue" value={money.format(portfolio.totalNet)} accent={FT_GREEN_DARK} />
+            <MetricCard title="Expected Net Revenue" value={money.format(portfolio.totalNet)} highlight />
           </div>
 
           <div style={{ marginTop:16, overflowX:"auto", border:"1px solid #e2e8f0", borderRadius:13 }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
               <thead><tr style={{ background:"#f1f5f9" }}>
-                {["Metric","Level Debt","Consumer Shield","Elite Legal Practice","Combined"].map(h=><th key={h} style={TH}>{h}</th>)}
+                {["Metric","Level Debt","Elite Legal Practice","Consumer Shield","Combined"].map(h=><th key={h} style={TH}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {[
@@ -2120,8 +2185,8 @@ export default function FundingTierProfitabilityBalancer() {
                       {row.label} <span style={{ fontSize:10, background:"#e2e8f0", borderRadius:99, padding:"1px 5px", color:"#334155", cursor:"help" }}>?</span>
                     </td>
                     <td style={TD}>{row.ld}</td>
-                    <td style={TD}>{row.cs}</td>
                     <td style={TD}>{row.elp}</td>
+                    <td style={TD}>{row.cs}</td>
                     <td style={{ ...TD, borderRight:"none", fontWeight:700 }}>{row.tot}</td>
                   </tr>
                 ))}
