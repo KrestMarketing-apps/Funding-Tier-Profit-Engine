@@ -244,10 +244,17 @@ export interface LegacyBand { code: string; min: number; max: number; total: num
 
 export interface LegacyTerms {
   minDebt: number;
+  /** Floor on the CLIENT DRAFT, not on the service fee. This is what caps the term. */
   minMonthlyPayment: number;
+  /** Payment-processing fee per draft. A split schedule drafts twice, so it is charged twice. */
   draftFee: number;
-  adminMonthlyFee: number;
+  /** Flat monthly program maintenance. Charged once a month even on a split schedule. */
+  maintenanceFee: number;
+  splitSchedule: boolean;
+  maxTerm: number;
   tier1Rate: number;
+  tier2Rate: number;
+  tier2FileThreshold: number;
   agentPayoutMonth: number;
   feeRate: number;
   bands: LegacyBand[];

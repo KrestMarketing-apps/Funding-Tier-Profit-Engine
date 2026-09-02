@@ -94,6 +94,8 @@ export function getLcBand(debt: number): LcBand | null {
 
 function round2(v: number) { return Math.round(v * 100) / 100; }
 function clamp(v: number, lo: number, hi: number) { return Math.min(Math.max(v, lo), hi); }
+/** Truncate to the cent — a scheduled draft never over-collects. */
+function floorCents(n: number) { return Math.floor(n * 100) / 100; }
 
 /** Draft fee charged per month — split schedules draft twice. */
 export function elpDraftMonthly(split: boolean): number {
@@ -123,7 +125,11 @@ export function elpSchedule(debt: number, terms: ElpTerms): ElpSchedule {
   const draftMonthly = elpDraftMonthly(terms.split);
   const term = eligible ? elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split) : 0;
   const serviceFeeTotal   = eligible ? round2(debt * (terms.feeRatePct / 100)) : 0;
-  const serviceFeeMonthly = term > 0 ? round2(serviceFeeTotal / term) : 0;
+  // Truncated to the cent, matching the scheduled draft the client actually
+  // pays. The final month carries the leftover cents (see elpFinalPayment);
+  // ignoring them here keeps every displayed figure internally consistent and
+  // errs a few cents low across the whole term.
+  const serviceFeeMonthly = term > 0 ? floorCents(serviceFeeTotal / term) : 0;
   const grossPayment      = round2(serviceFeeMonthly + terms.maintFee + draftMonthly);
 
   const earlyDeduction = draftMonthly;
@@ -188,4 +194,48 @@ export function elpExpectedRepCost(debt: number, effP2Pct: number, effP4Pct: num
   const band = getLcBand(debt);
   if (!band) return 0;
   return round2(band.p2 * (effP2Pct / 100) + band.p4 * (effP4Pct / 100));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PENNY-EXACT DRAFT SCHEDULE
+//
+// Elite Legal Practice drafts to the exact cent — nothing is rounded to the
+// dollar. Only the SERVICE FEE has to total exactly; the maintenance and draft
+// fees are flat adders charged every month. So the service fee portion is
+// truncated to the cent for every month but the last, and the final month
+// carries the remainder.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Service fee portion of every draft except the last. */
+export function elpScheduledServiceFee(debt: number, terms: ElpTerms): number {
+  const term = elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split);
+  if (term <= 0) return 0;
+  return floorCents(round2(debt * (terms.feeRatePct / 100)) / term);
+}
+
+/** Service fee portion of the final draft — carries the rounding remainder. */
+export function elpFinalServiceFee(debt: number, terms: ElpTerms): number {
+  const term = elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split);
+  if (term <= 0) return 0;
+  const total = round2(debt * (terms.feeRatePct / 100));
+  return round2(total - elpScheduledServiceFee(debt, terms) * (term - 1));
+}
+
+/** Full client draft for a scheduled month: service fee + maintenance + draft fee. */
+export function elpScheduledPayment(debt: number, terms: ElpTerms): number {
+  if (debt < ELP_MIN_DEBT) return 0;
+  return round2(elpScheduledServiceFee(debt, terms) + terms.maintFee + elpDraftMonthly(terms.split));
+}
+
+/** Full client draft for the final month. */
+export function elpFinalPayment(debt: number, terms: ElpTerms): number {
+  if (debt < ELP_MIN_DEBT) return 0;
+  return round2(elpFinalServiceFee(debt, terms) + terms.maintFee + elpDraftMonthly(terms.split));
+}
+
+/** Client draft in a given deal month, exact to the cent. */
+export function elpPaymentForMonth(debt: number, terms: ElpTerms, dealMonth?: number): number {
+  const term = elpMaxTerm(debt, terms.feeRatePct, terms.maintFee, terms.split);
+  if (dealMonth != null && dealMonth >= term) return elpFinalPayment(debt, terms);
+  return elpScheduledPayment(debt, terms);
 }

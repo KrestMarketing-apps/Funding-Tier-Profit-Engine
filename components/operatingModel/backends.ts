@@ -69,59 +69,91 @@ export const shield = {
 
 // ── Elite Legal Practice (Legacy Capital) ────────────────────────────────────
 // Perpetuity product. Sliding fee (35%-49% of enrolled debt) spread over a term
-// set by the $250/mo payment floor. Months 1-2 pass through less the draft fee;
-// from month 3 Funding Tier keeps tier-1 % of the payment after the admin fee.
+// set by the $250/mo CLIENT DRAFT floor.
+//
+//   clientDraft = serviceFee/term + $80 maintenance + $4 per draft
+//   Payments 1-2 : clientDraft - draftFee        (maintenance NOT backed out)
+//   Payments 3+  : (clientDraft - maintenance - draftFee) x tier rate
+//
+// A split schedule drafts the client twice a month: the $4 is charged twice,
+// the $80 maintenance still once.
+//
+// The math itself lives in components/legacyEngine.ts, which is the single
+// source of truth shared with the Profit Engine and mirrors the production
+// Billable Payout Simulator. Nothing is reimplemented here.
+import {
+  elpDraftMonthly, elpFinalPayment, elpMaxTerm, elpPaymentForMonth,
+  elpSchedule, elpScheduledPayment, elpTierRateForFiles,
+  type ElpTerms as EngineElpTerms,
+} from '../legacyEngine';
+
 function findBand(bands: LegacyBand[], avgDebt: number): LegacyBand | undefined {
   return bands.find((b) => avgDebt >= b.min && avgDebt <= b.max);
 }
 
 /** Round to the cent, the way a payment processor does. */
 const toCents = (n: number) => Math.round(n * 100) / 100;
-/** Truncate to the cent — a scheduled draft never over-collects. */
-const floorCents = (n: number) => Math.floor(n * 100) / 100;
+
+/** LegacyTerms carries feeRate as a fraction; the engine wants a percentage. */
+function engineTerms(terms: LegacyTerms, monthlyFiles?: number): EngineElpTerms {
+  return {
+    feeRatePct: terms.feeRate * 100,
+    maintFee: terms.maintenanceFee,
+    split: terms.splitSchedule,
+    tierRate: monthlyFiles == null ? terms.tier1Rate : elpTierRateForFiles(monthlyFiles),
+  };
+}
 
 export const legacy = {
   /** Total program fee, exact to the penny. */
   totalFee(avgDebt: number, terms: LegacyTerms): number {
     return toCents(avgDebt * terms.feeRate);
   },
-  /** Program length: the $250 floor caps how long the fee can be spread. */
+  /**
+   * Program length. The $250 floor applies to the client's DRAFT, so the
+   * service fee only has to cover what is left after maintenance and draft
+   * fees — which is why the term runs far longer than fee / $250 suggests.
+   */
   getMaxTerm(avgDebt: number, terms: LegacyTerms): number {
-    const fee = legacy.totalFee(avgDebt, terms);
-    return Math.max(1, Math.floor(fee / terms.minMonthlyPayment));
+    return elpMaxTerm(avgDebt, terms.feeRate * 100, terms.maintenanceFee, terms.splitSchedule);
+  },
+  /** Draft fee charged per month — doubled on a split schedule. */
+  draftFeePerMonth(terms: LegacyTerms): number {
+    return elpDraftMonthly(terms.splitSchedule);
   },
   /**
    * Elite Legal Practice drafts to the exact penny — nothing is rounded to the
-   * dollar. Every scheduled payment except the last is the fee divided by the
-   * term truncated to the cent; the final draft carries the remainder so the
-   * client is billed the fee exactly, never a fraction more or less.
+   * dollar. Only the service fee portion has to total exactly, so it is
+   * truncated to the cent for every month but the last; the final draft
+   * carries the remainder. Maintenance and draft fees are flat adders.
    */
   getScheduledPayment(avgDebt: number, terms: LegacyTerms): number {
-    const term = legacy.getMaxTerm(avgDebt, terms);
-    return floorCents(legacy.totalFee(avgDebt, terms) / term);
+    return elpScheduledPayment(avgDebt, engineTerms(terms));
   },
   getFinalPayment(avgDebt: number, terms: LegacyTerms): number {
-    const term = legacy.getMaxTerm(avgDebt, terms);
-    const base = legacy.getScheduledPayment(avgDebt, terms);
-    return toCents(legacy.totalFee(avgDebt, terms) - base * (term - 1));
+    return elpFinalPayment(avgDebt, engineTerms(terms));
   },
   /** Payment drafted in a given deal-month, exact to the penny. */
   getMonthlyPayment(avgDebt: number, terms: LegacyTerms, dealMonth?: number): number {
-    const term = legacy.getMaxTerm(avgDebt, terms);
-    if (dealMonth != null && dealMonth >= term) return legacy.getFinalPayment(avgDebt, terms);
-    return legacy.getScheduledPayment(avgDebt, terms);
+    return elpPaymentForMonth(avgDebt, engineTerms(terms), dealMonth);
+  },
+  /** Service fee portion of the draft — the only part shared from month 3 on. */
+  serviceFeeMonthly(avgDebt: number, terms: LegacyTerms): number {
+    return elpSchedule(avgDebt, engineTerms(terms)).serviceFeeMonthly;
   },
   revenueForDealMonth(avgDebt: number, dealMonth: number, terms: LegacyTerms): number {
-    const term = legacy.getMaxTerm(avgDebt, terms);
-    if (dealMonth > term || dealMonth < 1) return 0;
-    const payment = legacy.getMonthlyPayment(avgDebt, terms, dealMonth);
-    return dealMonth <= 2
-      ? toCents(payment - terms.draftFee)
-      : toCents((payment - terms.adminMonthlyFee) * terms.tier1Rate);
+    const sched = elpSchedule(avgDebt, engineTerms(terms));
+    if (!sched.eligible || dealMonth < 1 || dealMonth > sched.term) return 0;
+    return dealMonth <= 2 ? sched.earlyRevenue : sched.lateRevenue;
   },
+  /**
+   * Flat band commission. This was previously scaled by feeRate / 0.4, which
+   * paid 22.5% over schedule at the 49% fee rate. The live Commission
+   * Simulator pays the band amount flat, split across Payment 2 and Payment 4.
+   */
   agentCommission(avgDebt: number, terms: LegacyTerms): number {
     const band = findBand(terms.bands, avgDebt);
-    return band ? Math.round(band.total * (terms.feeRate / 0.4)) : 0;
+    return band ? band.total : 0;
   },
 };
 
@@ -169,7 +201,9 @@ export function revenueModelLabel(key: BackendKey, avgDebt: number, inputs: Mode
   const t = inputs.legacy;
   const term = legacy.getMaxTerm(avgDebt, t);
   const pay = legacy.getMonthlyPayment(avgDebt, t);
-  return `Monthly perpetuity across a ${term}-month term. Months 1-2 pass through at $${pay.toFixed(0)} less the $${t.draftFee} draft fee; from month 3 Funding Tier keeps ${(t.tier1Rate * 100).toFixed(0)}% of the payment after the $${t.adminMonthlyFee} admin fee.`;
+  const draftFee = legacy.draftFeePerMonth(t);
+  const schedule = t.splitSchedule ? '2 drafts/mo' : '1 draft/mo';
+  return `Monthly perpetuity across a ${term}-month term. Client draft $${pay.toFixed(0)} = service fee + $${t.maintenanceFee} maintenance + $${draftFee} processing (${schedule}). Months 1-2 pass through less the $${draftFee} draft fee; from month 3 the maintenance fee also comes off and Funding Tier keeps ${(t.tier1Rate * 100).toFixed(0)}% of what is left.`;
 }
 
 export function isPerpetuity(key: BackendKey): boolean {
