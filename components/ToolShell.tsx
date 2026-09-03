@@ -112,11 +112,32 @@ export function ControlRow({ children, result }: { children: ReactNode; result?:
   );
 }
 
-export function Control({ label, value, onChange }: { label: string; value: string; onChange?: (v: string) => void }) {
+export function Control({
+  label, value, onChange, type = "text", min, max, step, hint,
+}: {
+  label: string;
+  value: string;
+  onChange?: (v: string) => void;
+  /** Pages with numeric inputs should keep them numeric — steppers and all. */
+  type?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Small note under the field, e.g. an eligibility warning. */
+  hint?: ReactNode;
+}) {
   return (
     <div className={styles.control}>
       <label>{label}</label>
-      <input value={value} onChange={(e) => onChange?.(e.target.value)} />
+      <input
+        type={type}
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(e) => onChange?.(e.target.value)}
+      />
+      {hint}
     </div>
   );
 }

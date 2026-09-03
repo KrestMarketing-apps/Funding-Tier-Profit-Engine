@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useCallback } from "react";
+import ToolShell, { ControlRow, Control, MetricsGrid, Metric } from "./ToolShell";
 import {
   ELP_MIN_DEBT, ELP_FEE_MIN, ELP_FEE_MAX, ELP_MAINT_OPTIONS, ELP_TERM_MAX,
   ELP_BLOCKED_STATES, ELP_TIER_RATE_FILE_THRESHOLD,
@@ -1517,7 +1518,7 @@ function SnapshotHead({ k, logo, name, warn }: {
 // MAIN
 // ─────────────────────────────────────────────
 
-export default function FundingTierProfitabilityBalancer() {
+export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { mode?: "admin" | "agent" }) {
   const [debtAmount,       setDebtAmount]       = useState(20000);
   const [csFunnel,         setCsFunnel]         = useState<Funnel>({ p2:75, p4:60, be:40, comp:25 });
   const [elpFunnel,        setElpFunnel]        = useState<Funnel>({ p2:75, p4:60, be:40, comp:25 });
@@ -1667,6 +1668,71 @@ export default function FundingTierProfitabilityBalancer() {
     });
   }, [elpTermsFor]);
 
+  // The two survival funnels moved out of the old sticky header and into a
+  // body panel — too much control surface for a hero, and they read better
+  // beside the lead-quality panels they feed.
+  const funnelPanel = (
+    <div style={card}>
+      <h2 style={{ margin:"0 0 4px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Deal Survival Funnels</h2>
+      <div style={{ fontSize:13, color:"#64748b", lineHeight:1.6, marginBottom:14 }}>
+        Percentage of all deals on each perpetuity backend reaching each milestone. Cascading — completing implies
+        clearing every earlier stage.
+      </div>
+      <div className="ft-grid-2">
+        <div>
+          <div style={{ fontSize:11, fontWeight:800, color:FT_BLUE, marginBottom:6,
+            textTransform:"uppercase", letterSpacing:0.4 }}>Consumer Shield</div>
+          <CascadingFunnel prefix="CS" funnel={csFunnel} onChange={setCsFunnel} accent={FT_BLUE} />
+        </div>
+        <div>
+          <div style={{ fontSize:11, fontWeight:800, color:FT_CYAN, marginBottom:6,
+            textTransform:"uppercase", letterSpacing:0.4 }}>Elite Legal Practice</div>
+          <CascadingFunnel prefix="ELP" funnel={elpFunnel} onChange={setElpFunnel} accent={FT_CYAN} />
+        </div>
+      </div>
+    </div>
+  );
+
+  const heroSlot = (
+    <div style={{ display:"grid", gap:10 }}>
+      <ControlRow result={{ label:"Recommended Backend", value:deal.recommendedLabel }}>
+        <Control label="Enrolled Debt" type="number" min={0} step={100}
+          value={String(debtAmount)} onChange={v => setDebtAmount(Number(v))}
+          hint={debtAmount > 0 && debtAmount < 7000
+            ? <span style={{ fontSize:10, color:"#f5a524", fontWeight:700 }}>Under $7k — Level Debt cannot accept</span>
+            : <span style={{ fontSize:10, color:"rgba(245,248,247,0.55)", fontWeight:600 }}>
+                {[deal.ld, deal.elp, deal.cs].filter(b => b.eligible).length} of 3 backends eligible
+              </span>} />
+        <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:190, flex:1 }}>
+          <label style={{ fontSize:10, fontWeight:800, letterSpacing:"0.04em", color:"rgba(245,248,247,0.68)" }}>
+            CASH URGENCY
+          </label>
+          <input type="range" min={0} max={100} step={1} value={cashUrgency}
+            onChange={e => setCashUrgency(Number(e.target.value))}
+            style={{ width:"100%", accentColor:"#f5a524" }} />
+          <div style={{ fontSize:11, fontWeight:700, color:"#f5a524" }}>
+            {cashUrgency}%{stability.penalty > 0 ? ` → ${stability.adjusted}% adjusted` : ""}
+            <span style={{ color:"rgba(245,248,247,0.55)", fontWeight:600 }}>
+              {"  ·  "}Route {routing.ldPct}% LD / {routing.elpPct}% ELP / {routing.csPct}% CS
+            </span>
+          </div>
+        </div>
+      </ControlRow>
+      <MetricsGrid>
+        <Metric label="LEVEL DEBT — SETTLEMENT"
+          value={deal.ld.eligible ? money.format(deal.ld.expectedRevenue) : "Not eligible"} />
+        <Metric label="ELITE LEGAL — RESOLUTION" accent
+          value={deal.elp.eligible ? money.format(deal.elp.expectedRevenue) : "Not eligible"} />
+        <Metric label="CONSUMER SHIELD — VALIDATION"
+          value={deal.cs.eligible ? money.format(deal.cs.expectedRevenue) : "Not eligible"} />
+        <Metric label="BREAK-EVEN VS LD"
+          value={deal.ld.eligible
+            ? `ELP ${deal.elp.breakEvenMonth ? "Mo "+deal.elp.breakEvenMonth : "—"} · CS ${deal.cs.breakEvenMonth ? "Mo "+deal.cs.breakEvenMonth : "—"}`
+            : "No LD benchmark"} />
+      </MetricsGrid>
+    </div>
+  );
+
   return (
     <div style={{ minHeight:"100vh", background:FT_BG, color:"#0f172a",
       fontFamily:'Inter, Arial, Helvetica, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif' }}>
@@ -1679,139 +1745,23 @@ export default function FundingTierProfitabilityBalancer() {
         Legend / Knowledge Base
       </button>
 
-      {/* STICKY HEADER */}
-      <div style={{ position:"sticky", top:0, zIndex:50,
-        background:"rgba(248,250,252,0.97)", backdropFilter:"blur(10px)",
-        borderBottom:"1px solid #e2e8f0" }}>
-        <div style={{ maxWidth:1380, margin:"0 auto", padding:"8px 16px" }}>
-          <div style={{ background:"linear-gradient(135deg,#0f172a 0%,#0b3b50 45%,#0f766e 100%)",
-            borderRadius:16, padding:"10px 18px", boxShadow:"0 8px 24px rgba(15,23,42,0.18)" }}>
+      <ToolShell
+        mode={mode}
+        tool="Profit Engine"
+        eyebrow={`${mode === "admin" ? "ADMIN" : "AGENT"} · BACKEND ROUTING & MARGIN`}
+        badge={{ text: mode === "admin" ? "ADMIN ONLY" : "AGENT" }}
+        title="Profit Engine"
+        subtitle="Level Debt, Elite Legal Practice and Consumer Shield on the same deal — expected revenue, break-even and portfolio routing under one set of survival assumptions."
+        heroSlot={heroSlot}
+      >
 
-            {/* Row 1 — identity, deal size, cash urgency */}
-            <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"wrap" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0, alignSelf:"center" }}>
-                <img src={FT_LOGO} alt="Funding Tier" style={{ height:28, width:"auto" }} />
-                <span style={{ fontWeight:900, fontSize:20, color:"#fff", letterSpacing:"-0.5px", whiteSpace:"nowrap" }}>Profit Engine</span>
-              </div>
-              <div style={{ width:1, height:36, background:"rgba(255,255,255,0.2)", flexShrink:0, alignSelf:"center" }} />
+      {/* MAIN — ToolShell supplies the frame and padding */}
+      <div style={{ display:"grid", gap:18 }}>
 
-              <div style={{ flexShrink:0 }}>
-                <WL ch="Enrolled Debt" />
-                <input type="number" value={debtAmount} onChange={e => setDebtAmount(Number(e.target.value))}
-                  min={0} step={100}
-                  style={{ width:108, padding:"6px 9px", borderRadius:8,
-                    border:"1px solid rgba(255,255,255,0.2)", fontSize:14,
-                    color:"#000", fontWeight:800, background:"#fff", boxSizing:"border-box" }} />
-                <div style={{ fontSize:9, fontWeight:700, marginTop:2, color:"#94a3b8" }}>
-                  {[deal.ld, deal.cs, deal.elp].filter(b=>b.eligible).length} of 3 backends eligible
-                </div>
-              </div>
-              <div style={{ width:1, height:36, background:"rgba(255,255,255,0.2)", flexShrink:0, alignSelf:"center" }} />
+        {funnelPanel}
 
-              <div style={{ minWidth:150, flexShrink:0 }}>
-                <WL ch="Cash Urgency" />
-                <input type="range" min={0} max={100} step={1} value={cashUrgency}
-                  onChange={e => setCashUrgency(Number(e.target.value))}
-                  style={{ width:"100%", accentColor:FT_AMBER }} />
-                <div style={{ fontSize:10, fontWeight:700, color:FT_AMBER, marginTop:1 }}>
-                  {cashUrgency}%{stability.penalty > 0 ? ` → ${stability.adjusted}% (adj)` : ""}
-                </div>
-                <div style={{ fontSize:9, color:"#94a3b8", marginTop:1 }}>
-                  Route {routing.ldPct}% LD / {routing.csPct}% CS / {routing.elpPct}% ELP
-                </div>
-              </div>
-              <div style={{ width:1, height:36, background:"rgba(255,255,255,0.2)", flexShrink:0, alignSelf:"center" }} />
-
-              <div style={{ flex:1, minWidth:220 }}>
-                <WL ch="Recommended Backend" />
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  {recLogo && <span style={{ background:"#fff", borderRadius:6, padding:"3px 5px", display:"inline-flex" }}>
-                    <img src={recLogo} alt="" style={{ height:18, width:"auto", objectFit:"contain" }} />
-                  </span>}
-                  <span style={{ fontWeight:900, fontSize:15, color:"#fff" }}>{deal.recommendedLabel}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Row 2 — the two perpetuity survival funnels */}
-            <div style={{ display:"flex", gap:14, flexWrap:"wrap", marginTop:10,
-              borderTop:"1px solid rgba(255,255,255,0.12)", paddingTop:9 }}>
-              <div style={{ flex:1, minWidth:300 }}>
-                <div style={{ fontSize:9, fontWeight:800, color:FT_BLUE, marginBottom:4,
-                  textTransform:"uppercase", letterSpacing:0.4 }}>
-                  Consumer Shield survival funnel — % of all CS deals reaching each milestone
-                </div>
-                <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
-                  <CascadingFunnel prefix="CS" funnel={csFunnel} onChange={setCsFunnel} accent={FT_BLUE} />
-                  <div style={{ minWidth:76, flexShrink:0 }}>
-                    <WL ch="CS Quality" />
-                    <input type="range" min={0} max={100} step={1} value={csLeadQuality}
-                      onChange={e => setCsLeadQuality(Number(e.target.value))}
-                      style={{ width:"100%", accentColor:csLeadQuality>=70?FT_GREEN:csLeadQuality>=40?FT_AMBER:FT_RED }} />
-                    <div style={{ fontSize:11, fontWeight:800, marginTop:1,
-                      color:csLeadQuality>=70?FT_GREEN:csLeadQuality>=40?FT_AMBER:FT_RED }}>{csLeadQuality}%</div>
-                  </div>
-                </div>
-              </div>
-              <div style={{ width:1, background:"rgba(255,255,255,0.2)", flexShrink:0 }} />
-              <div style={{ flex:1, minWidth:300 }}>
-                <div style={{ fontSize:9, fontWeight:800, color:FT_CYAN, marginBottom:4,
-                  textTransform:"uppercase", letterSpacing:0.4 }}>
-                  Elite Legal Practice survival funnel — % of all ELP deals reaching each milestone
-                </div>
-                <div style={{ display:"flex", gap:10, alignItems:"flex-end" }}>
-                  <CascadingFunnel prefix="ELP" funnel={elpFunnel} onChange={setElpFunnel} accent={FT_CYAN} />
-                  <div style={{ minWidth:76, flexShrink:0 }}>
-                    <WL ch="ELP Quality" />
-                    <input type="range" min={0} max={100} step={1} value={elpLeadQuality}
-                      onChange={e => setElpLeadQuality(Number(e.target.value))}
-                      style={{ width:"100%", accentColor:elpLeadQuality>=70?FT_GREEN:elpLeadQuality>=40?FT_AMBER:FT_RED }} />
-                    <div style={{ fontSize:11, fontWeight:800, marginTop:1,
-                      color:elpLeadQuality>=70?FT_GREEN:elpLeadQuality>=40?FT_AMBER:FT_RED }}>{elpLeadQuality}%</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </div>
-
-      {/* MAIN */}
-      <div style={{ maxWidth:1380, margin:"0 auto", padding:"18px 16px 60px", display:"grid", gap:18 }}>
-
-        {/* Headline metrics */}
-        <div className="ft-grid-5">
-          <div style={{ ...card, position:"relative", borderTop:`3px solid ${deal.recommended?BACKEND_META[deal.recommended].color:"#cbd5e1"}` }}>
-            <div style={{ fontSize:11, fontWeight:700, color:"#64748b", marginBottom:7,
-              textTransform:"uppercase", letterSpacing:0.4 }}>Recommended Backend</div>
-            <div style={{ fontSize:deal.recommendedLabel.length>20?15:20, fontWeight:800,
-              color:deal.recommended?BACKEND_META[deal.recommended].colorDark:"#0f172a", lineHeight:1.2, wordBreak:"break-word" }}>
-              {deal.recommendedLabel}
-            </div>
-            <div style={{ fontSize:12, color:"#64748b", marginTop:7, lineHeight:1.5 }}>{deal.recommendationReason}</div>
-          </div>
-          <MetricCard title="Level Debt Revenue" accent={FT_GREEN_DARK}
-            value={deal.ld.eligible ? money.format(deal.ld.expectedRevenue) : "Not Eligible"}
-            subtitle={deal.ld.eligible ? "Base 8% — guaranteed after 2 payments" : "Under $7k — Level Debt cannot accept this deal"} />
-          <MetricCard title="ELP Expected Revenue" accent={FT_CYAN_DARK}
-            value={deal.elp.eligible ? money.format(deal.elp.expectedRevenue) : "Not Eligible"}
-            subtitle={deal.elp.eligible
-              ? `Effective (${elpLeadQuality}% LQ): P2=${elpEff.p2}% P4=${elpEff.p4}% BE=${elpEff.be}% Comp=${elpEff.comp}%`
-              : deal.elp.ineligibleReason} />
-          <MetricCard title="CS Expected Revenue" accent={FT_BLUE}
-            value={deal.cs.eligible ? money.format(deal.cs.expectedRevenue) : "Not Eligible"}
-            subtitle={deal.cs.eligible
-              ? `Effective (${csLeadQuality}% LQ): P2=${csEff.p2}% P4=${csEff.p4}% BE=${csEff.be}% Comp=${csEff.comp}%`
-              : deal.cs.ineligibleReason} />
-          <MetricCard title="Break-Even vs Level Debt"
-            value={deal.ld.eligible
-              ? `ELP ${deal.elp.breakEvenMonth ? "Mo "+deal.elp.breakEvenMonth : "—"} · CS ${deal.cs.breakEvenMonth ? "Mo "+deal.cs.breakEvenMonth : "—"}`
-              : "No LD benchmark"}
-            subtitle={deal.ld.eligible
-              ? "Month each perpetuity backend's cumulative revenue catches the 8%"
-              : "Level Debt is not eligible at this deal size"} />
-        </div>
+        {/* Headline metrics now live in the ToolShell hero — the recommendation
+            and the three expected-revenue figures were duplicated here. */}
 
         {/* Head-to-head */}
         <BackendComparison analysis={deal} />
@@ -2242,20 +2192,16 @@ export default function FundingTierProfitabilityBalancer() {
         </div>
 
       </div>
+      </ToolShell>
 
       <style jsx global>{`
-        .ft-grid-5       { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 14px; }
-        .ft-grid-4       { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; }
-        .ft-grid-3       { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+        /* auto-fit rather than fixed counts: ToolShell caps the frame at
+           1100px, so these have to reflow to the container, not the viewport. */
+        .ft-grid-5       { display: grid; grid-template-columns: repeat(auto-fit,minmax(185px,1fr)); gap: 14px; }
+        .ft-grid-4       { display: grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap: 14px; }
+        .ft-grid-3       { display: grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap: 14px; }
         .ft-grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
         .ft-grid-2-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
-        @media (max-width: 1400px) {
-          .ft-grid-5 { grid-template-columns: repeat(3,minmax(0,1fr)); }
-        }
-        @media (max-width: 1200px) {
-          .ft-grid-5, .ft-grid-4 { grid-template-columns: 1fr 1fr; }
-          .ft-grid-3 { grid-template-columns: 1fr 1fr; }
-        }
         @media (max-width: 720px) {
           .ft-grid-5, .ft-grid-4, .ft-grid-3, .ft-grid-2, .ft-grid-2-inner { grid-template-columns: 1fr !important; }
         }
