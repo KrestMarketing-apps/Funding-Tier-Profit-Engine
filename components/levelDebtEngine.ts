@@ -1,51 +1,60 @@
 // ═══════════════════════════════════════════════════════════════════
 // LEVEL DEBT — CLIENT PROGRAM MATH
 //
-// Mirrors the Router's src/config/backends/levelDebt/revenue.js. Funding
-// Tier's own revenue is a flat 8% of enrolled debt and has nothing to do with
-// any of this — these are the CLIENT-facing numbers, needed so the three
-// backends can be compared on the one figure a client actually feels: what
-// leaves their account every month.
+// Reproduces the Forth enrollment schedule exactly. Verified against a live
+// Forth plan ($10,000 enrolled, California, 30 months, 25% success fee, 50%
+// estimated settlement): total fees $2,839.45, program cost $7,839.45, client
+// savings $2,160.55, payment $261.32, month 1 savings $156.09, $167.04 after.
 //
-//   estimated settlement = enrolled debt x 50%
-//   program fees         = enrolled debt x fee rate
-//   monthly deposit      = (settlement + fees) / term
+//   settlement target = enrolled debt x estimated settlement %
+//   success fee       = enrolled debt x success fee %
+//   gateway           = monthly fee x term + one-time setup fee
+//   total fees        = success fee + gateway (+ legal fee, if the plan has one)
+//   program cost      = settlement target + total fees
+//   monthly payment   = program cost / term        <- the SAME every month
 //
-// The term is banded by enrolled debt rather than chosen.
+// The setup fee does not make month 1 a larger draft. It is inside the program
+// cost, so it is already spread across the term; what it does is take $10.95
+// out of month 1's savings contribution. Every other month contributes more.
+//
+// Funding Tier's own revenue is a flat 8% of enrolled debt and has nothing to
+// do with any of this — these are the CLIENT-facing numbers.
 // ═══════════════════════════════════════════════════════════════════
 
 export const LD_MIN_DEBT = 7000;
-export const LD_MIN_DEPOSIT = 250;
+export const LD_MIN_PAYMENT = 250;
 
-/** Share of enrolled debt assumed to be paid out in settlements. */
-export const LD_ESTIMATED_SETTLEMENT_RATE = 0.5;
-
-/** Client program fee. Attorney-model states carry the higher rate. */
-export const LD_PROGRAM_FEE_STANDARD = 0.25;
-export const LD_PROGRAM_FEE_ATTORNEY = 0.27;
-
-// ── Ancillary client fees ───────────────────────────────────────────────────
-// These ride on top of the settlement deposit every month. They are what the
-// client actually pays and none of them touch Funding Tier's 8%, so they move
-// the payment shown on screen and nothing else.
-export const LD_LEGAL_FEE_MONTHLY = 19.99;
-/** Global Holdings escrow / bank account. */
-export const LD_GATEWAY_FEE_MONTHLY = 10.95;
-/**
- * Charged once at enrollment. It does NOT make month 1 a bigger draft — the
- * client pays the same amount every month. It comes out of that payment, so
- * month 1 simply puts less into the savings/escrow account.
- */
-export const LD_GATEWAY_SETUP_FEE = 10.95;
-/** Semi-monthly schedules draft twice; each draft carries this. */
-export const LD_SPLIT_SURCHARGE_PER_PAYMENT = 0.515;
+/** Success fee. Attorney-model states carry the higher rate. */
+export const LD_SUCCESS_FEE_STANDARD = 0.25;
+export const LD_SUCCESS_FEE_ATTORNEY = 0.27;
 
 /** States where Level Debt runs the attorney model. */
 export const LD_ATTORNEY_STATES = [
   "CT", "GA", "LA", "MN", "NV", "NH", "NJ", "ND", "OH", "PA", "TN", "WA", "WY",
 ];
 
-/** Term bands, by enrolled debt. Larger loads spread further. */
+/** Share of enrolled debt the plan assumes settlements will cost. */
+export const LD_SETTLEMENT_PCT_DEFAULT = 0.5;
+
+/** Global Holdings escrow / bank account. */
+export const LD_GATEWAY_FEE_MONTHLY = 10.95;
+/** Charged once. Inside the program cost, so it lands on month 1's savings. */
+export const LD_GATEWAY_SETUP_FEE = 10.95;
+/** Semi-monthly schedules draft twice; each draft carries this. */
+export const LD_SPLIT_SURCHARGE_PER_PAYMENT = 0.515;
+
+/**
+ * Monthly legal fee. NOT present on the standard Forth debt settlement plan —
+ * the live schedule's total fees reconcile exactly without it. Left as an
+ * input, defaulting to zero, until it is confirmed which plans carry it.
+ */
+export const LD_LEGAL_FEE_MONTHLY = 0;
+
+/** Program lengths Forth offers. */
+export const LD_TERM_MIN = 12;
+export const LD_TERM_MAX = 60;
+
+/** Default term by enrolled debt, when the rep has not chosen one. */
 const LD_TERM_BANDS: { max: number; term: number }[] = [
   { max: 10000, term: 24 },
   { max: 12500, term: 30 },
@@ -54,120 +63,144 @@ const LD_TERM_BANDS: { max: number; term: number }[] = [
   { max: 35000, term: 48 },
   { max: 50000, term: 54 },
 ];
-export const LD_TERM_MAX = 60;
-
-function round2(v: number) { return Math.round(v * 100) / 100; }
-
-export function ldTerm(debt: number): number {
-  const band = LD_TERM_BANDS.find(b => debt < b.max);
-  return band ? band.term : LD_TERM_MAX;
-}
-
-export function ldProgramFeeRate(attorneyModel: boolean): number {
-  return attorneyModel ? LD_PROGRAM_FEE_ATTORNEY : LD_PROGRAM_FEE_STANDARD;
-}
-
-export type LdProgram = {
-  eligible: boolean;
-  term: number;
-  feeRate: number;
-  estimatedSettlement: number;
-  programFees: number;
-  totalProgramCost: number;
-  /** Settlement deposit alone — what the $250 minimum applies to. */
-  monthlyDeposit: number;
-  /** Legal + gateway (+ split surcharge) on an ordinary month. */
-  ancillaryMonthly: number;
-  /**
-   * Deposit + ancillary fees: what leaves the client's account. The same
-   * figure every month — the gateway setup fee does not change the draft.
-   */
-  monthlyPayment: number;
-  /** Per-draft amount on a semi-monthly schedule; null when drafting monthly. */
-  perDraft: number | null;
-  splitPayments: boolean;
-  /** True when the derived deposit falls under Level Debt's $250 minimum. */
-  belowMinimum: boolean;
-};
-
-/**
- * Recurring fees taken out of every draft. Constant across the term — the
- * one-time setup fee is handled in the escrow projection, not here, because it
- * changes what lands in savings rather than what the client pays.
- */
-export function ldAncillaryFees(split: boolean): number {
-  return round2(
-    LD_LEGAL_FEE_MONTHLY
-    + LD_GATEWAY_FEE_MONTHLY
-    + (split ? LD_SPLIT_SURCHARGE_PER_PAYMENT * 2 : 0)
-  );
-}
-
-export type LdEscrowRow = {
-  month: number;
-  /** Always the same — the client's draft does not vary. */
-  payment: number;
-  /** Legal + gateway (+ split), plus the one-time setup fee in month 1. */
-  feesTaken: number;
-  /** What actually lands in the savings account this month. */
-  toEscrow: number;
-  cumulative: number;
-};
-
-/**
- * Funds accumulating in the client's savings / escrow account, month by month.
- *
- * This is deposits net of the legal and gateway fees only. It does NOT deduct
- * settlement payouts or Level Debt's program fee, both of which draw the
- * balance down as accounts settle — so treat it as the ceiling on what is
- * available to settle with, not a forecast of the balance.
- */
-export function ldEscrowProjection(program: LdProgram, months?: number): LdEscrowRow[] {
-  if (!program.eligible) return [];
-  const n = Math.min(months ?? program.term, program.term);
-  const rows: LdEscrowRow[] = [];
-  let cumulative = 0;
-  for (let month = 1; month <= n; month++) {
-    const feesTaken = round2(
-      program.ancillaryMonthly + (month === 1 ? LD_GATEWAY_SETUP_FEE : 0)
-    );
-    const toEscrow = round2(program.monthlyPayment - feesTaken);
-    cumulative = round2(cumulative + toEscrow);
-    rows.push({ month, payment: program.monthlyPayment, feesTaken, toEscrow, cumulative });
-  }
-  return rows;
-}
 
 /** Usually the earliest point a first settlement can be attempted. */
 export const LD_FIRST_SETTLEMENT_MILESTONE_MONTH = 6;
 
-export function ldProgram(debt: number, attorneyModel = false, splitPayments = false): LdProgram {
-  const eligible = debt >= LD_MIN_DEBT;
-  if (!eligible) {
+function round2(v: number) { return Math.round(v * 100) / 100; }
+function clamp(v: number, lo: number, hi: number) { return Math.min(Math.max(v, lo), hi); }
+
+export function ldDefaultTerm(debt: number): number {
+  const band = LD_TERM_BANDS.find(b => debt < b.max);
+  return band ? band.term : LD_TERM_MAX;
+}
+
+export function ldSuccessFeeRate(attorneyModel: boolean): number {
+  return attorneyModel ? LD_SUCCESS_FEE_ATTORNEY : LD_SUCCESS_FEE_STANDARD;
+}
+
+export function ldIsAttorneyState(state?: string): boolean {
+  return !!state && LD_ATTORNEY_STATES.includes(state.toUpperCase());
+}
+
+export type LdTerms = {
+  /** Program length in months. Chosen, not derived — Forth offers a dropdown. */
+  term?: number;
+  attorneyModel?: boolean;
+  /** Estimated settlement as a share of enrolled debt. */
+  settlementPct?: number;
+  splitPayments?: boolean;
+  legalFeeMonthly?: number;
+};
+
+export type LdProgram = {
+  eligible: boolean;
+  term: number;
+  successFeeRate: number;
+  settlementPct: number;
+  /** Enrolled debt x estimated settlement % — what the savings must reach. */
+  settlementTarget: number;
+  successFeeTotal: number;
+  successFeeMonthly: number;
+  gatewayMonthly: number;
+  gatewaySetup: number;
+  legalFeeMonthly: number;
+  splitSurcharge: number;
+  totalFees: number;
+  totalProgramCost: number;
+  estClientSavings: number;
+  /** The same draft every month. */
+  monthlyPayment: number;
+  perDraft: number | null;
+  splitPayments: boolean;
+  belowMinimum: boolean;
+};
+
+export function ldProgram(debt: number, terms: LdTerms = {}): LdProgram {
+  const attorneyModel = !!terms.attorneyModel;
+  const successFeeRate = ldSuccessFeeRate(attorneyModel);
+  const settlementPct = terms.settlementPct ?? LD_SETTLEMENT_PCT_DEFAULT;
+  const splitPayments = !!terms.splitPayments;
+  const legalFeeMonthly = terms.legalFeeMonthly ?? LD_LEGAL_FEE_MONTHLY;
+  const splitSurcharge = splitPayments ? round2(LD_SPLIT_SURCHARGE_PER_PAYMENT * 2) : 0;
+  const term = clamp(Math.round(terms.term ?? ldDefaultTerm(debt)), LD_TERM_MIN, LD_TERM_MAX);
+
+  if (debt < LD_MIN_DEBT) {
     return {
-      eligible: false, term: 0, feeRate: ldProgramFeeRate(attorneyModel),
-      estimatedSettlement: 0, programFees: 0, totalProgramCost: 0,
-      monthlyDeposit: 0, ancillaryMonthly: 0, monthlyPayment: 0,
-      perDraft: null, splitPayments, belowMinimum: false,
+      eligible: false, term: 0, successFeeRate, settlementPct,
+      settlementTarget: 0, successFeeTotal: 0, successFeeMonthly: 0,
+      gatewayMonthly: LD_GATEWAY_FEE_MONTHLY, gatewaySetup: LD_GATEWAY_SETUP_FEE,
+      legalFeeMonthly, splitSurcharge, totalFees: 0, totalProgramCost: 0,
+      estClientSavings: 0, monthlyPayment: 0, perDraft: null, splitPayments,
+      belowMinimum: false,
     };
   }
-  const term = ldTerm(debt);
-  const feeRate = ldProgramFeeRate(attorneyModel);
-  const estimatedSettlement = round2(debt * LD_ESTIMATED_SETTLEMENT_RATE);
-  const programFees = round2(debt * feeRate);
-  const totalProgramCost = round2(estimatedSettlement + programFees);
 
-  const monthlyDeposit   = round2(totalProgramCost / term);
-  const ancillaryMonthly = ldAncillaryFees(splitPayments);
-  const monthlyPayment   = round2(monthlyDeposit + ancillaryMonthly);
+  const settlementTarget = round2(debt * settlementPct);
+  const successFeeTotal  = round2(debt * successFeeRate);
+  const gatewayTotal     = round2(LD_GATEWAY_FEE_MONTHLY * term + LD_GATEWAY_SETUP_FEE);
+  const legalTotal       = round2((legalFeeMonthly + splitSurcharge) * term);
+
+  const totalFees        = round2(successFeeTotal + gatewayTotal + legalTotal);
+  const totalProgramCost = round2(settlementTarget + totalFees);
+  const monthlyPayment   = round2(totalProgramCost / term);
+  const successFeeMonthly = round2(successFeeTotal / term);
 
   return {
-    eligible: true, term, feeRate, estimatedSettlement, programFees,
-    totalProgramCost, monthlyDeposit, ancillaryMonthly, monthlyPayment,
+    eligible: true, term, successFeeRate, settlementPct,
+    settlementTarget, successFeeTotal, successFeeMonthly,
+    gatewayMonthly: LD_GATEWAY_FEE_MONTHLY, gatewaySetup: LD_GATEWAY_SETUP_FEE,
+    legalFeeMonthly, splitSurcharge,
+    totalFees, totalProgramCost,
+    estClientSavings: round2(debt - totalProgramCost),
+    monthlyPayment,
     perDraft: splitPayments ? round2(monthlyPayment / 2) : null,
     splitPayments,
-    // The $250 minimum is a floor on the program DEPOSIT, not on the total
-    // draft — the legal and gateway fees are not settlement money.
-    belowMinimum: monthlyDeposit < LD_MIN_DEPOSIT,
+    belowMinimum: monthlyPayment < LD_MIN_PAYMENT,
   };
+}
+
+export type LdScheduleRow = {
+  month: number;
+  successFee: number;
+  gatewaySetup: number;
+  gatewayMonthly: number;
+  legalFee: number;
+  /** What lands in the savings / escrow account this month. */
+  savings: number;
+  cumulativeSavings: number;
+  /** Always the same. */
+  totalPayment: number;
+};
+
+/**
+ * The payment schedule, column for column as Forth renders it. Savings is the
+ * remainder after the month's fees, which is why month 1 is lighter by the
+ * setup fee while the draft itself never moves.
+ */
+export function ldSchedule(program: LdProgram, months?: number): LdScheduleRow[] {
+  if (!program.eligible) return [];
+  const n = Math.min(months ?? program.term, program.term);
+  const rows: LdScheduleRow[] = [];
+  let cumulativeSavings = 0;
+  for (let month = 1; month <= n; month++) {
+    const gatewaySetup = month === 1 ? program.gatewaySetup : 0;
+    const legalFee = round2(program.legalFeeMonthly + program.splitSurcharge);
+    const savings = round2(
+      program.monthlyPayment - program.successFeeMonthly
+      - program.gatewayMonthly - gatewaySetup - legalFee
+    );
+    cumulativeSavings = round2(cumulativeSavings + savings);
+    rows.push({
+      month,
+      successFee: program.successFeeMonthly,
+      gatewaySetup,
+      gatewayMonthly: program.gatewayMonthly,
+      legalFee,
+      savings,
+      cumulativeSavings,
+      totalPayment: program.monthlyPayment,
+    });
+  }
+  return rows;
 }
