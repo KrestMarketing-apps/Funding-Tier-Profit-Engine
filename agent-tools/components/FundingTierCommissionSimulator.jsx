@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ToolShell from "./ToolShell";
 
 // ─── BRAND ──────────────────────────────────────────────
 const G      = "#0f9d8a";
@@ -1842,7 +1843,7 @@ function ForecastTab(){
 }
 
 // ─── ROOT ───────────────────────────────────────────────
-export default function App(){
+export default function App({ mode = "agent" }) {
   const [tab,setTab]=useState("ld");
 
   const tabs=[
@@ -1853,59 +1854,57 @@ export default function App(){
     {id:"forecast",label:"Monthly Forecast"},
   ];
 
+  // The five tabs keep their own markup and tooltips rather than dropping to
+  // ToolShell's TabStrip — that helper takes plain strings, which would lose
+  // the per-tab tips and the Legacy Capital accent.
+  const tabStrip = (
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:3}}>
+      {tabs.map(t=>{
+        const isActive=tab===t.id;
+        const btn=(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{
+            width:"100%",padding:"11px 4px",border:"none",cursor:"pointer",
+            fontWeight:800,fontSize:12,letterSpacing:"-0.2px",
+            borderRadius:"10px 10px 0 0",transition:"all 0.15s",
+            background:isActive?"#fff":"rgba(255,255,255,0.06)",
+            color:isActive?DARK:"rgba(255,255,255,0.65)",
+            position:"relative",textAlign:"center",whiteSpace:"nowrap",
+            overflow:"hidden",textOverflow:"ellipsis",
+          }}>
+            {isActive&&(
+              <span style={{position:"absolute",bottom:0,left:0,right:0,height:3,
+                background:t.id==="lc"?LC:G,borderRadius:"3px 3px 0 0"}}/>
+            )}
+            {t.label}
+          </button>
+        );
+        return t.tip
+          ? <Tip key={t.id} tip={t.tip}>{btn}</Tip>
+          : <div key={t.id}>{btn}</div>;
+      })}
+    </div>
+  );
+
   return(
     <div style={{minHeight:"100vh",background:BG,fontFamily:'"DM Sans","Helvetica Neue",Arial,sans-serif'}}>
-
-      {/* STICKY HEADER */}
-      <div style={{position:"sticky",top:0,zIndex:50,
-        background:`linear-gradient(135deg,${DARK} 0%,#0b3b50 45%,#0f766e 100%)`,
-        boxShadow:"0 4px 24px rgba(15,23,42,0.22)"}}>
-        <div style={{maxWidth:980,margin:"0 auto",padding:"12px 20px 0"}}>
-
-          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
-            <img src={FT_LOGO} alt="Funding Tier" style={{height:28,width:"auto"}}/>
-            <div>
-              <div style={{fontSize:18,fontWeight:900,color:"#fff",letterSpacing:"-0.5px",lineHeight:1}}>Commission Simulator</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,0.45)",marginTop:2,fontWeight:600,letterSpacing:"0.3px"}}>Agent Earnings Calculator</div>
-            </div>
-          </div>
-
-          {/* 5-column tab grid */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:3}}>
-            {tabs.map(t=>{
-              const isActive=tab===t.id;
-              const btn=(
-                <button key={t.id} onClick={()=>setTab(t.id)} style={{
-                  width:"100%",padding:"11px 4px",border:"none",cursor:"pointer",
-                  fontWeight:800,fontSize:12,letterSpacing:"-0.2px",
-                  borderRadius:"10px 10px 0 0",transition:"all 0.15s",
-                  background:isActive?"#fff":"transparent",
-                  color:isActive?DARK:"rgba(255,255,255,0.65)",
-                  position:"relative",textAlign:"center",whiteSpace:"nowrap",
-                  overflow:"hidden",textOverflow:"ellipsis",
-                }}>
-                  {isActive&&(
-                    <span style={{position:"absolute",bottom:0,left:0,right:0,height:3,
-                      background:t.id==="lc"?LC:G,borderRadius:"3px 3px 0 0"}}/>
-                  )}
-                  {t.label}
-                </button>
-              );
-              return t.tip
-                ? <Tip key={t.id} tip={t.tip}>{btn}</Tip>
-                : <div key={t.id}>{btn}</div>;
-            })}
-          </div>
-        </div>
-      </div>
-
-      <div style={{maxWidth:980,margin:"0 auto",padding:"20px 20px 60px"}}>
+      <ToolShell
+        mode={mode}
+        tool="Commission Simulator"
+        eyebrow={`${mode === "admin" ? "ADMIN" : "AGENT"} \u00B7 EARNINGS`}
+        badge={{ text: mode === "admin" ? "ADMIN VIEW" : "AGENT" }}
+        title="Commission Simulator"
+        subtitle="What a deal pays you across Level Debt, Elite Legal Practice and Consumer Shield — plus daily, monthly and balanced-book bonuses."
+        heroSlot={tabStrip}
+      >
+      {/* ToolShell supplies the frame and padding */}
+      <div>
         {tab==="ld"       &&<LevelDebtTab/>}
         {tab==="cs"       &&<CSTab/>}
         {tab==="lc"       &&<LegacyCapitalTab/>}
         {tab==="spiff"    &&<SpiffTab/>}
         {tab==="forecast" &&<ForecastTab/>}
       </div>
+      </ToolShell>
     </div>
   );
 }

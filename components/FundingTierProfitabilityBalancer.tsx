@@ -12,7 +12,9 @@ import {
 } from "./legacyEngine";
 import {
   ldProgram, LD_ESTIMATED_SETTLEMENT_RATE, LD_PROGRAM_FEE_ATTORNEY,
-  LD_PROGRAM_FEE_STANDARD, LD_ATTORNEY_STATES, LD_MIN_DEPOSIT, type LdProgram,
+  LD_PROGRAM_FEE_STANDARD, LD_ATTORNEY_STATES, LD_MIN_DEPOSIT,
+  LD_LEGAL_FEE_MONTHLY, LD_GATEWAY_FEE_MONTHLY, LD_GATEWAY_SETUP_FEE,
+  LD_SPLIT_SURCHARGE_PER_PAYMENT, type LdProgram,
 } from "./levelDebtEngine";
 
 // ─────────────────────────────────────────────
@@ -257,6 +259,8 @@ export type DealAnalysisArgs = {
   elpTerms: ElpTerms;
   /** Attorney-model states carry the higher Level Debt program fee. */
   ldAttorneyModel: boolean;
+  /** Semi-monthly drafting adds a per-draft surcharge to the client payment. */
+  ldSplitPayments: boolean;
   adjustedUrgency: number;
   levelRepPct: number;
   csRepUpfront: number; csRepAfter4: number;
@@ -282,7 +286,7 @@ function analyzeDeal(a: DealAnalysisArgs): DealAnalysis {
   const ldRev  = ldEligible ? round2(debt * 0.08) : 0;
   const ldRep  = ldEligible ? round2(debt * (a.levelRepPct / 100)) : 0;
   const ldScore = ldEligible ? ldRev * (1 + urgencyBias * 0.6) : -1;
-  const ldProg  = ldProgram(debt, a.ldAttorneyModel);
+  const ldProg  = ldProgram(debt, a.ldAttorneyModel, a.ldSplitPayments);
 
   const ld = {
     key: "LD" as const, name: BACKEND_META.LD.name,
@@ -1531,6 +1535,7 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
   // client draft the customer can afford, which is what really sets the term.
   const [elpTargetDraft,   setElpTargetDraft]   = useState<number|null>(null);
   const [ldAttorneyModel,  setLdAttorneyModel]  = useState(false);
+  const [ldSplitPayments,  setLdSplitPayments]  = useState(false);
   const [cashUrgency,      setCashUrgency]      = useState(50);
   const [levelRepPct,      setLevelRepPct]      = useState(1.25);
   const [csRepUpfront,     setCsRepUpfront]     = useState(200);
@@ -1577,9 +1582,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
   );
 
   const analysisArgs = useMemo(() => ({
-    csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel,
+    csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel, ldSplitPayments,
     adjustedUrgency: stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4,
-  }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
+  }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel, ldSplitPayments, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
 
   const deal = useMemo(
     () => analyzeDeal({ debtAmount, elpTerms: elpTermsFor(debtAmount), ...analysisArgs }),
@@ -1809,16 +1814,45 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
                 ))}
               </div>
             </div>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:11, flexWrap:"wrap" }}>
+              <span style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:0.3 }}>
+                Draft Schedule
+              </span>
+              <div style={{ display:"flex", gap:5, flex:1, minWidth:180 }}>
+                {[{ v:false, l:"Monthly · 1 draft" }, { v:true, l:"Semi-monthly · 2" }].map(o => (
+                  <button key={String(o.v)} onClick={() => setLdSplitPayments(o.v)}
+                    style={{ flex:1, padding:"6px 5px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:11,
+                      border:`1px solid ${ldSplitPayments===o.v?FT_GREEN:"#cbd5e1"}`,
+                      background:ldSplitPayments===o.v?FT_GREEN+"1a":"#fff",
+                      color:ldSplitPayments===o.v?FT_GREEN_DARK:"#64748b" }}>
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="ft-grid-2-inner">
               <MetricCard title="Debt Amount" value={money.format(deal.debtAmount)} />
               <MetricCard title="Payment / Monthly"
                 value={deal.ld.program.eligible ? money.format(deal.ld.program.monthlyPayment) : "N/A"}
                 inlineTag={deal.ld.program.eligible ? `${deal.ld.program.term} months` : undefined}
                 tooltip={deal.ld.program.eligible
-                  ? `What the client deposits each month.\n\nEstimated settlement (${Math.round(LD_ESTIMATED_SETTLEMENT_RATE*100)}% of enrolled debt) ${money.format(deal.ld.program.estimatedSettlement)} + program fees (${Math.round(deal.ld.program.feeRate*100)}%) ${money.format(deal.ld.program.programFees)} = ${money.format(deal.ld.program.totalProgramCost)}, over ${deal.ld.program.term} months.\n\nTerm is banded by enrolled debt. ${ldAttorneyModel ? "Attorney-model rate in play." : `Attorney-model states use ${Math.round(LD_PROGRAM_FEE_ATTORNEY*100)}% instead.`}`
+                  ? `What actually leaves the client's account each month.\n\n`
+                    + `Settlement deposit ${money.format(deal.ld.program.monthlyDeposit)} — estimated settlement (${Math.round(LD_ESTIMATED_SETTLEMENT_RATE*100)}% of enrolled debt) ${money.format(deal.ld.program.estimatedSettlement)} + program fees (${Math.round(deal.ld.program.feeRate*100)}%) ${money.format(deal.ld.program.programFees)} = ${money.format(deal.ld.program.totalProgramCost)} over ${deal.ld.program.term} months.\n\n`
+                    + `+ $${LD_LEGAL_FEE_MONTHLY} legal fee\n+ $${LD_GATEWAY_FEE_MONTHLY} gateway (Global Holdings escrow)`
+                    + (deal.ld.program.splitPayments ? `\n+ $${LD_SPLIT_SURCHARGE_PER_PAYMENT} × 2 drafts` : "")
+                    + `\n= ${money.format(deal.ld.program.monthlyPayment)}`
+                    + (deal.ld.program.perDraft ? ` (2 × ${money.format(deal.ld.program.perDraft)})` : "")
+                    + `\n\nMonth 1 is ${money.format(deal.ld.program.firstMonthPayment)} — the $${LD_GATEWAY_SETUP_FEE} gateway setup fee is charged once.\n\n`
+                    + `${ldAttorneyModel ? "Attorney-model rate in play." : `Attorney-model states use ${Math.round(LD_PROGRAM_FEE_ATTORNEY*100)}% instead.`}`
+                  : undefined} />
+              <MetricCard title="Settlement Deposit"
+                value={deal.ld.program.eligible ? money.format(deal.ld.program.monthlyDeposit) : "N/A"}
+                inlineTag={deal.ld.program.belowMinimum ? "⚠ under $250" : "of the payment"}
+                subtitle={deal.ld.program.eligible
+                  ? `+ ${money.format(deal.ld.program.ancillaryMonthly)} fees · month 1 ${money.format(deal.ld.program.firstMonthPayment)}`
                   : undefined} />
               <MetricCard title="Gross Revenue" value={deal.ld.eligible ? money.format(deal.ld.grossRevenue) : "N/A"}
-                subtitle="8% of enrolled debt" />
+                subtitle="8% of enrolled debt — unaffected by client fees" />
               <MetricCard title="Commission Paid To Agent" value={deal.ld.eligible ? money.format(deal.ld.repCost) : "N/A"} />
               <MetricCard title="Net Revenue" highlight={deal.ld.eligible}
                 value={deal.ld.eligible ? money.format(deal.ld.netRevenue) : "N/A"} />

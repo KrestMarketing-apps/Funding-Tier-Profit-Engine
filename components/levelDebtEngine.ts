@@ -24,6 +24,18 @@ export const LD_ESTIMATED_SETTLEMENT_RATE = 0.5;
 export const LD_PROGRAM_FEE_STANDARD = 0.25;
 export const LD_PROGRAM_FEE_ATTORNEY = 0.27;
 
+// ── Ancillary client fees ───────────────────────────────────────────────────
+// These ride on top of the settlement deposit every month. They are what the
+// client actually pays and none of them touch Funding Tier's 8%, so they move
+// the payment shown on screen and nothing else.
+export const LD_LEGAL_FEE_MONTHLY = 19.99;
+/** Global Holdings escrow / bank account. */
+export const LD_GATEWAY_FEE_MONTHLY = 10.95;
+/** Charged once at enrollment, so month 1 carries the gateway fee twice. */
+export const LD_GATEWAY_SETUP_FEE = 10.95;
+/** Semi-monthly schedules draft twice; each draft carries this. */
+export const LD_SPLIT_SURCHARGE_PER_PAYMENT = 0.515;
+
 /** States where Level Debt runs the attorney model. */
 export const LD_ATTORNEY_STATES = [
   "CT", "GA", "LA", "MN", "NV", "NH", "NJ", "ND", "OH", "PA", "TN", "WA", "WY",
@@ -58,18 +70,42 @@ export type LdProgram = {
   estimatedSettlement: number;
   programFees: number;
   totalProgramCost: number;
+  /** Settlement deposit alone — what the $250 minimum applies to. */
+  monthlyDeposit: number;
+  /** Legal + gateway (+ split surcharge) on an ordinary month. */
+  ancillaryMonthly: number;
+  /** Deposit + ancillary fees: what actually leaves the client's account. */
   monthlyPayment: number;
+  /** Month 1, which also carries the one-time gateway setup fee. */
+  firstMonthPayment: number;
+  /** Per-draft amount on a semi-monthly schedule; null when drafting monthly. */
+  perDraft: number | null;
+  splitPayments: boolean;
   /** True when the derived deposit falls under Level Debt's $250 minimum. */
   belowMinimum: boolean;
 };
 
-export function ldProgram(debt: number, attorneyModel = false): LdProgram {
+/**
+ * Legal, gateway and split fees for a given deal month. Month 1 includes the
+ * one-time gateway setup fee, so it is always the larger draft.
+ */
+export function ldAncillaryFees(month: number, split: boolean): number {
+  return round2(
+    LD_LEGAL_FEE_MONTHLY
+    + LD_GATEWAY_FEE_MONTHLY
+    + (month === 1 ? LD_GATEWAY_SETUP_FEE : 0)
+    + (split ? LD_SPLIT_SURCHARGE_PER_PAYMENT * 2 : 0)
+  );
+}
+
+export function ldProgram(debt: number, attorneyModel = false, splitPayments = false): LdProgram {
   const eligible = debt >= LD_MIN_DEBT;
   if (!eligible) {
     return {
       eligible: false, term: 0, feeRate: ldProgramFeeRate(attorneyModel),
       estimatedSettlement: 0, programFees: 0, totalProgramCost: 0,
-      monthlyPayment: 0, belowMinimum: false,
+      monthlyDeposit: 0, ancillaryMonthly: 0, monthlyPayment: 0,
+      firstMonthPayment: 0, perDraft: null, splitPayments, belowMinimum: false,
     };
   }
   const term = ldTerm(debt);
@@ -77,10 +113,20 @@ export function ldProgram(debt: number, attorneyModel = false): LdProgram {
   const estimatedSettlement = round2(debt * LD_ESTIMATED_SETTLEMENT_RATE);
   const programFees = round2(debt * feeRate);
   const totalProgramCost = round2(estimatedSettlement + programFees);
-  const monthlyPayment = round2(totalProgramCost / term);
+
+  const monthlyDeposit   = round2(totalProgramCost / term);
+  const ancillaryMonthly = ldAncillaryFees(2, splitPayments);
+  const monthlyPayment   = round2(monthlyDeposit + ancillaryMonthly);
+  const firstMonthPayment = round2(monthlyDeposit + ldAncillaryFees(1, splitPayments));
+
   return {
     eligible: true, term, feeRate, estimatedSettlement, programFees,
-    totalProgramCost, monthlyPayment,
-    belowMinimum: monthlyPayment < LD_MIN_DEPOSIT,
+    totalProgramCost, monthlyDeposit, ancillaryMonthly, monthlyPayment,
+    firstMonthPayment,
+    perDraft: splitPayments ? round2(monthlyPayment / 2) : null,
+    splitPayments,
+    // The $250 minimum is a floor on the program DEPOSIT, not on the total
+    // draft — the legal and gateway fees are not settlement money.
+    belowMinimum: monthlyDeposit < LD_MIN_DEPOSIT,
   };
 }

@@ -11,6 +11,6 @@
 //
 import OperatingModel from './operatingModel/OperatingModel';
 
-export default function FundingTierOperatingModel() {
-  return <OperatingModel />;
+export default function FundingTierOperatingModel({ mode = 'admin' }: { mode?: 'admin' | 'agent' }) {
+  return <OperatingModel mode={mode} />;
 }

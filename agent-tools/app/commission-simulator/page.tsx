@@ -1,11 +1,10 @@
-"use client";
-import dynamic from "next/dynamic";
+import { getRole } from "../../lib/role";
+import ClientSimulator from "./ClientSimulator";
 
-const FundingTierCommissionSimulator = dynamic(
-  () => import("../../components/FundingTierCommissionSimulator"),
-  { ssr: false }
-);
+/** force-dynamic: the render depends on the role, so it must not be cached. */
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default function CommissionSimulatorPage() {
-  return <FundingTierCommissionSimulator />;
+  return <ClientSimulator mode={getRole()} />;
 }
