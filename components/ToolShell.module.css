@@ -26,49 +26,9 @@
   border: 1px solid #d7ddda;
 }
 
-/* ============ TOP BAR — identical on every page ============ */
-.topbar {
-  background: var(--navy-0);
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  height: 52px;
-  position: relative;
-}
-.topbar::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  background: linear-gradient(90deg, var(--teal-500), var(--sky-400) 55%, transparent 85%);
-}
-.topbarLeft { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.ftLogo {
-  width: 26px; height: 26px; border-radius: 7px; background: #fff; flex: 0 0 auto;
-  display: flex; align-items: center; justify-content: center;
-}
-.ftLogo svg { width: 15px; height: 15px; }
-.topbarTitle { font-size: 13.5px; font-weight: 700; color: var(--white); white-space: nowrap; }
-.topbarSep { color: var(--muted-2); font-size: 13px; }
-.topbarTool {
-  font-size: 13.5px; font-weight: 600; color: var(--teal-400); white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis;
-}
-.topbarRight { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.pillBtn {
-  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); color: var(--white);
-  font-size: 12px; font-weight: 600; padding: 6px 11px; border-radius: 8px;
-  display: flex; align-items: center; gap: 5px; cursor: pointer; text-decoration: none;
-}
-.pillBtn:hover { background: rgba(255, 255, 255, 0.11); }
-.avatar {
-  width: 26px; height: 26px; border-radius: 8px; background: var(--teal-500); color: #04302b;
-  font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center;
-}
+/* The top bar lives in toolkit.js — shared across both repos, shadow-DOM
+   isolated and already role-aware. Its styles used to sit here; keeping a
+   second bar in this file only ever produced two stacked headers. */
 
 /* ============ HERO — same shell everywhere, `data-mode` sets the accent ============ */
 .hero {

@@ -7,7 +7,12 @@ type BadgeStyle = "admin" | "agent" | "wip";
 interface ToolShellProps {
   /** Drives the accent color (green for admin, blue for agent) across icon, badge, metric accents, and left-edge on cards */
   mode: Mode;
-  /** Shown in the top bar breadcrumb, e.g. "Profit Engine" */
+  /**
+   * Tool name. The top bar lives in toolkit.js (loaded from
+   * ai.fundingtier.com on every Funding Tier page, in shadow DOM, already
+   * role-aware) rather than here — two bars stacked was the alternative. This
+   * is published as data-ft-tool so that bar can show the breadcrumb.
+   */
   tool: string;
   /** Small label above the title, e.g. "ADMIN · BACKEND ROUTING" */
   eyebrow: string;
@@ -15,8 +20,6 @@ interface ToolShellProps {
   badge?: { text: string; style?: BadgeStyle };
   title: string;
   subtitle: string;
-  toolsHref?: string;
-  crmHref?: string;
   /** Metrics grid / control row / tab strip that sits inside the hero, under the subtitle */
   heroSlot?: ReactNode;
   /** Page body content below the hero */
@@ -30,33 +33,11 @@ export default function ToolShell({
   badge,
   title,
   subtitle,
-  toolsHref = "/agent-tools",
-  crmHref = "https://app.gohighlevel.com",
   heroSlot,
   children,
 }: ToolShellProps) {
   return (
-    <div className={styles.frame}>
-      {/* TOP BAR — identical on every page, no page-specific props except `tool` */}
-      <div className={styles.topbar}>
-        <div className={styles.topbarLeft}>
-          <div className={styles.ftLogo}>
-            <svg viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="9.5" stroke="#0b1622" strokeWidth="2.2" />
-              <path d="M12 2.5V12L18 15.5" stroke="#0b1622" strokeWidth="2.2" strokeLinecap="round" />
-            </svg>
-          </div>
-          <span className={styles.topbarTitle}>Funding Tier Tools</span>
-          <span className={styles.topbarSep}>/</span>
-          <span className={styles.topbarTool}>{tool}</span>
-        </div>
-        <div className={styles.topbarRight}>
-          <a className={styles.pillBtn} href={toolsHref}>Tools ⌄</a>
-          <a className={styles.pillBtn} href={crmHref} target="_blank" rel="noreferrer">CRM ↗</a>
-          <div className={styles.avatar}>NP</div>
-        </div>
-      </div>
-
+    <div className={styles.frame} data-ft-tool={tool}>
       {/* HERO — same shell, `mode` sets the accent color, `heroSlot` carries the page-specific content */}
       <div className={styles.hero} data-mode={mode}>
         <div className={styles.heroTop}>
