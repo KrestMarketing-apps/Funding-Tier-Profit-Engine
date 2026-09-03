@@ -14,7 +14,8 @@ import {
   ldProgram, LD_ESTIMATED_SETTLEMENT_RATE, LD_PROGRAM_FEE_ATTORNEY,
   LD_PROGRAM_FEE_STANDARD, LD_ATTORNEY_STATES, LD_MIN_DEPOSIT,
   LD_LEGAL_FEE_MONTHLY, LD_GATEWAY_FEE_MONTHLY, LD_GATEWAY_SETUP_FEE,
-  LD_SPLIT_SURCHARGE_PER_PAYMENT, type LdProgram,
+  LD_SPLIT_SURCHARGE_PER_PAYMENT, ldEscrowProjection,
+  LD_FIRST_SETTLEMENT_MILESTONE_MONTH, type LdProgram,
 } from "./levelDebtEngine";
 
 // ─────────────────────────────────────────────
@@ -1498,6 +1499,82 @@ function KnowledgeBase({ open, onClose }: { open:boolean; onClose:()=>void }) {
 }
 
 // ─────────────────────────────────────────────
+// ESCROW SAVINGS PROJECTION
+//
+// What actually lands in the client's savings account each month, once the
+// legal and gateway fees come out of the draft. Month 1 is lighter by the
+// one-time setup fee — the draft is unchanged, the savings contribution is not.
+// ─────────────────────────────────────────────
+
+function EscrowProjection({ program }: { program: LdProgram }) {
+  const [open, setOpen] = useState(false);
+  const rows = useMemo(() => ldEscrowProjection(program), [program]);
+  if (!program.eligible || rows.length === 0) return null;
+
+  const milestone = rows.find(r => r.month === LD_FIRST_SETTLEMENT_MILESTONE_MONTH);
+
+  return (
+    <div style={{ marginTop: 11 }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width:"100%", padding:"8px 11px", borderRadius:9, cursor:"pointer",
+          border:`1px solid ${FT_GREEN}44`, background:FT_GREEN+"0d", color:FT_GREEN_DARK,
+          fontWeight:800, fontSize:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span>{open ? "Hide" : "See"} Escrow Account Savings Projection</span>
+        <span style={{ fontWeight:900 }}>{open ? "−" : "+"}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          {milestone && (
+            <div style={{ background:FT_GREEN+"11", border:`1px solid ${FT_GREEN}44`, borderRadius:10,
+              padding:"9px 12px", marginBottom:10, fontSize:12, color:"#475569", lineHeight:1.6 }}>
+              <strong style={{ color:FT_GREEN_DARK }}>
+                By month {LD_FIRST_SETTLEMENT_MILESTONE_MONTH}: {money.format(milestone.cumulative)} saved
+              </strong>
+              {" "}— roughly when first settlements can begin to be attempted.
+            </div>
+          )}
+          <div style={{ overflowX:"auto", maxHeight:300, border:"1px solid #e2e8f0", borderRadius:10 }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead><tr style={{ background:"#f8fafc" }}>
+                {["Mo","Draft","Fees out","To savings","Balance"].map(h =>
+                  <th key={h} style={{ ...TH, color:FT_GREEN_DARK, padding:"7px 9px" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {rows.map(r => {
+                  const isMilestone = r.month === LD_FIRST_SETTLEMENT_MILESTONE_MONTH;
+                  return (
+                    <tr key={r.month} style={{ background: isMilestone ? FT_GREEN+"1a" : (r.month%2 ? "#f8fafc" : "#fff") }}>
+                      <td style={{ ...TD, padding:"6px 9px", fontWeight: isMilestone||r.month===1 ? 800 : 400 }}>
+                        {r.month}
+                        {r.month===1 && <span style={{ marginLeft:5, fontSize:9, color:FT_AMBER, fontWeight:800 }}>+ setup</span>}
+                        {isMilestone && <span style={{ marginLeft:5, fontSize:9, color:FT_GREEN_DARK, fontWeight:800 }}>1st settlements</span>}
+                      </td>
+                      <td style={{ ...TD, padding:"6px 9px" }}>{money.format(r.payment)}</td>
+                      <td style={{ ...TD, padding:"6px 9px", color: r.month===1 ? FT_AMBER : "#64748b" }}>
+                        −{money.format(r.feesTaken)}
+                      </td>
+                      <td style={{ ...TD, padding:"6px 9px" }}>{money.format(r.toEscrow)}</td>
+                      <td style={{ ...TD, padding:"6px 9px", borderRight:"none", fontWeight:700,
+                        color: isMilestone ? FT_GREEN_DARK : "#0f172a" }}>{money.format(r.cumulative)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize:11, color:"#94a3b8", marginTop:7, lineHeight:1.6 }}>
+            Deposits net of the legal and gateway fees only. Settlement payouts and Level Debt's program fee
+            draw this balance down as accounts settle, so read it as the ceiling on funds available to settle
+            with — not a forecast of the balance.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // SNAPSHOT CARD HEADER
 // ─────────────────────────────────────────────
 
@@ -1842,14 +1919,14 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
                     + (deal.ld.program.splitPayments ? `\n+ $${LD_SPLIT_SURCHARGE_PER_PAYMENT} × 2 drafts` : "")
                     + `\n= ${money.format(deal.ld.program.monthlyPayment)}`
                     + (deal.ld.program.perDraft ? ` (2 × ${money.format(deal.ld.program.perDraft)})` : "")
-                    + `\n\nMonth 1 is ${money.format(deal.ld.program.firstMonthPayment)} — the $${LD_GATEWAY_SETUP_FEE} gateway setup fee is charged once.\n\n`
+                    + `\n\nThe same figure every month. The one-time $${LD_GATEWAY_SETUP_FEE} gateway setup fee does not raise the month 1 draft — it comes out of that payment, so month 1 simply puts $${LD_GATEWAY_SETUP_FEE} less into savings.\n\n`
                     + `${ldAttorneyModel ? "Attorney-model rate in play." : `Attorney-model states use ${Math.round(LD_PROGRAM_FEE_ATTORNEY*100)}% instead.`}`
                   : undefined} />
               <MetricCard title="Settlement Deposit"
                 value={deal.ld.program.eligible ? money.format(deal.ld.program.monthlyDeposit) : "N/A"}
                 inlineTag={deal.ld.program.belowMinimum ? "⚠ under $250" : "of the payment"}
                 subtitle={deal.ld.program.eligible
-                  ? `+ ${money.format(deal.ld.program.ancillaryMonthly)} fees · month 1 ${money.format(deal.ld.program.firstMonthPayment)}`
+                  ? `+ ${money.format(deal.ld.program.ancillaryMonthly)} fees every month — same draft throughout`
                   : undefined} />
               <MetricCard title="Gross Revenue" value={deal.ld.eligible ? money.format(deal.ld.grossRevenue) : "N/A"}
                 subtitle="8% of enrolled debt — unaffected by client fees" />
@@ -1864,6 +1941,7 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
                 </div>
               )}
             </div>
+            <EscrowProjection program={deal.ld.program} />
           </div>
 
           {/* ELITE LEGAL PRACTICE — resolution */}
