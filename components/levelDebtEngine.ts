@@ -44,11 +44,15 @@ export const LD_GATEWAY_SETUP_FEE = 10.95;
 export const LD_SPLIT_SURCHARGE_PER_PAYMENT = 0.515;
 
 /**
- * Monthly legal fee. NOT present on the standard Forth debt settlement plan —
- * the live schedule's total fees reconcile exactly without it. Left as an
- * input, defaulting to zero, until it is confirmed which plans carry it.
+ * Monthly legal fee. A new addition — Forth's current schedule does not show
+ * it yet, so a plan priced here will read $19.99/mo higher than the same plan
+ * in Forth until Forth catches up. That gap is expected, not a discrepancy.
+ *
+ * It behaves like every other fee: it goes into total fees, so it raises the
+ * program cost and therefore the draft. The amount reaching savings each month
+ * is unchanged — the client pays the fee, the settlement fund does not.
  */
-export const LD_LEGAL_FEE_MONTHLY = 0;
+export const LD_LEGAL_FEE_MONTHLY = 19.99;
 
 /** Program lengths Forth offers. */
 export const LD_TERM_MIN = 12;

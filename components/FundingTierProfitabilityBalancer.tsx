@@ -15,7 +15,7 @@ import {
   LD_SUCCESS_FEE_ATTORNEY, LD_ATTORNEY_STATES, LD_MIN_PAYMENT,
   LD_GATEWAY_FEE_MONTHLY, LD_GATEWAY_SETUP_FEE, LD_SPLIT_SURCHARGE_PER_PAYMENT,
   LD_FIRST_SETTLEMENT_MILESTONE_MONTH, LD_TERM_MIN, LD_TERM_MAX,
-  LD_SETTLEMENT_PCT_DEFAULT, type LdProgram,
+  LD_SETTLEMENT_PCT_DEFAULT, LD_LEGAL_FEE_MONTHLY, type LdProgram,
 } from "./levelDebtEngine";
 
 // ─────────────────────────────────────────────
@@ -266,6 +266,8 @@ export type DealAnalysisArgs = {
   /** Program length. Chosen in Forth, not derived — null follows the default. */
   ldTerm: number | null;
   ldSettlementPct: number;
+  /** The new monthly legal fee. Off reproduces Forth's current schedule. */
+  ldLegalFee: boolean;
   adjustedUrgency: number;
   levelRepPct: number;
   csRepUpfront: number; csRepAfter4: number;
@@ -296,6 +298,7 @@ function analyzeDeal(a: DealAnalysisArgs): DealAnalysis {
     attorneyModel: a.ldAttorneyModel,
     splitPayments: a.ldSplitPayments,
     settlementPct: a.ldSettlementPct,
+    legalFeeMonthly: a.ldLegalFee ? LD_LEGAL_FEE_MONTHLY : 0,
   });
 
   const ld = {
@@ -1628,6 +1631,7 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
   const [ldSplitPayments,  setLdSplitPayments]  = useState(false);
   const [ldTerm,           setLdTerm]           = useState<number|null>(null);
   const [ldSettlementPct,  setLdSettlementPct]  = useState(LD_SETTLEMENT_PCT_DEFAULT);
+  const [ldLegalFee,       setLdLegalFee]       = useState(true);
   const [cashUrgency,      setCashUrgency]      = useState(50);
   const [levelRepPct,      setLevelRepPct]      = useState(1.25);
   const [csRepUpfront,     setCsRepUpfront]     = useState(200);
@@ -1675,10 +1679,10 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
 
   const analysisArgs = useMemo(() => ({
     csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel, ldSplitPayments,
-    ldTerm, ldSettlementPct,
+    ldTerm, ldSettlementPct, ldLegalFee,
     adjustedUrgency: stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4,
   }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel, ldSplitPayments,
-      ldTerm, ldSettlementPct, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
+      ldTerm, ldSettlementPct, ldLegalFee, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
 
   const deal = useMemo(
     () => analyzeDeal({ debtAmount, elpTerms: elpTermsFor(debtAmount), ...analysisArgs }),
@@ -1946,6 +1950,27 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
                 ))}
               </div>
             </div>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:11, flexWrap:"wrap" }}>
+              <span style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:0.3 }}>
+                Legal Fee
+              </span>
+              <InlineTip width={300} text={
+                `A new ${money2.format(LD_LEGAL_FEE_MONTHLY)}/mo client fee. Forth's schedule does not show it yet, so with this on a plan reads `
+                + `${money2.format(LD_LEGAL_FEE_MONTHLY)}/mo higher here than the same plan in Forth — expected, not a discrepancy.\n\n`
+                + `Switch it off to reconcile against Forth's current output.\n\n`
+                + `It raises the draft but not the settlement fund: the client pays it, savings per month are unchanged.`} />
+              <div style={{ display:"flex", gap:5, flex:1, minWidth:180 }}>
+                {[{ v:true, l:`${money2.format(LD_LEGAL_FEE_MONTHLY)}/mo` }, { v:false, l:"None — match Forth" }].map(o => (
+                  <button key={String(o.v)} onClick={() => setLdLegalFee(o.v)}
+                    style={{ flex:1, padding:"6px 5px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:11,
+                      border:`1px solid ${ldLegalFee===o.v?FT_GREEN:"#cbd5e1"}`,
+                      background:ldLegalFee===o.v?FT_GREEN+"1a":"#fff",
+                      color:ldLegalFee===o.v?FT_GREEN_DARK:"#64748b" }}>
+                    {o.l}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="ft-grid-2-inner">
               <MetricCard title="Debt Amount" value={money.format(deal.debtAmount)} />
               <MetricCard title="Payment / Monthly"
@@ -1956,6 +1981,7 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
                     + `Settlement target ${money.format(deal.ld.program.settlementTarget)} (${Math.round(deal.ld.program.settlementPct*100)}% of enrolled debt)\n`
                     + `+ success fee ${money.format(deal.ld.program.successFeeTotal)} (${Math.round(deal.ld.program.successFeeRate*100)}%)\n`
                     + `+ gateway $${LD_GATEWAY_FEE_MONTHLY}/mo × ${deal.ld.program.term} + $${LD_GATEWAY_SETUP_FEE} setup\n`
+                    + (deal.ld.program.legalFeeMonthly ? `+ legal fee ${money2.format(deal.ld.program.legalFeeMonthly)}/mo × ${deal.ld.program.term}\n` : "")
                     + (deal.ld.program.splitSurcharge ? `+ $${LD_SPLIT_SURCHARGE_PER_PAYMENT} × 2 drafts/mo\n` : "")
                     + `= program cost ${money.format(deal.ld.program.totalProgramCost)} ÷ ${deal.ld.program.term} months\n`
                     + `= ${money.format(deal.ld.program.monthlyPayment)}`
