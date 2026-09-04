@@ -503,9 +503,9 @@ function MetricCard({ title, value, subtitle, tooltip, inlineTag, accent, highli
     <div style={{ ...card, position:"relative",
       ...(highlight ? { background:FT_GREEN+"0d", border:`1px solid ${FT_GREEN}55` } : null) }}>
       <div style={{ fontSize:11, fontWeight:700, color:"#64748b", marginBottom:7,
-        textTransform:"uppercase", letterSpacing:0.4,
-        display:"flex", alignItems:"center", justifyContent:"space-between", gap:4 }}>
-        <span style={{ display:"flex", alignItems:"center", gap:4 }}>
+        textTransform:"uppercase", letterSpacing:0.4, minWidth:0,
+        display:"flex", alignItems:"center", justifyContent:"space-between", gap:4, flexWrap:"wrap" }}>
+        <span style={{ display:"flex", alignItems:"center", gap:4, minWidth:0 }}>
           {title}
           {tooltip && (
             <span onMouseEnter={() => setShowTip(true)} onMouseLeave={() => setShowTip(false)}
@@ -514,7 +514,8 @@ function MetricCard({ title, value, subtitle, tooltip, inlineTag, accent, highli
                 color:"#fff", fontSize:9, fontWeight:900, cursor:"help", flexShrink:0 }}>?</span>
           )}
         </span>
-        {inlineTag && <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8", fontStyle:"italic", textTransform:"none", whiteSpace:"nowrap" }}>{inlineTag}</span>}
+        {/* Was nowrap, which is what forced these tiles wider than their track. */}
+        {inlineTag && <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8", fontStyle:"italic", textTransform:"none", minWidth:0 }}>{inlineTag}</span>}
       </div>
       {showTip && tooltip && (
         <div style={{ position:"absolute", top:"100%", left:0, zIndex:100,
@@ -1885,87 +1886,10 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           <div style={card}>
             <SnapshotHead k="LD" logo={LEVEL_DEBT_LOGO} name="Level Debt"
               warn={!deal.ld.eligible ? "Under $7k" : null} />
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:11, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:0.3 }}>
-                Success Fee
-              </span>
-              <InlineTip width={300} text={
-                `Level Debt runs an attorney model in ${LD_ATTORNEY_STATES.length} states, where the client program fee is `
-                + `${Math.round(LD_SUCCESS_FEE_ATTORNEY*100)}% instead of ${Math.round(LD_SUCCESS_FEE_STANDARD*100)}%:\n\n`
-                + LD_ATTORNEY_STATES.join(", ")
-                + `\n\nThis raises what the CLIENT pays each month. It does not change Funding Tier's 8% — that is a share of enrolled debt and is unaffected by the fee rate.`} />
-              <div style={{ display:"flex", gap:5, flex:1, minWidth:180 }}>
-                {[{ v:false, l:`Standard ${Math.round(LD_SUCCESS_FEE_STANDARD*100)}%` },
-                  { v:true,  l:`Attorney ${Math.round(LD_SUCCESS_FEE_ATTORNEY*100)}%` }].map(o => (
-                  <button key={String(o.v)} onClick={() => setLdAttorneyModel(o.v)}
-                    style={{ flex:1, padding:"6px 5px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:11,
-                      border:`1px solid ${ldAttorneyModel===o.v?FT_GREEN:"#cbd5e1"}`,
-                      background:ldAttorneyModel===o.v?FT_GREEN+"1a":"#fff",
-                      color:ldAttorneyModel===o.v?FT_GREEN_DARK:"#64748b" }}>
-                    {o.l}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:11, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:0.3 }}>
-                Program Length
-              </span>
-              <select value={ldTerm ?? ldDefaultTerm(debtAmount)}
-                onChange={e => setLdTerm(Number(e.target.value))}
-                style={{ padding:"5px 8px", borderRadius:8, border:"1px solid #cbd5e1", fontSize:12, fontWeight:700, color:"#0f172a", background:"#fff" }}>
-                {Array.from({ length: (LD_TERM_MAX - LD_TERM_MIN) / 6 + 1 }, (_, i) => LD_TERM_MIN + i * 6).map(t => (
-                  <option key={t} value={t}>{t} months</option>
-                ))}
-              </select>
-              <span style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:0.3 }}>
-                Est. Settlement
-              </span>
-              <select value={ldSettlementPct}
-                onChange={e => setLdSettlementPct(Number(e.target.value))}
-                style={{ padding:"5px 8px", borderRadius:8, border:"1px solid #cbd5e1", fontSize:12, fontWeight:700, color:"#0f172a", background:"#fff" }}>
-                {[0.4, 0.45, 0.5, 0.55, 0.6].map(v => (
-                  <option key={v} value={v}>{Math.round(v*100)}%</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:11, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:0.3 }}>
-                Draft Schedule
-              </span>
-              <div style={{ display:"flex", gap:5, flex:1, minWidth:180 }}>
-                {[{ v:false, l:"Monthly · 1 draft" }, { v:true, l:"Semi-monthly · 2" }].map(o => (
-                  <button key={String(o.v)} onClick={() => setLdSplitPayments(o.v)}
-                    style={{ flex:1, padding:"6px 5px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:11,
-                      border:`1px solid ${ldSplitPayments===o.v?FT_GREEN:"#cbd5e1"}`,
-                      background:ldSplitPayments===o.v?FT_GREEN+"1a":"#fff",
-                      color:ldSplitPayments===o.v?FT_GREEN_DARK:"#64748b" }}>
-                    {o.l}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:11, flexWrap:"wrap" }}>
-              <span style={{ fontSize:11, fontWeight:800, color:"#64748b", textTransform:"uppercase", letterSpacing:0.3 }}>
-                Legal Fee
-              </span>
-              <InlineTip width={300} text={
-                `A new ${money2.format(LD_LEGAL_FEE_MONTHLY)}/mo client fee. Forth's schedule does not show it yet, so with this on a plan reads `
-                + `${money2.format(LD_LEGAL_FEE_MONTHLY)}/mo higher here than the same plan in Forth — expected, not a discrepancy.\n\n`
-                + `Switch it off to reconcile against Forth's current output.\n\n`
-                + `It raises the draft but not the settlement fund: the client pays it, savings per month are unchanged.`} />
-              <div style={{ display:"flex", gap:5, flex:1, minWidth:180 }}>
-                {[{ v:true, l:`${money2.format(LD_LEGAL_FEE_MONTHLY)}/mo` }, { v:false, l:"None — match Forth" }].map(o => (
-                  <button key={String(o.v)} onClick={() => setLdLegalFee(o.v)}
-                    style={{ flex:1, padding:"6px 5px", borderRadius:8, cursor:"pointer", fontWeight:800, fontSize:11,
-                      border:`1px solid ${ldLegalFee===o.v?FT_GREEN:"#cbd5e1"}`,
-                      background:ldLegalFee===o.v?FT_GREEN+"1a":"#fff",
-                      color:ldLegalFee===o.v?FT_GREEN_DARK:"#64748b" }}>
-                    {o.l}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* The client-program controls (success fee, term, estimated settlement,
+                draft schedule, legal fee) used to sit here. None of them move Funding
+                Tier's 8%, so they were noise on a profit card — the client figures below
+                now run on the standard defaults. */}
             <div className="ft-grid-2-inner">
               <MetricCard title="Debt Amount" value={money.format(deal.debtAmount)} />
               <MetricCard title="Payment / Monthly"
@@ -2371,7 +2295,15 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
         .ft-grid-4       { display: grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap: 14px; }
         .ft-grid-3       { display: grid; grid-template-columns: repeat(auto-fit,minmax(230px,1fr)); gap: 14px; }
         .ft-grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-        .ft-grid-2-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+        .ft-grid-2-inner { display: grid; grid-template-columns: repeat(auto-fit,minmax(128px,1fr)); gap: 11px; }
+
+        /* Grid items default to min-width:auto, so a tile whose contents refuse
+           to shrink — a nowrap "Months 3–35, per month" tag, say — pushes past
+           its track and spills outside the card. This is what made the ELP and
+           Consumer Shield tiles hang over their card edges. */
+        .ft-grid-5 > *, .ft-grid-4 > *, .ft-grid-3 > *,
+        .ft-grid-2 > *, .ft-grid-2-inner > * { min-width: 0; }
+
         @media (max-width: 720px) {
           .ft-grid-5, .ft-grid-4, .ft-grid-3, .ft-grid-2, .ft-grid-2-inner { grid-template-columns: 1fr !important; }
         }
