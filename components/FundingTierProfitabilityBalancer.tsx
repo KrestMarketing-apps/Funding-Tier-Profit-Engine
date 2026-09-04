@@ -13,7 +13,6 @@ import {
 import {
   ldProgram, ldSchedule, ldDefaultTerm, LD_SUCCESS_FEE_STANDARD,
   LD_SUCCESS_FEE_ATTORNEY, LD_ATTORNEY_STATES, LD_MIN_PAYMENT,
-  LD_GATEWAY_FEE_MONTHLY, LD_GATEWAY_SETUP_FEE, LD_SPLIT_SURCHARGE_PER_PAYMENT,
   LD_FIRST_SETTLEMENT_MILESTONE_MONTH, LD_TERM_MIN, LD_TERM_MAX,
   LD_SETTLEMENT_PCT_DEFAULT, LD_LEGAL_FEE_MONTHLY, type LdProgram,
 } from "./levelDebtEngine";
@@ -1513,9 +1512,12 @@ function KnowledgeBase({ open, onClose }: { open:boolean; onClose:()=>void }) {
 // ─────────────────────────────────────────────
 // ESCROW SAVINGS PROJECTION
 //
-// What actually lands in the client's savings account each month, once the
-// legal and gateway fees come out of the draft. Month 1 is lighter by the
-// one-time setup fee — the draft is unchanged, the savings contribution is not.
+// What accumulates in the client's savings account month by month.
+//
+// The draft is quoted as ONE number. We do not break out what the payment is
+// allocated to — the fee itemization is fine print, not a talking point — so
+// this projection shows only the payment, what lands in savings, and the
+// running balance. The per-fee columns are deliberately not rendered.
 // ─────────────────────────────────────────────
 
 function EscrowProjection({ program }: { program: LdProgram }) {
@@ -1524,7 +1526,6 @@ function EscrowProjection({ program }: { program: LdProgram }) {
   if (!program.eligible || rows.length === 0) return null;
 
   const milestone = rows.find(r => r.month === LD_FIRST_SETTLEMENT_MILESTONE_MONTH);
-  const hasLegal = rows[0].legalFee > 0;
 
   return (
     <div style={{ marginTop: 11 }}>
@@ -1551,7 +1552,7 @@ function EscrowProjection({ program }: { program: LdProgram }) {
           <div style={{ overflowX:"auto", maxHeight:300, border:"1px solid #e2e8f0", borderRadius:10 }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
               <thead><tr style={{ background:"#f8fafc" }}>
-                {["#","Success Fee","Gateway Setup","Gateway Monthly", ...(hasLegal?["Legal"]:[]), "Savings","Balance","Total Payment"].map(h =>
+                {["#","Monthly Payment","Into Savings","Balance"].map(h =>
                   <th key={h} style={{ ...TH, color:FT_GREEN_DARK, padding:"7px 9px" }}>{h}</th>)}
               </tr></thead>
               <tbody>
@@ -1563,16 +1564,10 @@ function EscrowProjection({ program }: { program: LdProgram }) {
                         {r.month}
                         {isMilestone && <span style={{ marginLeft:5, fontSize:9, color:FT_GREEN_DARK, fontWeight:800 }}>1st settlements</span>}
                       </td>
-                      <td style={{ ...TD, padding:"6px 9px" }}>{money2.format(r.successFee)}</td>
-                      <td style={{ ...TD, padding:"6px 9px", color:r.gatewaySetup?FT_AMBER:"#94a3b8", fontWeight:r.gatewaySetup?800:400 }}>
-                        {money2.format(r.gatewaySetup)}
-                      </td>
-                      <td style={{ ...TD, padding:"6px 9px" }}>{money2.format(r.gatewayMonthly)}</td>
-                      {hasLegal && <td style={{ ...TD, padding:"6px 9px" }}>{money2.format(r.legalFee)}</td>}
+                      <td style={{ ...TD, padding:"6px 9px" }}>{money2.format(r.totalPayment)}</td>
                       <td style={{ ...TD, padding:"6px 9px", fontWeight:700 }}>{money2.format(r.savings)}</td>
-                      <td style={{ ...TD, padding:"6px 9px", fontWeight:700,
+                      <td style={{ ...TD, padding:"6px 9px", fontWeight:700, borderRight:"none",
                         color: isMilestone ? FT_GREEN_DARK : "#0f172a" }}>{money.format(r.cumulativeSavings)}</td>
-                      <td style={{ ...TD, padding:"6px 9px", borderRight:"none" }}>{money2.format(r.totalPayment)}</td>
                     </tr>
                   );
                 })}
@@ -1580,9 +1575,9 @@ function EscrowProjection({ program }: { program: LdProgram }) {
             </table>
           </div>
           <div style={{ fontSize:11, color:"#94a3b8", marginTop:7, lineHeight:1.6 }}>
-            Same columns Forth renders. Savings is the remainder after each month's fees — month 1 is lighter by
-            the one-time setup fee while the draft itself never moves. Settlement payouts draw this balance down
-            as accounts settle, so read it as funds accumulated, not funds remaining.
+            The payment is the same every month. Month 1 puts slightly less into savings, and the client is quoted
+            the payment — not a breakdown of what it covers. Settlement payouts draw this balance down as accounts
+            settle, so read it as funds accumulated, not funds remaining.
           </div>
         </div>
       )}
@@ -1977,25 +1972,19 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
                 value={deal.ld.program.eligible ? money.format(deal.ld.program.monthlyPayment) : "N/A"}
                 inlineTag={deal.ld.program.eligible ? `${deal.ld.program.term} months` : undefined}
                 tooltip={deal.ld.program.eligible
-                  ? `The same draft every month.\n\n`
-                    + `Settlement target ${money.format(deal.ld.program.settlementTarget)} (${Math.round(deal.ld.program.settlementPct*100)}% of enrolled debt)\n`
-                    + `+ success fee ${money.format(deal.ld.program.successFeeTotal)} (${Math.round(deal.ld.program.successFeeRate*100)}%)\n`
-                    + `+ gateway $${LD_GATEWAY_FEE_MONTHLY}/mo × ${deal.ld.program.term} + $${LD_GATEWAY_SETUP_FEE} setup\n`
-                    + (deal.ld.program.legalFeeMonthly ? `+ legal fee ${money2.format(deal.ld.program.legalFeeMonthly)}/mo × ${deal.ld.program.term}\n` : "")
-                    + (deal.ld.program.splitSurcharge ? `+ $${LD_SPLIT_SURCHARGE_PER_PAYMENT} × 2 drafts/mo\n` : "")
-                    + `= program cost ${money.format(deal.ld.program.totalProgramCost)} ÷ ${deal.ld.program.term} months\n`
-                    + `= ${money.format(deal.ld.program.monthlyPayment)}`
-                    + (deal.ld.program.perDraft ? ` (2 × ${money.format(deal.ld.program.perDraft)})` : "")
-                    + `\n\nThe setup fee is inside the program cost, so it is already spread across the term — it does not raise month 1. It comes out of month 1's savings instead.`
+                  ? `${money.format(deal.ld.program.monthlyPayment)} a month for ${deal.ld.program.term} months`
+                    + (deal.ld.program.perDraft ? `, drafted as 2 × ${money.format(deal.ld.program.perDraft)}` : "")
+                    + `. The same every month — month 1 included.\n\n`
+                    + `Quote the payment. What it is allocated to is fine print and is not broken down for the client.`
                   : undefined} />
               <MetricCard title="Est. Client Savings"
                 value={deal.ld.program.eligible ? money.format(deal.ld.program.estClientSavings) : "N/A"}
                 inlineTag={deal.ld.program.belowMinimum ? "⚠ under $250/mo" : undefined}
                 subtitle={deal.ld.program.eligible
-                  ? `${money.format(deal.debtAmount)} debt − ${money.format(deal.ld.program.totalProgramCost)} program cost`
+                  ? `vs. ${money.format(deal.debtAmount)} enrolled`
                   : undefined}
                 tooltip={deal.ld.program.eligible
-                  ? `Total fees ${money.format(deal.ld.program.totalFees)} = success fee ${money.format(deal.ld.program.successFeeTotal)} + gateway ${money.format(deal.ld.program.gatewayMonthly * deal.ld.program.term + deal.ld.program.gatewaySetup)}.`
+                  ? `What the client keeps: ${money.format(deal.debtAmount)} enrolled less everything the program costs them over ${deal.ld.program.term} months.\n\nInternal figure — the cost side is not itemized for the client.`
                   : undefined} />
               <MetricCard title="Gross Revenue" value={deal.ld.eligible ? money.format(deal.ld.grossRevenue) : "N/A"}
                 subtitle="8% of enrolled debt — unaffected by client fees" />
