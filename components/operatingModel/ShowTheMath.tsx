@@ -42,14 +42,19 @@ export function ShowTheMath({ inputs, results, month, setMonth, open, onClose }:
         position: 'fixed', inset: 0, zIndex: 3000,
         background: 'rgba(15,23,42,.55)', backdropFilter: 'blur(3px)',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        padding: '3vh 16px',
+        // toolkit.js's bar is fixed at the top of every page and sits above
+        // this overlay, so opening at inset 0 clipped the modal's own header —
+        // its title and the MONTH control disappeared behind the bar. Start
+        // below the bar instead, and give back the height that costs.
+        padding: 'calc(var(--ft-toolkit-height, 0px) + 2vh) 16px 2vh',
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
           background: T.bg, borderRadius: 16, width: 'min(1180px, 100%)',
-          maxHeight: '94vh', display: 'flex', flexDirection: 'column',
+          maxHeight: 'calc(96vh - var(--ft-toolkit-height, 0px))',
+          display: 'flex', flexDirection: 'column',
           overflow: 'hidden', boxShadow: '0 30px 80px rgba(15,23,42,.45)',
         }}
       >
