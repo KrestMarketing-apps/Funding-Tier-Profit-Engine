@@ -41,8 +41,15 @@ export async function middleware(req: NextRequest, event: NextFetchEvent) {
   const session = await readSession(req.cookies.get(COOKIE)?.value, secret);
 
   if (session && ALLOWED_ROLES.includes(session.role)) {
-    const res = NextResponse.next();
-    // Handy for server components and for support questions ("who was this?").
+    // Forwarded on the REQUEST so server components can read the role via
+    // next/headers — a response header never reaches them. Pages use this to
+    // drive ToolShell's mode instead of hardcoding it per page.
+    const forwarded = new Headers(req.headers);
+    forwarded.set("x-ft-user", session.email);
+    forwarded.set("x-ft-role", session.role);
+
+    const res = NextResponse.next({ request: { headers: forwarded } });
+    // Also on the response, for support questions ("who was this?").
     res.headers.set("x-ft-user", session.email);
     res.headers.set("x-ft-role", session.role);
     return res;
