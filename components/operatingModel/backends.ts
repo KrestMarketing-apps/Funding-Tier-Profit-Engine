@@ -1,7 +1,16 @@
 import type {
-  BackendKey, LegacyBand, LegacyTerms, LevelDebtTerms, ModelInputs,
+  BackendKey, CommissionTier, LegacyBand, LegacyTerms, LevelDebtTerms, ModelInputs,
   ShieldProgram, ShieldTerms, SurvivalCurveInputs,
 } from './types';
+
+/** Highest tier whose threshold the volume clears. Shared by every graduated-rate schedule. */
+export function tierRate(volume: number, tiers: CommissionTier[]): number {
+  let rate = tiers[0]?.rate ?? 0;
+  for (const tier of tiers) {
+    if (volume >= tier.threshold) rate = tier.rate;
+  }
+  return rate;
+}
 
 // ── Survival ─────────────────────────────────────────────────────────────────
 /**
@@ -31,11 +40,7 @@ export const levelDebt = {
     return dealMonth === terms.revenueRecognizedMonth ? avgDebt * terms.revenueSharePct : 0;
   },
   commissionRate(monthlyEnrolledVolume: number, terms: LevelDebtTerms): number {
-    let rate = terms.commissionTiers[0]?.rate ?? 0;
-    for (const tier of terms.commissionTiers) {
-      if (monthlyEnrolledVolume >= tier.threshold) rate = tier.rate;
-    }
-    return rate;
+    return tierRate(monthlyEnrolledVolume, terms.commissionTiers);
   },
   agentCommission(avgDebt: number, monthlyEnrolledVolume: number, terms: LevelDebtTerms): number {
     return avgDebt * levelDebt.commissionRate(monthlyEnrolledVolume, terms);

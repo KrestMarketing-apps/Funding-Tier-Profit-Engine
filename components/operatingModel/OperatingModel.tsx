@@ -81,7 +81,18 @@ function LedgerRow({ label, detail, amount, level = 0, bold, top, help }: {
 
 export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "agent" }) {
   const [inputs, setInputs] = useState<ModelInputs>(() => cloneDefaults());
-  const results = useMemo(() => runModel(inputs), [inputs]);
+  // Both rep-pay scenarios are always run, regardless of which one is active,
+  // so the Rep Pay Model panel can show a live side-by-side comparison without
+  // losing the original ("contract") numbers anywhere else in the tool.
+  const resultsContract = useMemo(
+    () => runModel({ ...inputs, repPay: { ...inputs.repPay, mode: 'contract' } }),
+    [inputs],
+  );
+  const resultsDraw = useMemo(
+    () => runModel({ ...inputs, repPay: { ...inputs.repPay, mode: 'draw' } }),
+    [inputs],
+  );
+  const results = inputs.repPay.mode === 'draw' ? resultsDraw : resultsContract;
   const horizon = results.months.length;
   const [stmtMonth, setStmtMonth] = useState(1);
   const [mathOpen, setMathOpen] = useState(false);
@@ -515,8 +526,187 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </Callout>
       </Panel>
 
+      {/* ── 4b · Rep Pay Model — draw + tiered settlement scale scenario ────── */}
+      <Panel title="4 · Rep Pay Model — Contract vs. Draw + Tiered Volume Scale" accent={T.accent}
+        tooltip="Compare each backend's own live commission schedule against an alternate pay model: hourly wage as a non-recoverable draw, plus a single commission rate — tiered on each rep's own COMBINED monthly enrolled volume across all three programs — applied uniformly to that rep's Level Debt, Consumer Shield, and Legacy Capital commission alike. A 90-day new-hire ramp window can delay when a US-based closer's early commission is earned. BPO/overseas production always prices on the contract schedule.">
+        <Row cols={2} gap={14}>
+          <Field label="Active pay model"
+            tooltip="Which scenario drives every other panel, the month-by-month table, and the headline results above. Both scenarios are always computed — this only decides which one is 'live'.">
+            <div style={{ display: 'flex', gap: 8 }}>
+              {(['contract', 'draw'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => patch({ repPay: { ...inputs.repPay, mode } })}
+                  style={{
+                    flex: 1, padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
+                    fontFamily: T.sans, fontWeight: 800, fontSize: 12,
+                    border: `1px solid ${inputs.repPay.mode === mode ? T.brand : T.line}`,
+                    background: inputs.repPay.mode === mode ? T.brand : '#fff',
+                    color: inputs.repPay.mode === mode ? '#fff' : T.body,
+                  }}
+                >
+                  {mode === 'contract' ? 'Contract (original)' : 'Draw + Tiered Scale'}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Hourly wage / draw"
+            tooltip="Not a separate input — this scenario uses whatever hourly rate is already set for each rep in the Staffing & Labor roster. It is paid as a non-recoverable floor: reps keep it regardless of production. Reps who don't produce enough are managed out via a separate 2-month policy, which is not modeled numerically here.">
+            <div style={{
+              padding: '9px 12px', borderRadius: 8, border: `1px dashed ${T.line}`,
+              fontSize: 11.5, color: T.faint, background: G.tile,
+            }}>
+              Uses each rep's existing hourly rate from the roster below — no separate setting needed.
+            </div>
+          </Field>
+        </Row>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{
+            fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+            color: T.muted, marginBottom: 8, display: 'flex', alignItems: 'center',
+          }}>
+            Draw-scenario tiers — rate by rep's combined monthly volume, all 3 programs
+            <Info text="Each closer's combined monthly enrolled volume — Level Debt + Consumer Shield + Legacy Capital together — is estimated as the month's total enrolled volume across all three programs, divided evenly across active closers (the same averaging convention the bonus engine already uses, since no panel in this model attributes a specific deal to a specific named rep). The highest threshold a rep's combined volume clears sets ONE rate, applied to every deal that rep closes that month across all three programs — a rep who diversifies into Shield or Legacy raises the volume that also lifts their Level Debt rate. The $0-$500K row is a placeholder base rate — confirm before relying on it." />
+          </div>
+          <Row cols={4} gap={10} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: T.faint, marginBottom: 4 }}>
+            <div>Threshold ($/mo, combined)</div>
+            <div>Rate</div>
+            <div></div>
+            <div></div>
+          </Row>
+          {inputs.repPay.drawTiers.map((tier, i) => (
+            <Row cols={4} gap={10} key={i} style={{ marginBottom: 6, alignItems: 'center' }}>
+              <NumberInput
+                value={tier.threshold} min={0} step={5000} prefix="$"
+                onChange={(v) => {
+                  const drawTiers = inputs.repPay.drawTiers.map((t, idx) => (idx === i ? { ...t, threshold: v } : t));
+                  patch({ repPay: { ...inputs.repPay, drawTiers } });
+                }}
+              />
+              <NumberInput
+                value={Number((tier.rate * 100).toFixed(3))} min={0} max={100} step={0.05} suffix="%"
+                onChange={(v) => {
+                  const drawTiers = inputs.repPay.drawTiers.map((t, idx) => (idx === i ? { ...t, rate: v / 100 } : t));
+                  patch({ repPay: { ...inputs.repPay, drawTiers } });
+                }}
+              />
+              <div />
+              <div style={{ textAlign: 'right' }}>
+                {inputs.repPay.drawTiers.length > 1 && (
+                  <Btn tone="danger" size="sm" onClick={() => {
+                    const drawTiers = inputs.repPay.drawTiers.filter((_, idx) => idx !== i);
+                    patch({ repPay: { ...inputs.repPay, drawTiers } });
+                  }}>Remove</Btn>
+                )}
+              </div>
+            </Row>
+          ))}
+          <Btn tone="plain" size="sm" onClick={() => {
+            const last = inputs.repPay.drawTiers[inputs.repPay.drawTiers.length - 1];
+            const drawTiers = [...inputs.repPay.drawTiers, { threshold: (last?.threshold ?? 0) + 500000, rate: last?.rate ?? 0.0175 }];
+            patch({ repPay: { ...inputs.repPay, drawTiers } });
+          }}>+ Add tier</Btn>
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <div style={{
+            fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+            color: T.muted, marginBottom: 8, display: 'flex', alignItems: 'center',
+          }}>
+            New-hire ramp / probation window — US-based reps only
+            <Info text="Not a clawback: commission on deals a US-based closer writes during their first ramp window isn't treated as EARNED until this later deal-month, instead of the backend's normal deal-month-2 schedule. This is the legally safer structure for a California employer — courts have upheld delaying WHEN a commission is earned (even a 365-day vesting window), but are hostile to clawing back money already paid. It's also standard market practice for ramping reps on larger sales teams. BPO/overseas closer hours are never subject to this window; they always price on the contract schedule." />
+          </div>
+          <Row cols={3} gap={14}>
+            <Field label="Ramp policy">
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[true, false].map((v) => (
+                  <button
+                    key={String(v)}
+                    onClick={() => patch({ repPay: { ...inputs.repPay, ramp: { ...inputs.repPay.ramp, enabled: v } } })}
+                    style={{
+                      flex: 1, padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                      fontFamily: T.sans, fontWeight: 800, fontSize: 11.5,
+                      border: `1px solid ${inputs.repPay.ramp.enabled === v ? T.brand : T.line}`,
+                      background: inputs.repPay.ramp.enabled === v ? T.brand : '#fff',
+                      color: inputs.repPay.ramp.enabled === v ? '#fff' : T.body,
+                    }}
+                  >
+                    {v ? 'Enabled' : 'Off'}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <Field label="Ramp window" hint="~90 days">
+              <NumberInput
+                value={inputs.repPay.ramp.rampMonths} min={1} max={12} suffix="months"
+                onChange={(v) => patch({ repPay: { ...inputs.repPay, ramp: { ...inputs.repPay.ramp, rampMonths: v } } })}
+              />
+            </Field>
+            <Field label="Ramp payout deal-month" hint="Normal schedule is deal-month 2">
+              <NumberInput
+                value={inputs.repPay.ramp.probationPayoutDealMonth} min={1} max={12}
+                onChange={(v) => patch({ repPay: { ...inputs.repPay, ramp: { ...inputs.repPay.ramp, probationPayoutDealMonth: v } } })}
+              />
+            </Field>
+          </Row>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <div style={{
+            fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+            color: T.muted, marginBottom: 8,
+          }}>Side-by-side — both scenarios, computed live</div>
+          <Row cols="repeat(auto-fit, minmax(178px, 1fr))" gap={10}>
+            {BACKEND_KEYS.map((k) => {
+              const c = resultsContract.partners.find((p) => p.key === k)?.repCommission ?? 0;
+              const d = resultsDraw.partners.find((p) => p.key === k)?.repCommission ?? 0;
+              return (
+                <Stat key={k} label={`${BRANDS[k].name} commission — Draw vs Contract`}
+                  value={fmtMoney(d)}
+                  sub={`Contract: ${fmtMoney(c)}`}
+                  tooltip={`${BRANDS[k].name} rep commission over the full simulation under the draw scenario, vs. the original contract schedule shown below it. All three programs now use the combined-volume tiered rate in draw mode.`}
+                  tone={d > c ? 'bad' : 'good'} />
+              );
+            })}
+            <Stat label="Total comp paid — Contract"
+              value={fmtMoney(resultsContract.totals.repCommission + resultsContract.totals.laborCost)}
+              sub="Commission (all 3 programs) + labor"
+              tooltip="Sum of all rep commission (Level Debt + Consumer Shield + Legacy Capital) plus total labor cost, over the full simulation, under the original contract schedule." />
+            <Stat label="Total comp paid — Draw"
+              value={fmtMoney(resultsDraw.totals.repCommission + resultsDraw.totals.laborCost)}
+              sub="Commission (all 3 programs) + labor"
+              tooltip="Same total, under the draw scenario. Labor cost is identical between scenarios — only how commission is calculated changes."
+              tone={
+                (resultsDraw.totals.repCommission + resultsDraw.totals.laborCost)
+                  > (resultsContract.totals.repCommission + resultsContract.totals.laborCost) ? 'bad' : 'good'
+              } />
+            <Stat label={`Final cash — Contract (mo ${resultsContract.months.length})`}
+              value={fmtMoney(resultsContract.totals.finalCash)}
+              tooltip="Cash on hand at the end of the simulation under the original contract schedule." />
+            <Stat label={`Final cash — Draw (mo ${resultsDraw.months.length})`}
+              value={fmtMoney(resultsDraw.totals.finalCash)}
+              tooltip="Cash on hand at the end of the simulation under the draw scenario."
+              tone={resultsDraw.totals.finalCash < resultsContract.totals.finalCash ? 'bad' : 'good'} />
+          </Row>
+        </div>
+
+        <Callout>
+          <strong>What changes, what doesn't.</strong> All three programs' commission is affected in draw mode — Level Debt,
+          Consumer Shield, and Legacy Capital all switch to the same tiered rate, driven by each rep's combined monthly
+          volume across all three. Hourly wages are unchanged; the draw scenario doesn't add a new cost, it changes how
+          commission is calculated: instead of each program paying its own separate schedule (Level Debt's company-wide
+          tiered %, Shield's flat per-deal commission, Legacy's flat band), one rate — set by total diversified volume —
+          applies across the board. The new-hire ramp window delays when a US-based closer's early commission is earned
+          (not a clawback of anything already paid), and never touches BPO/overseas production, which always prices on
+          the contract schedule. The 2-month non-producer policy isn't simulated as headcount churn — it's a
+          hiring/management decision that sits outside this cash-flow model, so both scenarios use whatever roster is set
+          below.
+        </Callout>
+      </Panel>
+
       {/* ── 5 · Cost stack as a ledger ─────────────────────────────────────── */}
-      <Panel title="4 · Cost stack" subtitle="Rates and multipliers — an accounting ledger, not a wall of inputs"
+      <Panel title="5 · Cost stack" subtitle="Rates and multipliers — an accounting ledger, not a wall of inputs"
         tooltip="Every cost line, its rate, its multiplier, and the resulting monthly amount for the selected statement month."
         right={MonthPicker}>
         <div style={{ overflowX: 'auto' }}>
@@ -818,7 +1008,7 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       <MonthEndReport inputs={inputs} results={results} month={stmtMonth} setMonth={setStmtMonth} />
 
       {/* ── 7 · Risk & attrition ───────────────────────────────────────────── */}
-      <Panel title="5 · Risk, reserve, and attrition" defaultOpen={false}
+      <Panel title="6 · Risk, reserve, and attrition" defaultOpen={false}
         tooltip="Cash reserve policy and the client attrition curves that shrink each cohort over time.">
         <Row cols={5} gap={12}>
           <Field label="Reserve target (months)" tooltip="How many months of overhead the business wants on hand before it considers itself safe.">

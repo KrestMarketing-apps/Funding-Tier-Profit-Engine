@@ -225,6 +225,65 @@ export interface LevelDebtTerms {
   chargebackClearMonths: number;
 }
 
+// ── Rep pay model ────────────────────────────────────────────────────────────
+// Two ways to pay reps on their production:
+//   'contract' — each backend's own live commission schedule (Level Debt's
+//                company-wide tiered %, Consumer Shield's flat per-program
+//                commission, Legacy Capital's flat band commission).
+//   'draw'     — hourly wage is a non-recoverable floor (no clawback; reps who
+//                don't produce enough are managed out via a separate 2-month
+//                policy, not modeled here), PLUS a single commission rate —
+//                tiered on each rep's own COMBINED monthly enrolled volume
+//                across ALL THREE programs (Level Debt + Consumer Shield +
+//                Legacy Capital) — applied uniformly to that rep's production
+//                on all three. Rewarding total, diversified volume rather than
+//                Level Debt volume alone is the point: a rep who also closes
+//                Shield and Legacy business raises the volume that unlocks a
+//                higher rate on everything, including Level Debt.
+//                Volume-per-rep is the average across closers on the roster
+//                that month — the same averaging convention the bonus engine
+//                already uses (see bonuses.ts), since deals aren't attributed
+//                to a specific named rep anywhere else in this model either.
+//
+// SCOPE: the draw scenario — including the ramp policy below — applies only
+// to US-based reps (Employee.type !== 'bpo'). BPO/overseas production always
+// runs on the contract schedule, split from US production by closer-hour
+// share the same way manager overrides are split by team share elsewhere in
+// this file. In the typical roster (BPO staff as openers, 0 closer hours)
+// this is a no-op; it only matters if a BPO seat is configured as a closer.
+export type RepPayMode = 'contract' | 'draw';
+
+// A rep's first RAMP window is a probationary/ramp period, not a clawback:
+// commission on deals THEY close during this window isn't treated as EARNED
+// until one payment cycle later than the standard schedule (deal-month 3
+// instead of 2, since every backend currently pays at deal-month 2) — enough
+// time to see whether the deal actually sticks before the money is owed.
+// This is the legally safer structure for a California employer: California
+// courts (Steinhebel v. LA Times Communications; Deleon v. Verizon, upholding
+// a 365-day vesting period) have consistently upheld DELAYING when a
+// commission is earned, but are hostile to clawing back a commission already
+// paid. Written into the plan up front and applied only going forward, a
+// 90-day earning delay is well inside precedent. It's also standard market
+// practice for ramping reps on large teams (a non-recoverable draw during a
+// ~90-day ramp, per 2024 sales-comp benchmarking), so it isn't a hard thing
+// to explain to a new hire: "your first 90 days of deals pay out on the 3rd
+// payment instead of the 2nd, so we can see it stuck before we owe it."
+export interface RampPolicy {
+  enabled: boolean;
+  /** Months since Employee.startMonth a US-based closer is considered "ramping". ~90 days = 3. */
+  rampMonths: number;
+  /** Deal-month a ramping closer's commission is earned/paid at, instead of the backend's normal schedule. */
+  probationPayoutDealMonth: number;
+}
+
+export interface RepPayPolicy {
+  mode: RepPayMode;
+  /** Tiered scale applied to each rep's own combined monthly enrolled volume across all three programs. */
+  drawTiers: CommissionTier[];
+  /** New-hire ramp/probation window — US-based reps only. See RampPolicy above. */
+  ramp: RampPolicy;
+}
+
 export interface ShieldProgram {
   code: string; min: number; max: number;
   payment: number; term: number; commission: number;
@@ -392,6 +451,7 @@ export interface ModelInputs {
   roster: Employee[];
   laborPolicy: LaborPolicy;
   levelDebt: LevelDebtTerms;
+  repPay: RepPayPolicy;
   consumerShield: ShieldTerms;
   legacy: LegacyTerms;
   remittanceLag: RemittanceLag;

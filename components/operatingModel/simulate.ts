@@ -7,7 +7,7 @@ import { BRANDS, makeEmployee } from './config';
 import { computeEmployeeCost, summariseRosterForMonth } from './labor';
 import {
   agentCommissionForDeal, agentPayoutMonth, buildSurvivalCurve, isPerpetuity,
-  maxRevenueMonth, revenueForDealMonth, revenueModelLabel,
+  maxRevenueMonth, revenueForDealMonth, revenueModelLabel, tierRate,
 } from './backends';
 import { buildMonthlyCosts } from './costs';
 import { computeFunnel, blendedCloseRateOnBilled } from './funnel';
@@ -26,7 +26,31 @@ function allocate(total: number, pcts: Record<BackendKey, number>): Record<Backe
   return out;
 }
 
-interface Cohort { backendKey: BackendKey; startMonth: number; dealCount: number; avgDebt: number }
+interface Cohort {
+  backendKey: BackendKey;
+  startMonth: number;
+  dealCount: number;
+  avgDebt: number;
+  /**
+   * Draw-system scenario only: the rate resolved at ORIGINATION from that
+   * month's combined cross-program rep volume, locked in like avgDebt so a
+   * headcount change before payout can't retroactively re-tier a deal that
+   * already closed. Applies uniformly to whichever backend this cohort is —
+   * Level Debt, Consumer Shield, or Legacy Capital all use the same resolved
+   * rate in draw mode. Undefined for the BPO-attributed share of a cohort
+   * (always contract-priced) or in contract mode generally.
+   */
+  repDrawRate?: number;
+  /**
+   * Ramp/probation scenario only: the deal-month this cohort's commission is
+   * earned at, overriding the backend's normal agentPayoutMonth. Set when
+   * this slice of the cohort was produced by a US-based closer still inside
+   * their ramp window at origination — locked in at origination like avgDebt,
+   * so a later hire/fire or the rep's own ramp ending doesn't retroactively
+   * change already-closed deals.
+   */
+  payoutDealMonthOverride?: number;
+}
 
 export function computeCapacity(
   inputs: ModelInputs,
@@ -154,9 +178,81 @@ export function runModel(inputs: ModelInputs): ModelResults {
     const dealsByBackend = allocate(capacity.targetDeals, inputs.volume.mixPct);
     const totalDeals = BACKEND_KEYS.reduce((s, k) => s + dealsByBackend[k], 0);
 
+    // In the draw scenario, one rate is resolved per month from each US-based
+    // rep's COMBINED enrolled volume across all three programs, then locked
+    // onto every US-attributed cohort created this month regardless of
+    // backend — a rep who diversifies into Shield/Legacy raises the volume
+    // that also lifts their Level Debt rate. BPO/overseas closer hours (if
+    // any — the default roster has none) are excluded from this population
+    // and always price on the contract schedule; their share of each
+    // backend's deals is split off by closer-hour share, the same technique
+    // used for manager overrides below.
+    const usClosers = rosterMonth.closers.filter((c) => c.employee.type !== 'bpo');
+    const bpoClosers = rosterMonth.closers.filter((c) => c.employee.type === 'bpo');
+    const usCloserHours = usClosers.reduce((s, c) => s + c.monthlyCloserHours, 0);
+    const bpoCloserHours = bpoClosers.reduce((s, c) => s + c.monthlyCloserHours, 0);
+    const totalDrawEligibleHours = usCloserHours + bpoCloserHours;
+    const usShare = totalDrawEligibleHours > 0 ? usCloserHours / totalDrawEligibleHours : 1;
+
+    let repDrawRate: number | undefined;
+    let usRampShare = 0; // share of US closer HOURS still inside their ramp window this month
+    if (inputs.repPay.mode === 'draw') {
+      const repCount = Math.max(1, usClosers.length);
+      const combinedEnrolled = BACKEND_KEYS.reduce(
+        (s, k) => s + dealsByBackend[k] * inputs.volume.avgDebt[k], 0,
+      );
+      const perRepCombinedEnrolled = (combinedEnrolled * usShare) / repCount;
+      repDrawRate = tierRate(perRepCombinedEnrolled, inputs.repPay.drawTiers);
+
+      if (inputs.repPay.ramp.enabled && usCloserHours > 0) {
+        const rampHours = usClosers
+          .filter((c) => m - c.employee.startMonth < inputs.repPay.ramp.rampMonths)
+          .reduce((s, c) => s + c.monthlyCloserHours, 0);
+        usRampShare = rampHours / usCloserHours;
+      }
+    }
+
     BACKEND_KEYS.forEach((k) => {
-      if (dealsByBackend[k] > 0) {
-        cohorts.push({ backendKey: k, startMonth: m, dealCount: dealsByBackend[k], avgDebt: inputs.volume.avgDebt[k] });
+      if (dealsByBackend[k] <= 0) {
+        rollup[k].dealsSubmitted += dealsByBackend[k];
+        rollup[k].enrolledVolume += dealsByBackend[k] * inputs.volume.avgDebt[k];
+        return;
+      }
+      if (inputs.repPay.mode === 'draw') {
+        // US-attributed share, split again into ramping vs tenured so ramping
+        // reps' deals carry the probation payout-month override while
+        // tenured reps' deals use the backend's normal schedule.
+        const usDealCount = dealsByBackend[k] * usShare;
+        const rampDealCount = usDealCount * usRampShare;
+        const tenuredDealCount = usDealCount - rampDealCount;
+        const bpoDealCount = dealsByBackend[k] - usDealCount;
+
+        if (rampDealCount > 0) {
+          cohorts.push({
+            backendKey: k, startMonth: m, dealCount: rampDealCount,
+            avgDebt: inputs.volume.avgDebt[k], repDrawRate,
+            payoutDealMonthOverride: inputs.repPay.ramp.probationPayoutDealMonth,
+          });
+        }
+        if (tenuredDealCount > 0) {
+          cohorts.push({
+            backendKey: k, startMonth: m, dealCount: tenuredDealCount,
+            avgDebt: inputs.volume.avgDebt[k], repDrawRate,
+          });
+        }
+        if (bpoDealCount > 0) {
+          // BPO/overseas share is never in draw mode — falls through to
+          // agentCommissionForDeal at payout time since repDrawRate is unset.
+          cohorts.push({
+            backendKey: k, startMonth: m, dealCount: bpoDealCount,
+            avgDebt: inputs.volume.avgDebt[k],
+          });
+        }
+      } else {
+        cohorts.push({
+          backendKey: k, startMonth: m, dealCount: dealsByBackend[k],
+          avgDebt: inputs.volume.avgDebt[k],
+        });
       }
       rollup[k].dealsSubmitted += dealsByBackend[k];
       rollup[k].enrolledVolume += dealsByBackend[k] * inputs.volume.avgDebt[k];
@@ -191,11 +287,13 @@ export function runModel(inputs: ModelInputs): ModelResults {
       // agentPayoutMonth already encodes the arrears timing (e.g. "by the 15th
       // of the following month"), so it is measured WITHOUT the remittance lag.
       const unlaggedDealMonth = m - cohort.startMonth + 1;
-      const payoutDealMonth = agentPayoutMonth(cohort.backendKey, inputs);
+      const payoutDealMonth = cohort.payoutDealMonthOverride ?? agentPayoutMonth(cohort.backendKey, inputs);
       if (unlaggedDealMonth === payoutDealMonth) {
         const survivingAtPayout = (survival[cohort.backendKey][unlaggedDealMonth] ?? 0) * cohort.dealCount;
         const monthlyEnrolled = cohort.dealCount * cohort.avgDebt;
-        const perDealComm = agentCommissionForDeal(cohort.backendKey, cohort.avgDebt, monthlyEnrolled, inputs);
+        const perDealComm = cohort.repDrawRate != null
+          ? cohort.avgDebt * cohort.repDrawRate
+          : agentCommissionForDeal(cohort.backendKey, cohort.avgDebt, monthlyEnrolled, inputs);
         const amount = survivingAtPayout * perDealComm;
         commission += amount;
         partnerDetail[cohort.backendKey].repCommission += amount;

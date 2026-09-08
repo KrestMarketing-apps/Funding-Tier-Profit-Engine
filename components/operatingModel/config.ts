@@ -187,6 +187,29 @@ export const DEFAULT_INPUTS: ModelInputs = {
   // Level Debt deals are free of chargeback liability after this many
   // completed client payments.
   levelDebt: sharedLevelDebt(2),
+
+  // Draw-system scenario (OFF by default — 'contract' preserves the original
+  // model exactly). Tiered on each rep's COMBINED monthly enrolled volume
+  // across all three programs (Level Debt + Consumer Shield + Legacy
+  // Capital), not Level Debt alone — rewards diversified production, and the
+  // resolved rate applies to that rep's commission on all three programs.
+  // $500K / $1M / $2M are the real breakpoints; the 1.00% base rate below
+  // $500K is a placeholder — confirm before relying on it.
+  repPay: {
+    mode: 'contract',
+    drawTiers: [
+      { threshold: 0, rate: 0.01 },
+      { threshold: 500000, rate: 0.0125 },
+      { threshold: 1000000, rate: 0.015 },
+      { threshold: 2000000, rate: 0.0175 },
+    ],
+    // ~90-day new-hire ramp: commission on a ramping US-based closer's deals
+    // is earned at deal-month 3 (one payment cycle later than the standard
+    // deal-month-2 schedule), not clawed back after the fact. See the
+    // RampPolicy doc comment in types.ts for why it's structured this way.
+    ramp: { enabled: true, rampMonths: 3, probationPayoutDealMonth: 3 },
+  },
+
   consumerShield: sharedShield(),
   legacy: sharedLegacy(),
 
