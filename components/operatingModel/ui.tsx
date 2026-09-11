@@ -133,6 +133,44 @@ export function Info({ text, label }: { text: string; label?: string }) {
   );
 }
 
+// ── Section icons ────────────────────────────────────────────────────────────
+//
+// One stroked glyph per navigation item. Inline SVG rather than an icon
+// dependency or emoji: it inherits currentColor, stays crisp at 16px, and adds
+// nothing to the bundle.
+export type IconName =
+  | 'gauge' | 'trend' | 'users' | 'phone' | 'briefcase' | 'wallet' | 'receipt'
+  | 'award' | 'shield' | 'ledger' | 'clipboard' | 'layers' | 'bars' | 'calendar'
+  | 'card';
+
+const ICONS: Record<IconName, React.ReactNode> = {
+  gauge: <><path d="M3.5 15a8.5 8.5 0 0 1 17 0" /><path d="M12 15l4.2-4.2" /><circle cx="12" cy="15" r="1.3" /></>,
+  trend: <><path d="M3 17.5l5.5-5.5 3.5 3.5L21 6.5" /><path d="M15.5 6.5H21v5.5" /></>,
+  users: <><circle cx="9" cy="8" r="3.2" /><path d="M2.8 20a6.2 6.2 0 0 1 12.4 0" /><path d="M16.2 5.2a3.2 3.2 0 0 1 0 5.9" /><path d="M17.6 14.4A6.2 6.2 0 0 1 21.2 20" /></>,
+  phone: <><path d="M21.5 16.9v2.7a2 2 0 0 1-2.2 2 19.6 19.6 0 0 1-8.5-3 19.3 19.3 0 0 1-6-6 19.6 19.6 0 0 1-3-8.6 2 2 0 0 1 2-2.2h2.7a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.6a2 2 0 0 1-.5 2.1L9.6 9.4a16 16 0 0 0 6 6l1.2-1.1a2 2 0 0 1 2.1-.5c.8.3 1.7.6 2.6.7a2 2 0 0 1 1.7 2z" /></>,
+  briefcase: <><rect x="2.8" y="7.5" width="18.4" height="12.7" rx="2" /><path d="M8.2 7.5V5.8a2 2 0 0 1 2-2h3.6a2 2 0 0 1 2 2v1.7" /><path d="M2.8 12.8h18.4" /></>,
+  wallet: <><path d="M3 7.4A2.4 2.4 0 0 1 5.4 5h11.2v2.4" /><rect x="3" y="7.4" width="18" height="12.6" rx="2.2" /><path d="M21 11.6h-3.6a2.2 2.2 0 0 0 0 4.4H21" /></>,
+  receipt: <><path d="M5.2 3.2h13.6v17.6l-2.7-1.6-2.6 1.6-2.5-1.6-2.6 1.6-3.2-1.6z" /><path d="M8.6 8.2h6.8" /><path d="M8.6 12.2h6.8" /></>,
+  award: <><circle cx="12" cy="8.6" r="5.4" /><path d="M8.4 12.9L7.2 21l4.8-2.8 4.8 2.8-1.2-8.1" /></>,
+  shield: <><path d="M12 3l8 2.9v5.8c0 4.8-3.3 8.1-8 9.3-4.7-1.2-8-4.5-8-9.3V5.9z" /><path d="M9.2 12.2l2 2 3.6-3.9" /></>,
+  ledger: <><path d="M14 2.8H6.6a2 2 0 0 0-2 2v14.4a2 2 0 0 0 2 2h10.8a2 2 0 0 0 2-2V8.3z" /><path d="M14 2.8v5.5h5.4" /><path d="M8.6 13h6.8" /><path d="M8.6 16.6h4.6" /></>,
+  clipboard: <><rect x="8.6" y="2.6" width="6.8" height="3.6" rx="1.2" /><path d="M15.4 4.4h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6.6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h2" /><path d="M8.4 11.6h7.2" /><path d="M8.4 15.4h4.8" /></>,
+  layers: <><path d="M12 2.8l9 4.6-9 4.6-9-4.6z" /><path d="M3 12.4l9 4.6 9-4.6" /><path d="M3 16.9l9 4.6 9-4.6" /></>,
+  bars: <><path d="M3 20.5h18" /><rect x="4.6" y="11" width="3.4" height="7" rx="1" /><rect x="10.3" y="6" width="3.4" height="12" rx="1" /><rect x="16" y="13.4" width="3.4" height="4.6" rx="1" /></>,
+  calendar: <><rect x="3.2" y="5" width="17.6" height="16" rx="2" /><path d="M8.2 2.8v4" /><path d="M15.8 2.8v4" /><path d="M3.2 10.2h17.6" /></>,
+  card: <><rect x="2.6" y="5.2" width="18.8" height="13.6" rx="2.2" /><path d="M2.6 10h18.8" /><path d="M6.4 14.8h3.4" /></>,
+};
+
+export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
+  return (
+    <svg
+      width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden focusable="false"
+      style={{ display: 'block', flex: '0 0 auto' }}
+    >{ICONS[name]}</svg>
+  );
+}
+
 // ── Partner logo badge ───────────────────────────────────────────────────────
 export function PartnerMark({ k, size = 20 }: { k: BackendKey; size?: number }) {
   const b = BRANDS[k];
@@ -191,11 +229,16 @@ export function PartnerName({ k, size = 20, sub, style }: {
 }
 
 // ── Layout primitives ────────────────────────────────────────────────────────
-export function Panel({ title, tooltip, subtitle, right, children, accent, defaultOpen = true, collapsible = true }: {
+// Panels are NOT accordions. The page shows one section at a time, chosen from
+// the left menu, so everything inside the section you picked is visible — no
+// collapsed panel to hunt for, and no panel that opens itself. `collapsible`
+// stays available for anything that genuinely needs to fold, but it is off by
+// default and nothing in the Operating Model turns it on.
+export function Panel({ title, tooltip, subtitle, right, children, accent, defaultOpen = true, collapsible = false }: {
   title: React.ReactNode; tooltip?: string; subtitle?: string; right?: React.ReactNode;
   children: React.ReactNode; accent?: string; defaultOpen?: boolean; collapsible?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(collapsible ? defaultOpen : true);
   return (
     <section style={{
       border: `1px solid ${T.line}`, borderRadius: T.radius, background: G.panel,

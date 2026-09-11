@@ -358,6 +358,26 @@ export interface DidPolicy {
   additional: number;
 }
 
+/**
+ * Soft credit pulls.
+ *
+ * A soft pull is run on every qualified transfer Funding Tier is billed for —
+ * it is how the file is underwritten before a program is quoted. It is a cost
+ * of operating, incurred whether or not the call closes, and it is charged per
+ * pull rather than per deal.
+ *
+ * Duds never reach a pull: they disconnect before the buffer elapses, are never
+ * invoiced by the vendor, and never reach a closer. So the multiplier is BILLED
+ * transfers, not raw transfers.
+ */
+export interface CreditPullPolicy {
+  enabled: boolean;
+  /** Cost of a single soft credit pull. */
+  pricePerPull: number;
+  /** Pulls run per billed qualified transfer. Normally 1. */
+  pullsPerBilledTransfer: number;
+}
+
 export interface CostInputs {
   fixedCosts: FixedCost[];
   perUserCosts: PerUserCost[];
@@ -366,6 +386,7 @@ export interface CostInputs {
   trackdriveOutboundPerMin: number;
   transferCost: TransferCosts;
   dids: DidPolicy;
+  creditPulls: CreditPullPolicy;
 }
 
 // ── Policy ───────────────────────────────────────────────────────────────────
@@ -489,6 +510,8 @@ export interface MonthlyCostBreakdown {
   totalSmsSegments: number;
   totalEmails: number;
   didCount: number;
+  /** Soft credit pulls run this month — one per billed qualified transfer. */
+  creditPullCount: number;
   headcount: number;
 }
 

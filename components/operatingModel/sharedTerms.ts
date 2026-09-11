@@ -56,6 +56,9 @@ export const sharedCosts = (): CostInputs => ({
   trackdriveOutboundPerMin: A.costs.trackdriveOutboundRate,
   transferCost: { ...A.costs.transferCost },
   dids: { perAgent: 1, additional: 0 },
+  // Soft credit pull run on every billed qualified transfer, before a program
+  // is quoted. $2.50 a pull is the rate Funding Tier is charged.
+  creditPulls: { enabled: true, pricePerPull: 2.5, pullsPerBilledTransfer: 1 },
 });
 
 /** The blended labour rate the old model applied to everyone, kept for reference. */

@@ -10,10 +10,140 @@ import { RosterEditor } from './RosterEditor';
 import { ShowTheMath } from './ShowTheMath';
 import { MonthEndReport } from './MonthEndReport';
 import {
-  Btn, Callout, Field, FT_LOGO, G, Info, NumberInput, Panel, PartnerName, PartnerMark, Row, T,
+  Btn, Callout, Field, FT_LOGO, G, Icon, Info, NumberInput, Panel, PartnerName, PartnerMark, Row, T,
   fmtMoney, fmtMoney2, fmtNum, fmtPct, inputStyle, td, tdNum, th,
 } from './ui';
+import type { IconName } from './ui';
 import ToolShell, { MetricsGrid, Metric } from '../ToolShell';
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Navigation
+//
+// The page used to be one long scroll with a mix of open and collapsed panels,
+// so reading the model meant scrolling past sections you did not want and
+// hunting for ones that had folded themselves away. It is now a router: the
+// left menu picks ONE section, the body shows that section in full, and nothing
+// is collapsed. The order of the menu IS the order of the model — what you
+// employ, what that produces, what each partner pays, what it all costs, then
+// what falls out of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SectionId =
+  | 'results' | 'volume' | 'roster' | 'operations' | 'backends' | 'reppay'
+  | 'costs' | 'incentives' | 'risk' | 'statement' | 'monthend' | 'partnermo'
+  | 'forecast' | 'monthly';
+
+interface NavItem {
+  id: SectionId;
+  label: string;
+  /** One line under the label — what the section is FOR, not what it contains. */
+  hint: string;
+  icon: IconName;
+  /** Draw a hairline above this item: inputs end, outputs begin. */
+  ruleAbove?: boolean;
+}
+
+const NAV: NavItem[] = [
+  { id: 'results',    label: 'Results',            hint: 'Headline outputs',        icon: 'gauge' },
+  { id: 'volume',     label: 'Deal Volume',        hint: '1 · Ramp planner',        icon: 'trend' },
+  { id: 'roster',     label: 'Staffing & Labor',   hint: 'Who is on the clock',     icon: 'users' },
+  { id: 'operations', label: 'Operations',         hint: '2 · Calls into deals',    icon: 'phone' },
+  { id: 'backends',   label: 'Backend Terms',      hint: '3 · How partners pay',    icon: 'briefcase' },
+  { id: 'reppay',     label: 'Rep Pay Model',      hint: '4 · Contract vs draw',    icon: 'wallet' },
+  { id: 'costs',      label: 'Cost Stack',         hint: '5 · Rates & multipliers', icon: 'receipt' },
+  { id: 'incentives', label: 'Overrides & Bonuses',hint: 'Pay on top of commission',icon: 'award' },
+  { id: 'risk',       label: 'Risk & Attrition',   hint: '6 · Reserve & survival',  icon: 'shield' },
+  { id: 'statement',  label: 'Expense Statement',  hint: 'One month, in ledger form', icon: 'ledger', ruleAbove: true },
+  { id: 'monthend',   label: 'Month-End Statement',hint: 'Full month accounting',   icon: 'clipboard' },
+  { id: 'partnermo',  label: 'Partner Detail',     hint: 'One month, by partner',   icon: 'layers' },
+  { id: 'forecast',   label: 'Revenue Forecast',   hint: 'Cumulative by partner',   icon: 'bars' },
+  { id: 'monthly',    label: 'Month-by-Month',     hint: 'The full simulation',     icon: 'calendar' },
+];
+
+const OM_CSS = `
+/* The shared tool frame caps every Funding Tier page at 1100px. That was sized
+   for a single column; this page now runs a menu beside the content and its
+   tables are the widest in the suite, so it takes more room. Scoped to this
+   tool by its data attribute — no other page is affected. */
+[data-ft-tool="Operating Model"] { max-width: 1480px; }
+
+.om-shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 20px; align-items: start; }
+.om-main { min-width: 0; }
+
+.om-nav {
+  position: sticky; top: 14px; max-height: calc(100vh - 28px); overflow-y: auto;
+  border: 1px solid ${T.line}; border-radius: 13px; background: ${G.panel}; padding: 7px;
+  box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 10px 30px -22px rgba(15,23,42,.35);
+}
+.om-nav-cap {
+  font-size: 9px; letter-spacing: .6px; text-transform: uppercase; font-weight: 800;
+  color: ${T.faint}; padding: 7px 10px 7px;
+}
+.om-nav-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  border: 1px solid transparent; background: transparent; border-radius: 9px;
+  padding: 7px 9px; cursor: pointer; font-family: inherit; color: ${T.body};
+  transition: background .12s ease, border-color .12s ease;
+}
+.om-nav-btn + .om-nav-btn { margin-top: 2px; }
+.om-nav-btn:hover { background: ${T.lineSoft}; }
+.om-nav-btn:focus-visible { outline: 2px solid ${T.brand}; outline-offset: 1px; }
+.om-nav-btn[aria-current="true"] { background: ${T.brandSoft}; border-color: ${T.brandLine}; color: ${T.ink}; }
+.om-nav-ico {
+  width: 27px; height: 27px; border-radius: 8px; display: flex; align-items: center;
+  justify-content: center; background: ${T.bg}; color: ${T.muted};
+  border: 1px solid ${T.line}; flex: 0 0 auto;
+}
+.om-nav-btn[aria-current="true"] .om-nav-ico {
+  background: ${G.brand}; color: #fff; border-color: transparent;
+  box-shadow: 0 2px 8px -2px rgba(15,157,138,.6);
+}
+.om-nav-txt { min-width: 0; display: block; }
+.om-nav-lbl { display: block; font-size: 12.5px; font-weight: 700; line-height: 1.25; }
+.om-nav-hint { display: block; font-size: 10px; color: ${T.faint}; margin-top: 1px; line-height: 1.3; }
+.om-nav-btn[aria-current="true"] .om-nav-hint { color: ${T.brandDark}; }
+.om-nav-sep { height: 1px; background: ${T.line}; margin: 8px 10px; }
+
+.om-pager {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 14px; padding-top: 13px; border-top: 1px solid ${T.line}; flex-wrap: wrap;
+}
+.om-step { font-size: 10.5px; color: ${T.faint}; font-weight: 600; }
+
+@media (max-width: 1000px) {
+  .om-shell { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .om-nav { position: static; max-height: none; display: flex; gap: 6px; overflow-x: auto; padding: 7px; }
+  .om-nav-btn { flex: 0 0 auto; width: auto; }
+  .om-nav-btn + .om-nav-btn { margin-top: 0; }
+  .om-nav-hint, .om-nav-sep, .om-nav-cap { display: none !important; }
+}
+`;
+
+function SideNav({ active, onSelect }: { active: SectionId; onSelect: (id: SectionId) => void }) {
+  return (
+    <nav className="om-nav" aria-label="Operating model sections">
+      <div className="om-nav-cap">Operating model</div>
+      {NAV.map((item) => (
+        <React.Fragment key={item.id}>
+          {item.ruleAbove && <div className="om-nav-sep" />}
+          <button
+            type="button"
+            className="om-nav-btn"
+            aria-current={item.id === active}
+            onClick={() => onSelect(item.id)}
+          >
+            <span className="om-nav-ico"><Icon name={item.icon} size={15} /></span>
+            <span className="om-nav-txt">
+              <span className="om-nav-lbl">{item.label}</span>
+              <span className="om-nav-hint">{item.hint}</span>
+            </span>
+          </button>
+        </React.Fragment>
+      ))}
+    </nav>
+  );
+}
 
 // ── Column tooltips for the month-by-month table ─────────────────────────────
 const MONTH_COL_HELP: Record<string, string> = {
@@ -96,9 +226,26 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
   const horizon = results.months.length;
   const [stmtMonth, setStmtMonth] = useState(1);
   const [mathOpen, setMathOpen] = useState(false);
+  const [active, setActive] = useState<SectionId>('results');
+  const navIndex = Math.max(0, NAV.findIndex((n) => n.id === active));
+  const goTo = (id: SectionId) => {
+    setActive(id);
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
   const month = results.months[Math.min(stmtMonth, horizon) - 1];
   const patch = (p: Partial<ModelInputs>) => setInputs({ ...inputs, ...p });
   const blended = blendedTransferCost(inputs);
+  // Soft credit pulls — one per BILLED qualified transfer, so a dud never costs
+  // a pull. The month figure comes straight off the cost ledger rather than
+  // being recomputed here, so the two can never disagree.
+  const cp = inputs.costs.creditPulls;
+  const creditPullSpend = month?.costs.groups.find((g) => g.id === 'creditpulls')?.subtotal ?? 0;
+  const creditPullsTotal = useMemo(
+    () => results.months.reduce((s, r) => s + (r.costs.groups.find((g) => g.id === 'creditpulls')?.subtotal ?? 0), 0),
+    [results],
+  );
+  const setCreditPulls = (p: Partial<typeof cp>) =>
+    patch({ costs: { ...inputs.costs, creditPulls: { ...cp, ...p } } });
   const mixTotal = inputs.operations.buffers.reduce((a, b) => a + b.mixPct, 0);
   const setBuffer = (key: string, patch: Record<string, number>) => patch && setInputs({
     ...inputs,
@@ -157,9 +304,17 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         heroSlot={heroSlot}
       >
       {/* ToolShell supplies the frame and padding */}
-      <div>
+      {/* dangerouslySetInnerHTML, not a text child: React escapes quotes inside a
+          <style> text node on the server but not on the client, and the
+          [aria-current="true"] selectors below would hydrate mismatched. */}
+      <style dangerouslySetInnerHTML={{ __html: OM_CSS }} />
+      <div className="om-shell">
+        <SideNav active={active} onSelect={goTo} />
+        <div className="om-main">
+
+      {active === 'results' && (<>
       {/* ── Results ───────────────────────────────────────────────────────── */}
-      <Panel title="Results — based on everything set below" collapsible={false}
+      <Panel title="Results — based on everything set below"
         tooltip="Headline outputs of the simulation. Every one of these traces back to a formula in Show the math.">
         <Row cols="repeat(auto-fit, minmax(178px, 1fr))" gap={10}>
           <Stat label="Total revenue" value={fmtMoney(results.totals.revenue)} sub={`Over ${horizon} months`}
@@ -180,6 +335,9 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
           <Stat label="Peak capital required" value={fmtMoney(results.totals.peakCapitalRequired)} tone="bad"
             sub="Most capital needed before revenue catches up"
             tooltip="The deepest the cash position goes. This is the money that has to be funded from outside before the business self-sustains." />
+          <Stat label="Soft credit pulls" value={fmtMoney(creditPullsTotal)}
+            sub={`${fmtNum(month?.costs.creditPullCount ?? 0, 0)} pulls in month ${stmtMonth} · ${fmtMoney2(cp.pricePerPull)} each`}
+            tooltip="Underwriting cost, over the whole simulation. A soft credit pull is run on every qualified transfer Funding Tier is billed for, so the file can be scored before a program is quoted — it is incurred whether or not the call closes. Duds never reach a pull, because they disconnect before the buffer elapses and are never invoiced." />
           <Stat label="Reserve target first met"
             value={results.totals.reserveTargetFirstMet ? `Month ${results.totals.reserveTargetFirstMet}` : 'Not met'}
             tooltip="First month cash on hand covers monthly overhead × the reserve months setting." />
@@ -198,11 +356,16 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       </Panel>
 
 
+      </>)}
+
+      {/* The modal is mounted for every section — the hero button opens it. */}
       <ShowTheMath
         inputs={inputs} results={results} month={stmtMonth} setMonth={setStmtMonth}
         open={mathOpen} onClose={() => setMathOpen(false)}
       />
 
+
+      {active === 'volume' && (<>
       {/* ── 1 · Ramp planner: five columns across ─────────────────────────── */}
       <Panel title="1 · Deal Volume Ramp Planner" accent={T.accent}
         subtitle="Start here — volume is a function of the hours you employ"
@@ -297,9 +460,15 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         )}
       </Panel>
 
+      </>)}
+
+      {active === 'roster' && (<>
       {/* ── 2 · Roster ─────────────────────────────────────────────────────── */}
       <RosterEditor inputs={inputs} setInputs={setInputs} month={month} />
 
+      </>)}
+
+      {active === 'operations' && (<>
       {/* ── 3 · Operations ─────────────────────────────────────────────────── */}
       <Panel title="2 · Operations — how calls turn into deals"
         subtitle="Close rate, handle time, opener productivity, and the transfer funnel"
@@ -440,6 +609,9 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         )}
       </Panel>
 
+      </>)}
+
+      {active === 'backends' && (<>
       {/* ── 4 · Backend terms, compact ─────────────────────────────────────── */}
       <Panel title="3 · How each backend pays Funding Tier and its reps"
         tooltip="Contract terms, five across per partner. Level Debt is a one-time settlement payment; Shield Services and Elite Legal Practice are monthly perpetuities.">
@@ -526,6 +698,9 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </Callout>
       </Panel>
 
+      </>)}
+
+      {active === 'reppay' && (<>
       {/* ── 4b · Rep Pay Model — draw + tiered settlement scale scenario ────── */}
       <Panel title="4 · Rep Pay Model — Contract vs. Draw + Tiered Volume Scale" accent={T.accent}
         tooltip="Compare each backend's own live commission schedule against an alternate pay model: hourly wage as a non-recoverable draw, plus a single commission rate — tiered on each rep's own COMBINED monthly enrolled volume across all three programs — applied uniformly to that rep's Level Debt, Consumer Shield, and Legacy Capital commission alike. A 90-day new-hire ramp window can delay when a US-based closer's early commission is earned. BPO/overseas production always prices on the contract schedule.">
@@ -705,6 +880,9 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </Callout>
       </Panel>
 
+      </>)}
+
+      {active === 'costs' && (<>
       {/* ── 5 · Cost stack as a ledger ─────────────────────────────────────── */}
       <Panel title="5 · Cost stack" subtitle="Rates and multipliers — an accounting ledger, not a wall of inputs"
         tooltip="Every cost line, its rate, its multiplier, and the resulting monthly amount for the selected statement month."
@@ -839,6 +1017,41 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                 <td style={{ ...tdNum, color: T.body }}>× {fmtNum(month?.funnel.billedTransfers ?? 0, 0)} billed</td>
                 <td style={{ ...tdNum, fontWeight: 700 }}>{fmtMoney(month?.transferCost ?? 0)}</td>
               </tr>
+              <tr><td colSpan={4} style={{ ...td, background: T.panel, fontWeight: 800, fontSize: 10.5, letterSpacing: 0.5, textTransform: 'uppercase', color: T.ink }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <Icon name="card" size={13} />Credit pulls — soft
+                </span>
+                <Info text="A soft credit pull is run on every qualified transfer Funding Tier is billed for, so the file can be underwritten before a program is quoted. It is a cost of operating, incurred whether or not the call closes, and it is charged per pull — not per deal. Duds never reach a pull: they disconnect before the buffer elapses, are never invoiced by the vendor, and never reach a closer." />
+              </td></tr>
+              <tr>
+                <td style={{ ...td, paddingLeft: 20 }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <input type="checkbox" checked={cp.enabled}
+                      onChange={(e) => setCreditPulls({ enabled: e.target.checked })} />
+                    Soft credit pull
+                  </label>
+                  <div style={{ fontSize: 10, color: T.faint, marginTop: 1 }}>
+                    {cp.enabled
+                      ? `${fmtMoney2(creditPullSpend / Math.max(1, month?.deals ?? 1))} per closed deal — the rest was spent on files that did not close`
+                      : 'Off — the model is not charging for pulls'}
+                  </div>
+                </td>
+                <td style={tdNum}>
+                  <NumberInput value={cp.pricePerPull} min={0} step={0.25} prefix="$" suffix="/pull"
+                    onChange={(v) => setCreditPulls({ pricePerPull: v })} />
+                </td>
+                <td style={tdNum}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
+                    <NumberInput value={cp.pullsPerBilledTransfer} min={0} step={1}
+                      onChange={(v) => setCreditPulls({ pullsPerBilledTransfer: v })} />
+                    <span style={{ fontSize: 10, color: T.faint, whiteSpace: 'nowrap' }}>/ billed transfer</span>
+                  </span>
+                  <div style={{ fontSize: 10, color: T.faint, marginTop: 2 }}>
+                    = {fmtNum(month?.costs.creditPullCount ?? 0, 0)} pulls on {fmtNum(month?.funnel.billedTransfers ?? 0, 0)} billed
+                  </div>
+                </td>
+                <td style={{ ...tdNum, fontWeight: 700 }}>{fmtMoney(creditPullSpend)}</td>
+              </tr>
               <tr><td colSpan={4} style={{ ...td, background: T.panel, fontWeight: 800, fontSize: 10.5, letterSpacing: 0.5, textTransform: 'uppercase', color: T.ink }}>Labor</td></tr>
               <tr>
                 <td style={{ ...td, paddingLeft: 20 }}>Roster — {month?.costs.headcount ?? 0} agents</td>
@@ -857,6 +1070,9 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </div>
       </Panel>
 
+      </>)}
+
+      {active === 'statement' && (<>
       {/* ── 6 · Monthly operating expense statement ────────────────────────── */}
       <Panel title="Monthly Operating Expense Statement"
         subtitle={`Month ${stmtMonth} · ${month?.costs.headcount ?? 0} agents · ${fmtNum(month?.capacity.totalTransfers ?? 0, 0)} qualified transfers · Trackdrive tier "${month?.costs.trackdriveTierKey ?? '—'}"`}
@@ -900,8 +1116,11 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </Callout>
       </Panel>
 
+      </>)}
+
+      {active === 'incentives' && (<>
       {/* ── Incentive policy ───────────────────────────────────────────────── */}
-      <Panel title="Overrides, bonuses &amp; spiffs" accent={T.brand} defaultOpen={false}
+      <Panel title="Overrides, bonuses &amp; spiffs" accent={T.brand}
         subtitle="Manager override, and the four incentive programs from the agent reference"
         tooltip="Compensation on top of base commission. Overrides go to Managers and Owner Operators on their team's closed deals; bonuses go to the closers who write the volume.">
         <Row cols={5} gap={12}>
@@ -1005,10 +1224,16 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </Callout>
       </Panel>
 
+      </>)}
+
+      {active === 'monthend' && (<>
       <MonthEndReport inputs={inputs} results={results} month={stmtMonth} setMonth={setStmtMonth} />
 
+      </>)}
+
+      {active === 'risk' && (<>
       {/* ── 7 · Risk & attrition ───────────────────────────────────────────── */}
-      <Panel title="6 · Risk, reserve, and attrition" defaultOpen={false}
+      <Panel title="6 · Risk, reserve, and attrition"
         tooltip="Cash reserve policy and the client attrition curves that shrink each cohort over time.">
         <Row cols={5} gap={12}>
           <Field label="Reserve target (months)" tooltip="How many months of overhead the business wants on hand before it considers itself safe.">
@@ -1076,6 +1301,9 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </Callout>
       </Panel>
 
+      </>)}
+
+      {active === 'partnermo' && (<>
       {/* ── 8 · Single-month partner detail — statement month on the LEFT ──── */}
       <Panel title="Single-month detail — active deals, revenue, and rep commission by partner"
         tooltip="What each servicing partner produced in one specific month. Revenue is cash received; commission is cash paid out to reps.">
@@ -1158,8 +1386,11 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </div>
       </Panel>
 
+      </>)}
+
+      {active === 'forecast' && (<>
       {/* ── 9 · Revenue forecast by partner — moved down, timing made explicit */}
-      <Panel title="Revenue Forecast by Servicing Partner" defaultOpen={false}
+      <Panel title="Revenue Forecast by Servicing Partner"
         subtitle={`Cumulative over ${horizon} months — read with the timing caveat below`}
         tooltip="Cumulative totals by partner. Read this last: the three partners pay on structurally different timetables, so a single cumulative column is not an apples-to-apples comparison.">
         <Callout tone="warn">
@@ -1221,6 +1452,9 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </div>
       </Panel>
 
+      </>)}
+
+      {active === 'monthly' && (<>
       {/* ── 10 · Month-by-month ────────────────────────────────────────────── */}
       <Panel title="Month-by-Month Detail"
         tooltip="The full simulation output. Hover any column header for the exact calculation behind it.">
@@ -1277,12 +1511,26 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
         </Callout>
       </Panel>
 
-        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
+      </>)}
+
+        {/* Walk the model in order without going back to the menu. */}
+        <div className="om-pager">
+          {navIndex > 0
+            ? <Btn onClick={() => goTo(NAV[navIndex - 1].id)}>← {NAV[navIndex - 1].label}</Btn>
+            : <span />}
+          <span className="om-step">Section {navIndex + 1} of {NAV.length} · {NAV[navIndex].label}</span>
+          {navIndex < NAV.length - 1
+            ? <Btn tone="primary" onClick={() => goTo(NAV[navIndex + 1].id)}>{NAV[navIndex + 1].label} →</Btn>
+            : <span />}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <Btn onClick={() => setInputs(cloneDefaults())}>Reset to defaults</Btn>
-          <span style={{ fontSize: 11, color: T.faint, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11, color: T.faint, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             Servicing partners:
             {BACKEND_KEYS.map((k) => <PartnerName key={k} k={k} size={15} style={{ fontSize: 11 }} />)}
           </span>
+        </div>
         </div>
       </div>
       </ToolShell>

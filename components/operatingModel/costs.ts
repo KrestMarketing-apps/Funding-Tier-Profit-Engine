@@ -38,6 +38,26 @@ export function didCount(costs: CostInputs, headcount: number): number {
   return Math.max(0, Math.round(headcount * costs.dids.perAgent + costs.dids.additional));
 }
 
+/** Defaults for the credit-pull policy, so an older saved input shape still runs. */
+export const CREDIT_PULL_FALLBACK = { enabled: true, pricePerPull: 2.5, pullsPerBilledTransfer: 1 };
+
+export function creditPullPolicy(costs: CostInputs) {
+  return costs.creditPulls ?? CREDIT_PULL_FALLBACK;
+}
+
+/**
+ * Soft credit pulls run in a month.
+ *
+ * One pull per BILLED qualified transfer. A dud disconnects before the buffer
+ * elapses, is never invoiced and never reaches a closer, so it never triggers a
+ * pull — which is why raw transfers are the wrong multiplier here.
+ */
+export function creditPullCount(costs: CostInputs, billedTransfers: number): number {
+  const p = creditPullPolicy(costs);
+  if (!p.enabled) return 0;
+  return Math.max(0, billedTransfers * p.pullsPerBilledTransfer);
+}
+
 export interface CostContext {
   /** Billed transfers — the calls actually invoiced and actually handled. */
   totalTransfers: number;
@@ -45,6 +65,8 @@ export interface CostContext {
   totalCallMinutes: number;
   /** Transfer spend, computed by the funnel. */
   transferCost: number;
+  /** Deals closed this month — used only to express costs per closed deal. */
+  deals?: number;
   roster: RosterMonthSummary;
 }
 
@@ -167,7 +189,39 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
     lines: transferLines, subtotal: transferLines.reduce((s, l) => s + l.amount, 0),
   });
 
-  // 6 — Labor
+  // 6 — Soft credit pulls
+  //
+  // Underwriting cost, not a marketing cost: a soft pull is run on every billed
+  // qualified transfer so the file can be scored before a program is quoted. It
+  // is incurred whether or not the call closes.
+  const cp = creditPullPolicy(c);
+  const pulls = creditPullCount(c, ctx.totalTransfers);
+  const pullSpend = pulls * cp.pricePerPull;
+  const creditLines = [
+    {
+      id: 'cp-soft', label: 'Soft credit pulls',
+      detail: cp.enabled
+        ? `${Math.round(pulls).toLocaleString()} pulls x ${money2(cp.pricePerPull)} — ${cp.pullsPerBilledTransfer} per billed transfer`
+        : 'Disabled — no pull cost is being charged to the model',
+      formula: `${Math.round(ctx.totalTransfers).toLocaleString()} billed transfers x ${cp.pullsPerBilledTransfer} x ${money2(cp.pricePerPull)}`,
+      amount: pullSpend,
+    },
+  ];
+  if (cp.enabled && (ctx.deals ?? 0) > 0.01) {
+    creditLines.push({
+      id: 'cp-perdeal', label: 'Cost per closed deal',
+      detail: `${money2(pullSpend / (ctx.deals ?? 1))} of pull cost per deal that actually closed — the rest was spent on files that did not`,
+      formula: `${money(pullSpend)} / ${Math.round(ctx.deals ?? 0).toLocaleString()} deals`,
+      amount: 0,
+    });
+  }
+  groups.push({
+    id: 'creditpulls', label: 'Credit Pulls (soft)',
+    note: `${money2(cp.pricePerPull)} per soft pull, one on every billed qualified transfer. Duds never reach a pull — they disconnect before the buffer and are never invoiced.`,
+    lines: creditLines, subtotal: creditLines.reduce((s, l) => s + l.amount, 0),
+  });
+
+  // 7 — Labor
   const laborLines = ctx.roster.active.map((e) => ({
     id: e.employee.id,
     label: `${e.employee.name}${e.employee.commissionOnly ? ' (commission-only)' : ''}`,
@@ -191,6 +245,7 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
     totalSmsSegments: sms,
     totalEmails: emails,
     didCount: dids,
+    creditPullCount: pulls,
     headcount,
   };
 }
