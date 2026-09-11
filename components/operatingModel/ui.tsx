@@ -141,7 +141,7 @@ export function Info({ text, label }: { text: string; label?: string }) {
 export type IconName =
   | 'gauge' | 'trend' | 'users' | 'phone' | 'briefcase' | 'wallet' | 'receipt'
   | 'award' | 'shield' | 'ledger' | 'clipboard' | 'layers' | 'bars' | 'calendar'
-  | 'card';
+  | 'card' | 'sigma';
 
 const ICONS: Record<IconName, React.ReactNode> = {
   gauge: <><path d="M3.5 15a8.5 8.5 0 0 1 17 0" /><path d="M12 15l4.2-4.2" /><circle cx="12" cy="15" r="1.3" /></>,
@@ -159,6 +159,7 @@ const ICONS: Record<IconName, React.ReactNode> = {
   bars: <><path d="M3 20.5h18" /><rect x="4.6" y="11" width="3.4" height="7" rx="1" /><rect x="10.3" y="6" width="3.4" height="12" rx="1" /><rect x="16" y="13.4" width="3.4" height="4.6" rx="1" /></>,
   calendar: <><rect x="3.2" y="5" width="17.6" height="16" rx="2" /><path d="M8.2 2.8v4" /><path d="M15.8 2.8v4" /><path d="M3.2 10.2h17.6" /></>,
   card: <><rect x="2.6" y="5.2" width="18.8" height="13.6" rx="2.2" /><path d="M2.6 10h18.8" /><path d="M6.4 14.8h3.4" /></>,
+  sigma: <><path d="M18.2 4.6H6.4l6.6 7.4-6.6 7.4h11.8" /></>,
 };
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {

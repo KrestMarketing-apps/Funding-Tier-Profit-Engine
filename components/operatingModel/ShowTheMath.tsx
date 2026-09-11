@@ -5,18 +5,25 @@ import { buildTrace } from './trace';
 import { Btn, G, T, td, tdNum, th } from './ui';
 
 /**
- * Full-screen derivation overlay. Opened from the sticky header so it is
- * reachable from anywhere on the page without scrolling.
+ * Derivation overlay.
+ *
+ * `only` narrows it to the trace sections behind ONE part of the model, so the
+ * small "Show the math" button inside a section explains that section rather
+ * than dumping all six derivations on someone who asked about the roster. Pass
+ * null (the Results screen does) for the whole chain.
  */
-export function ShowTheMath({ inputs, results, month, setMonth, open, onClose }: {
+export function ShowTheMath({ inputs, results, month, setMonth, open, onClose, only, scope }: {
   inputs: ModelInputs; results: ModelResults;
   month: number; setMonth: (m: number) => void;
   open: boolean; onClose: () => void;
+  only?: string[] | null; scope?: string;
 }) {
-  const sections = useMemo(
-    () => (open ? buildTrace(inputs, results, month) : []),
-    [open, inputs, results, month],
-  );
+  const sections = useMemo(() => {
+    if (!open) return [];
+    const all = buildTrace(inputs, results, month);
+    if (!only || only.length === 0) return all;
+    return all.filter((s) => only.includes(s.id));
+  }, [open, inputs, results, month, only]);
 
   useEffect(() => {
     if (!open) return;
@@ -64,10 +71,12 @@ export function ShowTheMath({ inputs, results, month, setMonth, open, onClose }:
         }}>
           <div style={{ flex: 1, minWidth: 240 }}>
             <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: '-0.2px' }}>
-              Show the math — every number, derived
+              {scope ? `Show the math — ${scope}` : 'Show the math — every number, derived'}
             </div>
             <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,.62)', marginTop: 2 }}>
-              Labor sets the hours · hours set the volume · volume sets revenue and cost · the difference is cash
+              {scope
+                ? 'Only the derivations behind this section. Open it from Results for the full chain.'
+                : 'Labor sets the hours · hours set the volume · volume sets revenue and cost · the difference is cash'}
             </div>
           </div>
           <label style={{

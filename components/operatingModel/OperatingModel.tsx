@@ -1,5 +1,5 @@
 'use client';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import type { BackendKey, ModelInputs } from './types';
 import { BACKEND_KEYS } from './types';
 import { BRANDS, cloneDefaults } from './config';
@@ -14,7 +14,7 @@ import {
   fmtMoney, fmtMoney2, fmtNum, fmtPct, inputStyle, td, tdNum, th,
 } from './ui';
 import type { IconName } from './ui';
-import ToolShell, { MetricsGrid, Metric } from '../ToolShell';
+import ToolShell from '../ToolShell';
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,25 +40,31 @@ interface NavItem {
   /** One line under the label — what the section is FOR, not what it contains. */
   hint: string;
   icon: IconName;
+  /**
+   * Which buildTrace sections explain this one. The Show the math button in a
+   * section opens only these, so asking how the roster works does not return
+   * six derivations. null = the whole chain, which is what Results wants.
+   */
+  math: string[] | null;
   /** Draw a hairline above this item: inputs end, outputs begin. */
   ruleAbove?: boolean;
 }
 
 const NAV: NavItem[] = [
-  { id: 'results',    label: 'Results',            hint: 'Headline outputs',        icon: 'gauge' },
-  { id: 'volume',     label: 'Deal Volume',        hint: '1 · Ramp planner',        icon: 'trend' },
-  { id: 'roster',     label: 'Staffing & Labor',   hint: 'Who is on the clock',     icon: 'users' },
-  { id: 'operations', label: 'Operations',         hint: '2 · Calls into deals',    icon: 'phone' },
-  { id: 'backends',   label: 'Backend Terms',      hint: '3 · How partners pay',    icon: 'briefcase' },
-  { id: 'reppay',     label: 'Rep Pay Model',      hint: '4 · Contract vs draw',    icon: 'wallet' },
-  { id: 'costs',      label: 'Cost Stack',         hint: '5 · Rates & multipliers', icon: 'receipt' },
-  { id: 'incentives', label: 'Overrides & Bonuses',hint: 'Pay on top of commission',icon: 'award' },
-  { id: 'risk',       label: 'Risk & Attrition',   hint: '6 · Reserve & survival',  icon: 'shield' },
-  { id: 'statement',  label: 'Expense Statement',  hint: 'One month, in ledger form', icon: 'ledger', ruleAbove: true },
-  { id: 'monthend',   label: 'Month-End Statement',hint: 'Full month accounting',   icon: 'clipboard' },
-  { id: 'partnermo',  label: 'Partner Detail',     hint: 'One month, by partner',   icon: 'layers' },
-  { id: 'forecast',   label: 'Revenue Forecast',   hint: 'Cumulative by partner',   icon: 'bars' },
-  { id: 'monthly',    label: 'Month-by-Month',     hint: 'The full simulation',     icon: 'calendar' },
+  { id: 'results',    label: 'Results',            hint: 'Headline outputs',        icon: 'gauge',     math: null },
+  { id: 'volume',     label: 'Deal Volume',        hint: '1 · Ramp planner',        icon: 'trend',     math: ['capacity'] },
+  { id: 'roster',     label: 'Staffing & Labor',   hint: 'Who is on the clock',     icon: 'users',     math: ['labor', 'capacity'] },
+  { id: 'operations', label: 'Operations',         hint: '2 · Calls into deals',    icon: 'phone',     math: ['capacity'] },
+  { id: 'backends',   label: 'Backend Terms',      hint: '3 · How partners pay',    icon: 'briefcase', math: ['revenue'] },
+  { id: 'reppay',     label: 'Rep Pay Model',      hint: '4 · Contract vs draw',    icon: 'wallet',    math: ['commission'] },
+  { id: 'costs',      label: 'Cost Stack',         hint: '5 · Rates & multipliers', icon: 'receipt',   math: ['costs'] },
+  { id: 'incentives', label: 'Overrides & Bonuses',hint: 'Pay on top of commission',icon: 'award',     math: ['commission'] },
+  { id: 'risk',       label: 'Risk & Attrition',   hint: '6 · Reserve & survival',  icon: 'shield',    math: ['revenue', 'cash'] },
+  { id: 'statement',  label: 'Expense Statement',  hint: 'One month, in ledger form', icon: 'ledger',  math: ['costs'], ruleAbove: true },
+  { id: 'monthend',   label: 'Month-End Statement',hint: 'Full month accounting',   icon: 'clipboard', math: null },
+  { id: 'partnermo',  label: 'Partner Detail',     hint: 'One month, by partner',   icon: 'layers',    math: ['revenue', 'commission'] },
+  { id: 'forecast',   label: 'Revenue Forecast',   hint: 'Cumulative by partner',   icon: 'bars',      math: ['revenue'] },
+  { id: 'monthly',    label: 'Month-by-Month',     hint: 'The full simulation',     icon: 'calendar',  math: ['cash'] },
 ];
 
 const OM_CSS = `
@@ -68,42 +74,90 @@ const OM_CSS = `
    tool by its data attribute — no other page is affected. */
 [data-ft-tool="Operating Model"] { max-width: 1480px; }
 
-.om-shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 20px; align-items: start; }
-.om-main { min-width: 0; }
+/* HERO — compacted for this tool only.
+   The shared hero is built for a landing screen: 30px of padding, a 25px title,
+   a subtitle, and a grid of large metric cards. On a page you work in rather
+   than read once, that pushed the actual controls most of a screen down and
+   reappeared every time you changed section. Targeted by [data-mode], the
+   attribute ToolShell puts on the hero element, because the class names are
+   CSS-module hashes and cannot be selected from here. */
+[data-ft-tool="Operating Model"] > [data-mode] { padding: 11px 20px 12px; }
+[data-ft-tool="Operating Model"] > [data-mode] > div:first-child { margin-bottom: 7px; }
+[data-ft-tool="Operating Model"] > [data-mode] h1 { font-size: 17px; margin: 0; }
+/* The subtitle repeats what the page title and the section hints already say. */
+[data-ft-tool="Operating Model"] > [data-mode] h1 + p { display: none; }
+[data-ft-tool="Operating Model"] > [data-mode] > div:last-child { margin-top: 9px; }
 
+.om-hero-strip { display: flex; gap: 8px; flex-wrap: wrap; }
+.om-hero-tile {
+  display: flex; align-items: baseline; gap: 8px; padding: 5px 11px; border-radius: 8px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+}
+.om-hero-k {
+  font-size: 9px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase;
+  color: rgba(245,248,247,.66);
+}
+.om-hero-v { font-size: 15px; font-weight: 800; color: #f5f8f7; font-family: ${T.mono}; letter-spacing: -.3px; }
+.om-hero-tile.accent .om-hero-v { color: #2dd4bf; }
+
+.om-shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 20px; align-items: start; }
+.om-main { min-width: 0; scroll-margin-top: calc(var(--ft-toolkit-height, 0px) + 12px); }
+
+/* MENU — inverted: dark panel, light type, against the white body. */
 .om-nav {
-  position: sticky; top: 14px; max-height: calc(100vh - 28px); overflow-y: auto;
-  border: 1px solid ${T.line}; border-radius: 13px; background: ${G.panel}; padding: 7px;
-  box-shadow: 0 1px 2px rgba(15,23,42,.04), 0 10px 30px -22px rgba(15,23,42,.35);
+  position: sticky; top: calc(var(--ft-toolkit-height, 0px) + 12px);
+  max-height: calc(100vh - var(--ft-toolkit-height, 0px) - 24px); overflow-y: auto;
+  border: 1px solid rgba(255,255,255,.07); border-radius: 13px; padding: 7px;
+  background: linear-gradient(180deg, #0b1622 0%, #0e1e2b 100%);
+  box-shadow: 0 10px 30px -18px rgba(8,15,23,.75);
 }
 .om-nav-cap {
   font-size: 9px; letter-spacing: .6px; text-transform: uppercase; font-weight: 800;
-  color: ${T.faint}; padding: 7px 10px 7px;
+  color: rgba(245,248,247,.45); padding: 7px 10px;
 }
 .om-nav-btn {
   display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
   border: 1px solid transparent; background: transparent; border-radius: 9px;
-  padding: 7px 9px; cursor: pointer; font-family: inherit; color: ${T.body};
-  transition: background .12s ease, border-color .12s ease;
+  padding: 7px 9px; cursor: pointer; font-family: inherit; color: rgba(245,248,247,.80);
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
 .om-nav-btn + .om-nav-btn { margin-top: 2px; }
-.om-nav-btn:hover { background: ${T.lineSoft}; }
+.om-nav-btn:hover { background: rgba(255,255,255,.07); color: #f5f8f7; }
 .om-nav-btn:focus-visible { outline: 2px solid ${T.brand}; outline-offset: 1px; }
-.om-nav-btn[aria-current="true"] { background: ${T.brandSoft}; border-color: ${T.brandLine}; color: ${T.ink}; }
+.om-nav-btn[aria-current="true"] {
+  background: rgba(20,184,166,.16); border-color: rgba(45,212,191,.38); color: #ffffff;
+}
 .om-nav-ico {
   width: 27px; height: 27px; border-radius: 8px; display: flex; align-items: center;
-  justify-content: center; background: ${T.bg}; color: ${T.muted};
-  border: 1px solid ${T.line}; flex: 0 0 auto;
+  justify-content: center; background: rgba(255,255,255,.06); color: rgba(245,248,247,.62);
+  border: 1px solid rgba(255,255,255,.10); flex: 0 0 auto;
 }
 .om-nav-btn[aria-current="true"] .om-nav-ico {
   background: ${G.brand}; color: #fff; border-color: transparent;
-  box-shadow: 0 2px 8px -2px rgba(15,157,138,.6);
+  box-shadow: 0 2px 10px -2px rgba(15,157,138,.75);
 }
 .om-nav-txt { min-width: 0; display: block; }
 .om-nav-lbl { display: block; font-size: 12.5px; font-weight: 700; line-height: 1.25; }
-.om-nav-hint { display: block; font-size: 10px; color: ${T.faint}; margin-top: 1px; line-height: 1.3; }
-.om-nav-btn[aria-current="true"] .om-nav-hint { color: ${T.brandDark}; }
-.om-nav-sep { height: 1px; background: ${T.line}; margin: 8px 10px; }
+.om-nav-hint { display: block; font-size: 10px; color: rgba(245,248,247,.45); margin-top: 1px; line-height: 1.3; }
+.om-nav-btn[aria-current="true"] .om-nav-hint { color: #2dd4bf; }
+.om-nav-sep { height: 1px; background: rgba(255,255,255,.10); margin: 8px 10px; }
+
+/* SECTION BAR — says where you are and carries this section's math button. */
+.om-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 11px; flex-wrap: wrap;
+}
+.om-bar-t { display: flex; align-items: center; gap: 8px; color: ${T.ink}; min-width: 0; }
+.om-bar-lbl { font-size: 13px; font-weight: 800; letter-spacing: -.2px; }
+.om-bar-sub { font-size: 10.5px; color: ${T.faint}; font-weight: 600; }
+.om-math {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  border: 1px solid ${T.brandLine}; background: ${T.brandSoft}; color: ${T.brandDark};
+  border-radius: 8px; padding: 5px 10px; font-family: inherit; font-size: 11.5px; font-weight: 700;
+  white-space: nowrap; flex: 0 0 auto;
+}
+.om-math:hover { background: #d7f2ec; }
+.om-math:focus-visible { outline: 2px solid ${T.brand}; outline-offset: 1px; }
 
 .om-pager {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -227,10 +281,37 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
   const [stmtMonth, setStmtMonth] = useState(1);
   const [mathOpen, setMathOpen] = useState(false);
   const [active, setActive] = useState<SectionId>('results');
+  // Which trace sections the overlay should show. null = the whole chain.
+  const [mathOnly, setMathOnly] = useState<string[] | null>(null);
+  const [mathScope, setMathScope] = useState<string | undefined>(undefined);
+  const mainRef = useRef<HTMLDivElement>(null);
   const navIndex = Math.max(0, NAV.findIndex((n) => n.id === active));
+  const nav = NAV[navIndex];
+
+  /**
+   * Changing section used to jump to the top of the document, which dragged
+   * the hero back into view every time. Scroll to the top of the CONTENT
+   * instead, and only ever upward — if you are already above that line,
+   * nothing moves.
+   */
   const goTo = (id: SectionId) => {
     setActive(id);
-    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (typeof window === 'undefined') return;
+    requestAnimationFrame(() => {
+      const el = mainRef.current;
+      if (!el) return;
+      const bar = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--ft-toolkit-height'),
+      ) || 0;
+      const top = el.getBoundingClientRect().top + window.scrollY - bar - 12;
+      if (window.scrollY > top) window.scrollTo({ top, behavior: 'smooth' });
+    });
+  };
+
+  const openMath = (only: string[] | null, scope?: string) => {
+    setMathOnly(only);
+    setMathScope(scope);
+    setMathOpen(true);
   };
   const month = results.months[Math.min(stmtMonth, horizon) - 1];
   const patch = (p: Partial<ModelInputs>) => setInputs({ ...inputs, ...p });
@@ -271,23 +352,25 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
     </label>
   );
 
+  // Three figures on one line instead of a grid of cards, and no Show the math
+  // button — that now lives in each section, scoped to that section's math.
   const heroSlot = (
-    <div style={{ display: 'grid', gap: 10 }}>
-      <MetricsGrid>
-        <Metric label="REVENUE" value={fmtMoney(results.totals.revenue)} />
-        <Metric label={`CASH (MO ${horizon})`} value={fmtMoney(results.totals.finalCash)} accent />
-        <Metric label="PEAK CAPITAL" value={fmtMoney(results.totals.peakCapitalRequired)} />
-      </MetricsGrid>
-      <div>
-        <button
-          onClick={() => setMathOpen(true)}
-          style={{
-            background: '#fff', color: T.brandDark, border: 'none', borderRadius: 9,
-            padding: '9px 15px', fontWeight: 800, fontSize: 12.5, cursor: 'pointer',
-            fontFamily: T.sans, whiteSpace: 'nowrap',
-            boxShadow: '0 3px 12px -3px rgba(0,0,0,.4)',
-          }}
-        >Show the math</button>
+    <div className="om-hero-strip">
+      <div className="om-hero-tile">
+        <span className="om-hero-k">Revenue</span>
+        <span className="om-hero-v">{fmtMoney(results.totals.revenue)}</span>
+      </div>
+      <div className="om-hero-tile accent">
+        <span className="om-hero-k">Cash (mo {horizon})</span>
+        <span className="om-hero-v">{fmtMoney(results.totals.finalCash)}</span>
+      </div>
+      <div className="om-hero-tile">
+        <span className="om-hero-k">Peak capital</span>
+        <span className="om-hero-v">{fmtMoney(results.totals.peakCapitalRequired)}</span>
+      </div>
+      <div className="om-hero-tile">
+        <span className="om-hero-k">Credit pulls</span>
+        <span className="om-hero-v">{fmtMoney(creditPullsTotal)}</span>
       </div>
     </div>
   );
@@ -310,7 +393,26 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       <style dangerouslySetInnerHTML={{ __html: OM_CSS }} />
       <div className="om-shell">
         <SideNav active={active} onSelect={goTo} />
-        <div className="om-main">
+        <div className="om-main" ref={mainRef}>
+
+        <div className="om-bar">
+          <div className="om-bar-t">
+            <Icon name={nav.icon} size={15} />
+            <span className="om-bar-lbl">{nav.label}</span>
+            <span className="om-bar-sub">Section {navIndex + 1} of {NAV.length}</span>
+          </div>
+          <button
+            type="button"
+            className="om-math"
+            onClick={() => openMath(nav.math, nav.math ? nav.label : undefined)}
+            title={nav.math
+              ? `Derivations behind ${nav.label}`
+              : 'Every derivation, start to finish'}
+          >
+            <Icon name="sigma" size={13} />
+            {nav.math ? 'Show the math for this section' : 'Show the math'}
+          </button>
+        </div>
 
       {active === 'results' && (<>
       {/* ── Results ───────────────────────────────────────────────────────── */}
@@ -362,6 +464,7 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       <ShowTheMath
         inputs={inputs} results={results} month={stmtMonth} setMonth={setStmtMonth}
         open={mathOpen} onClose={() => setMathOpen(false)}
+        only={mathOnly} scope={mathScope}
       />
 
 
@@ -1518,7 +1621,7 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
           {navIndex > 0
             ? <Btn onClick={() => goTo(NAV[navIndex - 1].id)}>← {NAV[navIndex - 1].label}</Btn>
             : <span />}
-          <span className="om-step">Section {navIndex + 1} of {NAV.length} · {NAV[navIndex].label}</span>
+          <span className="om-step">{NAV.length - navIndex - 1} more section{NAV.length - navIndex - 1 === 1 ? '' : 's'}</span>
           {navIndex < NAV.length - 1
             ? <Btn tone="primary" onClick={() => goTo(NAV[navIndex + 1].id)}>{NAV[navIndex + 1].label} →</Btn>
             : <span />}
