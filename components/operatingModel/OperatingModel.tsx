@@ -68,11 +68,27 @@ const NAV: NavItem[] = [
 ];
 
 const OM_CSS = `
-/* The shared tool frame caps every Funding Tier page at 1100px. That was sized
-   for a single column; this page now runs a menu beside the content and its
-   tables are the widest in the suite, so it takes more room. Scoped to this
-   tool by its data attribute — no other page is affected. */
-[data-ft-tool="Operating Model"] { max-width: 1480px; }
+/* APP SHELL.
+   The shared frame is a floating card: 1100px wide, centred, rounded, bordered,
+   drop-shadowed, with 40px of air under it. On a tool with a navigation rail
+   that reads as a document sitting on a page rather than an application — the
+   rail floats in white space and nothing meets the bar above it. Here the frame
+   goes full-bleed and square so the hero runs edge to edge under the toolkit
+   bar and the rail can reach the left edge. Scoped by data attribute: every
+   other Funding Tier tool keeps the card.
+
+   overflow must go back to visible too — an overflow:hidden ancestor turns into
+   a scroll container and silently kills position:sticky on the rail. The hero
+   clips its own glows, so nothing escapes. */
+[data-ft-tool="Operating Model"] {
+  max-width: none; margin: 0; border: 0; border-radius: 0;
+  box-shadow: none; overflow: visible;
+  min-height: calc(100vh - var(--ft-toolkit-height, 0px));
+}
+/* The body panel carried the page padding; the rail now owns its own edge, so
+   padding moves inward to .om-main. Selected as the hero's next sibling
+   because ToolShell's class names are CSS-module hashes. */
+[data-ft-tool="Operating Model"] > [data-mode] + div { padding: 0; }
 
 /* HERO — compacted for this tool only.
    The shared hero is built for a landing screen: 30px of padding, a 25px title,
@@ -100,16 +116,22 @@ const OM_CSS = `
 .om-hero-v { font-size: 15px; font-weight: 800; color: #f5f8f7; font-family: ${T.mono}; letter-spacing: -.3px; }
 .om-hero-tile.accent .om-hero-v { color: #2dd4bf; }
 
-.om-shell { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 20px; align-items: start; }
-.om-main { min-width: 0; scroll-margin-top: calc(var(--ft-toolkit-height, 0px) + 12px); }
+.om-shell { display: grid; grid-template-columns: 246px minmax(0, 1fr); gap: 0; align-items: start; }
+.om-main {
+  min-width: 0; padding: 15px 24px 34px;
+  scroll-margin-top: calc(var(--ft-toolkit-height, 0px) + 12px);
+}
 
-/* MENU — inverted: dark panel, light type, against the white body. */
+/* RAIL — inverted, and a real one: flush to the left edge, flush under the
+   hero, full viewport height, its own scroll. The explicit height also sets
+   the grid row, so the shell always fills the screen even on a short section
+   and the rail never stops halfway down. */
 .om-nav {
-  position: sticky; top: calc(var(--ft-toolkit-height, 0px) + 12px);
-  max-height: calc(100vh - var(--ft-toolkit-height, 0px) - 24px); overflow-y: auto;
-  border: 1px solid rgba(255,255,255,.07); border-radius: 13px; padding: 7px;
+  position: sticky; top: var(--ft-toolkit-height, 0px);
+  height: calc(100vh - var(--ft-toolkit-height, 0px)); overflow-y: auto;
+  border: 0; border-right: 1px solid rgba(255,255,255,.09);
+  border-radius: 0; padding: 10px 8px 20px;
   background: linear-gradient(180deg, #0b1622 0%, #0e1e2b 100%);
-  box-shadow: 0 10px 30px -18px rgba(8,15,23,.75);
 }
 .om-nav-cap {
   font-size: 9px; letter-spacing: .6px; text-transform: uppercase; font-weight: 800;
@@ -142,10 +164,15 @@ const OM_CSS = `
 .om-nav-btn[aria-current="true"] .om-nav-hint { color: #2dd4bf; }
 .om-nav-sep { height: 1px; background: rgba(255,255,255,.10); margin: 8px 10px; }
 
-/* SECTION BAR — says where you are and carries this section's math button. */
+/* SECTION BAR — says where you are and carries this section's math button.
+   Sticky under the toolkit bar so the math button stays reachable in a long
+   section; the negative margins let its background span the full content
+   column rather than leaving the page showing through at the gutters. */
 .om-bar {
+  position: sticky; top: var(--ft-toolkit-height, 0px); z-index: 20;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  margin-bottom: 11px; flex-wrap: wrap;
+  margin: -15px -24px 11px; padding: 12px 24px 10px; flex-wrap: wrap;
+  background: ${T.bg}; border-bottom: 1px solid ${T.line};
 }
 .om-bar-t { display: flex; align-items: center; gap: 8px; color: ${T.ink}; min-width: 0; }
 .om-bar-lbl { font-size: 13px; font-weight: 800; letter-spacing: -.2px; }
@@ -166,8 +193,14 @@ const OM_CSS = `
 .om-step { font-size: 10.5px; color: ${T.faint}; font-weight: 600; }
 
 @media (max-width: 1000px) {
-  .om-shell { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .om-nav { position: static; max-height: none; display: flex; gap: 6px; overflow-x: auto; padding: 7px; }
+  .om-shell { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .om-main { padding: 13px 16px 28px; }
+  .om-bar { margin: -13px -16px 11px; padding: 11px 16px 9px; }
+  .om-nav {
+    position: static; height: auto; max-height: none; display: flex; gap: 6px;
+    overflow-x: auto; padding: 8px; border-right: 0;
+    border-bottom: 1px solid rgba(255,255,255,.09);
+  }
   .om-nav-btn { flex: 0 0 auto; width: auto; }
   .om-nav-btn + .om-nav-btn { margin-top: 0; }
   .om-nav-hint, .om-nav-sep, .om-nav-cap { display: none !important; }
