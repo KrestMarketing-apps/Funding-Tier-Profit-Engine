@@ -13,6 +13,7 @@ import { p } from '../../lib/paths';
 // of sync. If the tiers or ramp settings change in operatingModel/config.ts,
 // this page updates itself.
 const REP_PAY = DEFAULT_INPUTS.repPay;
+const BPO_PAY = DEFAULT_INPUTS.bpoPay;
 
 function tierRangeLabel(tiers: typeof REP_PAY.drawTiers, i: number): string {
   const from = tiers[i].threshold;
@@ -256,7 +257,15 @@ export default function RepPayModel({ mode = 'admin' }: { mode?: 'admin' | 'agen
             <Callout tone="warn">
               <strong>Scope: US-based closers only.</strong> This window — and the draw-plus-tiered-scale structure
               generally — applies to Funding Tier's US-based sales team. BPO/overseas production is compensated
-              separately and is not subject to either the tiered scale or the ramp window.
+              separately and is not subject to either the tiered scale or the ramp window. BPO closers earn one
+              monthly volume bonus instead — a share of the dollars that rep enrolled in the calendar month, unlocked
+              only by clearing a deal-count threshold ({BPO_PAY.tiers.map((t, i) => (
+                <React.Fragment key={t.minDealsPerMonth}>
+                  {i > 0 ? ', ' : ''}{t.minDealsPerMonth}+ deals &rarr; {(t.rate * 100).toFixed(2)}%
+                </React.Fragment>
+              ))}), paid {BPO_PAY.payoutLagMonths === 1 ? 'at the end of the following month' : `${BPO_PAY.payoutLagMonths} months in arrears`} and
+              subject to the same clawback and NSF exposure as every other payout. Miss the threshold and no bonus is
+              owed at all.
             </Callout>
             <Callout>
               Not legal advice. FTC/TASC figures above are paraphrased from public industry research — verify with

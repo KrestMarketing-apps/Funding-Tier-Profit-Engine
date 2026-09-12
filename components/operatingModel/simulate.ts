@@ -12,6 +12,7 @@ import {
 import { buildMonthlyCosts } from './costs';
 import { computeFunnel, blendedCloseRateOnBilled } from './funnel';
 import { computeBonuses } from './bonuses';
+import { computeBpoBonus } from './bpoPay';
 
 /** Split a total into integer parts by percentage, preserving the total. */
 function allocate(total: number, pcts: Record<BackendKey, number>): Record<BackendKey, number> {
@@ -31,6 +32,22 @@ interface Cohort {
   startMonth: number;
   dealCount: number;
   avgDebt: number;
+  /**
+   * The whole month's enrolled volume for this backend, captured before the
+   * cohort was sliced. Graduated commission schedules (Level Debt's) tier on
+   * the month's production, not on whatever fraction of it happens to sit in
+   * one slice — without this, splitting a cohort by attribution or by ramp
+   * status silently demotes every slice to a lower rung.
+   */
+  tierVolume: number;
+  /**
+   * Who wrote this slice of the cohort. BPO-written deals carry no per-deal
+   * commission at all when the BPO volume-bonus model is on — that rep's
+   * variable pay was already accrued at origination as a share of the month's
+   * enrolled dollars. Locked in at origination like avgDebt, so a later
+   * roster change can't retroactively re-attribute a closed deal.
+   */
+  attribution: 'us' | 'bpo';
   /**
    * Draw-system scenario only: the rate resolved at ORIGINATION from that
    * month's combined cross-program rep volume, locked in like avgDebt so a
@@ -149,6 +166,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
   // Compensation earned on a month's production but paid with a later payroll.
   const overrideDue = new Map<number, number>();
   const bonusDue = new Map<number, number>();
+  const bpoDue = new Map<number, number>();
 
   for (let m = 1; m <= horizon; m++) {
     // ── Materialise an auto-hire that came due this month ────────────────────
@@ -218,40 +236,51 @@ export function runModel(inputs: ModelInputs): ModelResults {
         rollup[k].enrolledVolume += dealsByBackend[k] * inputs.volume.avgDebt[k];
         return;
       }
+      // Attribution runs in BOTH pay modes. Who wrote the deal decides how it
+      // is paid on, so the split can't live inside the draw branch — on a
+      // BPO-heavy roster that was the difference between paying the US
+      // contract schedule on every deal and paying it only on the deals a US
+      // closer actually wrote.
+      const usDealCount = dealsByBackend[k] * usShare;
+      const bpoDealCount = dealsByBackend[k] - usDealCount;
+      const tierVolume = dealsByBackend[k] * inputs.volume.avgDebt[k];
+
       if (inputs.repPay.mode === 'draw') {
         // US-attributed share, split again into ramping vs tenured so ramping
         // reps' deals carry the probation payout-month override while
         // tenured reps' deals use the backend's normal schedule.
-        const usDealCount = dealsByBackend[k] * usShare;
         const rampDealCount = usDealCount * usRampShare;
         const tenuredDealCount = usDealCount - rampDealCount;
-        const bpoDealCount = dealsByBackend[k] - usDealCount;
 
         if (rampDealCount > 0) {
           cohorts.push({
             backendKey: k, startMonth: m, dealCount: rampDealCount,
-            avgDebt: inputs.volume.avgDebt[k], repDrawRate,
+            avgDebt: inputs.volume.avgDebt[k], tierVolume, repDrawRate, attribution: 'us',
             payoutDealMonthOverride: inputs.repPay.ramp.probationPayoutDealMonth,
           });
         }
         if (tenuredDealCount > 0) {
           cohorts.push({
             backendKey: k, startMonth: m, dealCount: tenuredDealCount,
-            avgDebt: inputs.volume.avgDebt[k], repDrawRate,
+            avgDebt: inputs.volume.avgDebt[k], tierVolume, repDrawRate, attribution: 'us',
           });
         }
-        if (bpoDealCount > 0) {
-          // BPO/overseas share is never in draw mode — falls through to
-          // agentCommissionForDeal at payout time since repDrawRate is unset.
-          cohorts.push({
-            backendKey: k, startMonth: m, dealCount: bpoDealCount,
-            avgDebt: inputs.volume.avgDebt[k],
-          });
-        }
-      } else {
+      } else if (usDealCount > 0) {
         cohorts.push({
-          backendKey: k, startMonth: m, dealCount: dealsByBackend[k],
-          avgDebt: inputs.volume.avgDebt[k],
+          backendKey: k, startMonth: m, dealCount: usDealCount,
+          avgDebt: inputs.volume.avgDebt[k], tierVolume, attribution: 'us',
+        });
+      }
+
+      if (bpoDealCount > 0) {
+        // BPO/overseas share is never in draw mode and never carries a draw
+        // rate. With the volume-bonus model on it carries no per-deal
+        // commission either — the rep's pay was accrued at origination. With
+        // it off it falls through to agentCommissionForDeal, which is the
+        // old behaviour and the honest before/after comparison.
+        cohorts.push({
+          backendKey: k, startMonth: m, dealCount: bpoDealCount,
+          avgDebt: inputs.volume.avgDebt[k], tierVolume, attribution: 'bpo',
         });
       }
       rollup[k].dealsSubmitted += dealsByBackend[k];
@@ -288,18 +317,36 @@ export function runModel(inputs: ModelInputs): ModelResults {
       // of the following month"), so it is measured WITHOUT the remittance lag.
       const unlaggedDealMonth = m - cohort.startMonth + 1;
       const payoutDealMonth = cohort.payoutDealMonthOverride ?? agentPayoutMonth(cohort.backendKey, inputs);
-      if (unlaggedDealMonth === payoutDealMonth) {
+      // BPO-written deals pay no per-deal commission once the volume-bonus
+      // model is on — that comp was accrued in the enrollment month instead.
+      const onBpoVolumeBonus = cohort.attribution === 'bpo' && inputs.bpoPay.enabled;
+      if (unlaggedDealMonth === payoutDealMonth && !onBpoVolumeBonus) {
         const survivingAtPayout = (survival[cohort.backendKey][unlaggedDealMonth] ?? 0) * cohort.dealCount;
-        const monthlyEnrolled = cohort.dealCount * cohort.avgDebt;
         const perDealComm = cohort.repDrawRate != null
           ? cohort.avgDebt * cohort.repDrawRate
-          : agentCommissionForDeal(cohort.backendKey, cohort.avgDebt, monthlyEnrolled, inputs);
+          : agentCommissionForDeal(cohort.backendKey, cohort.avgDebt, cohort.tierVolume, inputs);
         const amount = survivingAtPayout * perDealComm;
         commission += amount;
         partnerDetail[cohort.backendKey].repCommission += amount;
         rollup[cohort.backendKey].repCommission += amount;
       }
     }
+
+    // ── BPO volume bonus — accrued on THIS month's BPO-written production ────
+    // Paid at the end of the following month, so it is accrued here and
+    // released below through the same arrears map the override and spiffs use.
+    const bpoPayoutDealMonth = 1 + Math.max(0, Math.round(inputs.bpoPay.payoutLagMonths));
+    const survivalAtPayout = {} as Record<BackendKey, number>;
+    BACKEND_KEYS.forEach((k) => {
+      survivalAtPayout[k] = survival[k][bpoPayoutDealMonth] ?? 0;
+    });
+    const bpoBonus = computeBpoBonus(inputs.bpoPay, {
+      bpoClosers,
+      totalCloserHours: rosterMonth.closerHours,
+      dealsByBackend,
+      avgDebt: inputs.volume.avgDebt,
+      survivalAtPayout,
+    });
 
     // ── Transfer funnel ──────────────────────────────────────────────────────
     const funnel = computeFunnel(inputs, totalDeals, capacity.openerSuppliedTransfers);
@@ -322,17 +369,31 @@ export function runModel(inputs: ModelInputs): ModelResults {
         const share = totalCloserHours > 0 ? teamHours / totalCloserHours : 0;
         let base = 0;
         if (inputs.overridePolicy.base === 'enrolledVolume') base = enrolledThisMonth * share;
-        else if (inputs.overridePolicy.base === 'repCommission') base = commission * share;
-        else base = revenue * share;
+        else if (inputs.overridePolicy.base === 'repCommission') {
+          // "Rep commission" means total variable comp on deals, so the BPO
+          // volume bonus belongs in the base unless it's explicitly excluded.
+          const bpoPart = inputs.bpoPay.includeInOverrideBase ? bpoBonus.accrued : 0;
+          base = (commission + bpoPart) * share;
+        } else base = revenue * share;
         overrideAccrued += base * (mgr.employee.overridePct / 100);
       }
     }
 
     // ── Bonuses and spiffs ───────────────────────────────────────────────────
+    // The four spiff programs are the US incentive plan. BPO closers have
+    // their own volume bonus; paying them both would re-introduce the very
+    // double-count the attribution split exists to remove.
+    const bonusClosers = inputs.bonusPolicy.usOnly
+      ? rosterMonth.closers.filter((c) => c.employee.type !== 'bpo')
+      : rosterMonth.closers;
     const bonuses = computeBonuses(inputs, {
-      dealsByBackend,
+      dealsByBackend: inputs.bonusPolicy.usOnly
+        ? (Object.fromEntries(
+            BACKEND_KEYS.map((k) => [k, dealsByBackend[k] * usShare]),
+          ) as Record<BackendKey, number>)
+        : dealsByBackend,
       avgDebt: inputs.volume.avgDebt,
-      closers: rosterMonth.closers,
+      closers: bonusClosers,
     });
 
     // Compensation is paid in arrears, exactly like backend-driven commission —
@@ -344,6 +405,10 @@ export function runModel(inputs: ModelInputs): ModelResults {
     const bLag = Math.max(0, Math.round(inputs.bonusPolicy.payoutLagMonths));
     bonusDue.set(m + bLag, (bonusDue.get(m + bLag) ?? 0) + bonuses.paid);
     const bonusPaid = bonusDue.get(m) ?? 0;
+
+    const bpoLag = Math.max(0, Math.round(inputs.bpoPay.payoutLagMonths));
+    bpoDue.set(m + bpoLag, (bpoDue.get(m + bpoLag) ?? 0) + bpoBonus.accrued);
+    const bpoBonusPaid = bpoDue.get(m) ?? 0;
 
     // ── Cost ledger ──────────────────────────────────────────────────────────
     const costs = buildMonthlyCosts(inputs, {
@@ -358,7 +423,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
     const transferCost = costs.groups.find((g) => g.id === 'transfers')?.subtotal ?? 0;
     const laborCost = costs.groups.find((g) => g.id === 'labor')?.subtotal ?? 0;
 
-    const netCashFlow = revenue - commission - managerOverride - bonusPaid - overhead;
+    const netCashFlow = revenue - commission - bpoBonusPaid - managerOverride - bonusPaid - overhead;
     cash += netCashFlow;
     if (cash < peakCapital) peakCapital = cash;
     if (firstCashPositive == null && cash > 0) firstCashPositive = m;
@@ -366,7 +431,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
     // Reserve = months of overhead, plus a chargeback buffer sized off the
     // trailing 12 months of commission actually paid out. Matches the shared
     // engine's definition exactly.
-    trailingCommission12mo.push(commission);
+    trailingCommission12mo.push(commission + bpoBonusPaid);
     if (trailingCommission12mo.length > 12) trailingCommission12mo.shift();
     const disputeBuffer = trailingCommission12mo.reduce((a, b) => a + b, 0) * disputeRate;
     const reserveTarget = overhead * inputs.reservePolicy.targetMonthsOfOverhead + disputeBuffer;
@@ -396,7 +461,10 @@ export function runModel(inputs: ModelInputs): ModelResults {
       month: m,
       deals: totalDeals,
       dealsByBackend,
+      usDeals: totalDeals * usShare,
+      bpoDeals: totalDeals * (1 - usShare),
       revenue, repCommission: commission,
+      bpoBonus, bpoBonusPaid,
       managerOverride, managerOverrideAccrued: overrideAccrued,
       bonuses, bonusPaid,
       overhead, transferCost, laborCost,
@@ -415,6 +483,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
   const totals = {
     revenue: months.reduce((s, r) => s + r.revenue, 0),
     repCommission: months.reduce((s, r) => s + r.repCommission, 0),
+    bpoBonus: months.reduce((s, r) => s + r.bpoBonusPaid, 0),
     managerOverride: months.reduce((s, r) => s + r.managerOverride, 0),
     bonuses: months.reduce((s, r) => s + r.bonusPaid, 0),
     overhead: months.reduce((s, r) => s + r.overhead, 0),

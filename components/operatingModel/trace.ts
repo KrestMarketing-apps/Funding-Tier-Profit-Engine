@@ -244,7 +244,17 @@ export function buildTrace(inputs: ModelInputs, results: ModelResults, monthInde
   });
 
   // ── 4. Commission ──────────────────────────────────────────────────────────
-  const commRows: TraceRow[] = BACKEND_KEYS.map((k) => {
+  // Attribution comes first: it decides which pay model each deal is priced on.
+  const commRows: TraceRow[] = [];
+  const usSharePct = row.deals > 0 ? (row.usDeals / row.deals) * 100 : 100;
+  commRows.push({
+    step: 'Attribution', what: 'Who wrote this month\u2019s deals',
+    formula: 'deals × (that pool\u2019s closer hours ÷ total closer hours)',
+    substitution: `${num(row.deals, 0)} deals × ${pct(usSharePct)} US closer hours`,
+    result: `${num(row.usDeals, 1)} US · ${num(row.bpoDeals, 1)} BPO`,
+    note: 'Only the US share is priced on the per-deal contract schedule below. BPO-written deals carry no per-deal commission at all — that production is paid through the monthly volume bonus instead. Nothing in this model tracks named individuals, so closer hours are the attribution key, the same one manager overrides use.',
+  });
+  commRows.push(...BACKEND_KEYS.map((k) => {
     const partner = row.partners.find((p) => p.key === k)!;
     return {
       step: BRANDS[k].name, what: 'Commission paid out to Funding Tier reps',
@@ -257,18 +267,63 @@ export function buildTrace(inputs: ModelInputs, results: ModelResults, monthInde
         : k === 'CS' ? `${money(shield.agentCommission(inputs.volume.avgDebt.CS, inputs.consumerShield))} per surviving deal`
           : `${money(legacy.agentCommission(inputs.volume.avgDebt.LEGACY, inputs.legacy))} per surviving deal`,
       result: money(partner.repCommission),
-      note: `Paid at deal-month ${k === 'LEVEL' ? inputs.levelDebt.agentPayoutMonth : k === 'CS' ? inputs.consumerShield.agentPayoutMonth : inputs.legacy.agentPayoutMonth}. This is money leaving Funding Tier, not money received.`,
+      note: `Paid at deal-month ${k === 'LEVEL' ? inputs.levelDebt.agentPayoutMonth : k === 'CS' ? inputs.consumerShield.agentPayoutMonth : inputs.legacy.agentPayoutMonth}. US-attributed deals only. This is money leaving Funding Tier, not money received.`,
     };
-  });
+  }));
   commRows.push({
-    step: 'Total', what: 'Commission paid to reps this month',
-    formula: 'Σ all three servicing partners',
+    step: 'Subtotal', what: 'Per-deal commission paid this month',
+    formula: 'Σ all three servicing partners, US-attributed deals only',
     substitution: row.partners.map((p) => money(p.repCommission)).join(' + '),
     result: money(row.repCommission),
   });
+
+  // BPO volume bonus — a different pay model, so it derives separately.
+  if (inputs.bpoPay.enabled && row.bpoBonus.lines.length > 0) {
+    const cliffs = [...inputs.bpoPay.tiers]
+      .sort((a, b) => a.minDealsPerMonth - b.minDealsPerMonth)
+      .map((t) => `${t.minDealsPerMonth}+ → ${(t.rate * 100).toFixed(2)}%`)
+      .join(' · ');
+    row.bpoBonus.lines.forEach((l) => {
+      commRows.push({
+        step: 'BPO bonus', what: `${l.name} — monthly volume bonus`,
+        formula: l.qualified
+          ? 'that rep\u2019s enrolled dollars × the rate their deal count unlocks'
+          : 'no threshold cleared → no bonus',
+        substitution: l.qualified
+          ? `${money(l.bonusBase)} × ${(l.rate * 100).toFixed(2)}%`
+          : `${num(l.deals, 1)} deals against a ${cliffs.split(' ')[0]} cliff`,
+        result: money(l.amount),
+        note: l.qualified
+          ? `${num(l.deals, 1)} deals written (${l.tierLabel}). It is a cliff, not a ladder: the rate pays on the rep\u2019s WHOLE month of enrolled volume, not just the deals above the line.${inputs.bpoPay.netOfClawbacks ? ` Base is net of NSF / clawback — ${money(l.bonusBase)} of ${money(l.enrolledVolume)} gross survives to payout.` : ' Base is gross enrolled dollars; clawbacks are handled outside the model.'}`
+          : `${num(l.deals, 1)} deals is under the ${cliffs.split('+')[0]}-deal threshold, so this rep earns nothing above their hourly rate this month. Tiers: ${cliffs}.`,
+      });
+    });
+    commRows.push({
+      step: 'BPO bonus', what: 'Accrued on this month\u2019s BPO production',
+      formula: 'Σ every BPO closer',
+      substitution: row.bpoBonus.lines.map((l) => money(l.amount)).join(' + ') || '$0',
+      result: money(row.bpoBonus.accrued),
+      note: `Paid ${inputs.bpoPay.payoutLagMonths === 0 ? 'the same month' : `${inputs.bpoPay.payoutLagMonths} month${inputs.bpoPay.payoutLagMonths === 1 ? '' : 's'} later`}, which is why the cash line below can differ from this accrual.`,
+    });
+    commRows.push({
+      step: 'BPO bonus', what: 'BPO bonus cash leaving this month',
+      formula: 'accrual from the production month, released on the payout lag',
+      substitution: `month ${Math.max(1, monthIndex - inputs.bpoPay.payoutLagMonths)} accrual`,
+      result: money(row.bpoBonusPaid),
+    });
+  }
+
+  commRows.push({
+    step: 'Total', what: 'All variable comp on deals, this month',
+    formula: 'US per-deal commission + BPO volume bonus',
+    substitution: `${money(row.repCommission)} + ${money(row.bpoBonusPaid)}`,
+    result: money(row.repCommission + row.bpoBonusPaid),
+  });
   sections.push({
     id: 'commission', title: '4 · Commission — what Funding Tier pays its reps',
-    intro: 'Commission is an outflow. It is booked in the month the backend pays out, so month 1 pays nothing.',
+    intro: inputs.bpoPay.enabled
+      ? 'Commission is an outflow, booked in the month the backend pays out, so month 1 pays nothing. Two pay models run side by side: US closers on the per-deal contract schedule, BPO closers on a single monthly volume bonus. Which one a deal is priced on depends on who wrote it.'
+      : 'Commission is an outflow. It is booked in the month the backend pays out, so month 1 pays nothing. BPO pay is currently switched to the US contract schedule, so every deal is priced the same way regardless of who wrote it.',
     rows: commRows,
   });
 
@@ -300,12 +355,12 @@ export function buildTrace(inputs: ModelInputs, results: ModelResults, monthInde
   const prev = results.months[monthIndex - 2];
   sections.push({
     id: 'cash', title: '6 · Cash — the bottom line',
-    intro: 'Net cash flow is revenue less commission less total overhead. Nothing else is netted anywhere.',
+    intro: 'Net cash flow is revenue less every compensation line less total overhead. Nothing else is netted anywhere.',
     rows: [
       {
         step: 'Net cash flow', what: 'Cash generated this month',
-        formula: 'revenue − commission − overhead',
-        substitution: `${money(row.revenue)} − ${money(row.repCommission)} − ${money(row.overhead)}`,
+        formula: 'revenue − US commission − BPO volume bonus − override − bonuses − overhead',
+        substitution: `${money(row.revenue)} − ${money(row.repCommission)} − ${money(row.bpoBonusPaid)} − ${money(row.managerOverride)} − ${money(row.bonusPaid)} − ${money(row.overhead)}`,
         result: money(row.netCashFlow),
       },
       {

@@ -237,11 +237,13 @@ const MONTH_COL_HELP: Record<string, string> = {
   mo: 'Simulation month, counting from the first month of operation.',
   deals: 'New deals submitted this month. Derived from paid closer hours ÷ 8 × deals-per-8-hours, capped by available talk time and scaled by the ramp factor, then split across the three servicing partners by the volume mix.',
   revenue: 'Cash actually received from the servicing partners this month — not deals signed. Every backend pays in arrears, so this lags enrollment. Computed as: for each live cohort, surviving deals × revenue per payment × (1 − dispute rate).',
-  commission: 'Commission Funding Tier PAYS OUT to its own reps. This is money leaving the business, not money coming in. Booked in the month the backend releases payout, which is why month 1 is always zero.',
+  attribution: 'How this month\u2019s deals split by who wrote them \u2014 US-attributed / BPO-attributed, allocated on each seat\u2019s share of total closer hours. Only the US share is priced on the per-deal contract schedule; the BPO share is paid through the monthly volume bonus instead.',
+  commission: 'Per-deal commission Funding Tier PAYS OUT, on US-attributed production only. Money leaving the business. Booked in the month the backend releases payout, which is why month 1 is always zero. BPO-written deals are NOT in this column \u2014 see BPO bonus.',
+  bpoBonus: 'BPO/overseas variable pay leaving the business this month: the monthly volume bonus accrued on BPO-written production one payout cycle earlier. A BPO rep who missed their deal-count cliff contributes nothing to this column at all.',
   override: 'Override earned by Managers and Owner Operators on the deals their team closed, on top of anything they closed themselves. Another outflow.',
   bonuses: 'Daily deal, monthly volume, balanced book and Level Debt enrolment bonuses paid this month, net of any provisional holdback. Daily thresholds are inferred from monthly volume using the deal-concentration setting.',
   overhead: 'Total monthly operating cost: fixed tools + per-user tools + usage rates + Trackdrive + transfer acquisition + labor. Transfer acquisition is included here — in the previous model it was deducted from cash but omitted from this column.',
-  netcf: 'Revenue − commission paid to reps − overhead. The cash the business generated or burned this month.',
+  netcf: 'Revenue − US commission − BPO volume bonus − manager override − bonuses − overhead. The cash the business generated or burned this month.',
   cash: 'Running cash on hand: prior month cash position + this month net cash flow. Negative means capital has to be funded from outside.',
   reserve: 'Whether cash on hand covers the reserve target, which is monthly overhead × the reserve months setting.',
   seats: 'Agents on payroll this month, counted from the roster.',
@@ -347,6 +349,29 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
     setMathOpen(true);
   };
   const month = results.months[Math.min(stmtMonth, horizon) - 1];
+
+  // The same model with BPO production priced back onto the US contract
+  // schedule (and drawing the US spiffs) — i.e. what this tool showed before
+  // deals were attributed to whoever actually wrote them. Kept live so the
+  // Rep Pay section can quantify the overstatement instead of asserting it.
+  const resultsBpoOff = useMemo(
+    () => runModel({
+      ...inputs,
+      bpoPay: { ...inputs.bpoPay, enabled: false },
+      bonusPolicy: { ...inputs.bonusPolicy, usOnly: false },
+    }),
+    [inputs],
+  );
+  const bpoMonth = month?.bpoBonus ?? { lines: [], deals: 0, enrolledVolume: 0, accrued: 0 };
+  const lowestBpoCliff = inputs.bpoPay.tiers.length
+    ? Math.min(...inputs.bpoPay.tiers.map((t) => t.minDealsPerMonth))
+    : 0;
+  // A rep within two deals of a cliff, on either side of it, makes the whole
+  // bonus line fragile — worth saying out loud rather than letting the number
+  // read as settled.
+  const bpoAtRisk = bpoMonth.lines.some(
+    (l) => Math.abs(l.deals - lowestBpoCliff) <= 2,
+  );
   const patch = (p: Partial<ModelInputs>) => setInputs({ ...inputs, ...p });
   const blended = blendedTransferCost(inputs);
   // Soft credit pulls — one per BILLED qualified transfer, so a dud never costs
@@ -839,7 +864,7 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       {active === 'reppay' && (<>
       {/* ── 4b · Rep Pay Model — draw + tiered settlement scale scenario ────── */}
       <Panel title="4 · Rep Pay Model — Contract vs. Draw + Tiered Volume Scale" accent={T.accent}
-        tooltip="Compare each backend's own live commission schedule against an alternate pay model: hourly wage as a non-recoverable draw, plus a single commission rate — tiered on each rep's own COMBINED monthly enrolled volume across all three programs — applied uniformly to that rep's Level Debt, Consumer Shield, and Legacy Capital commission alike. A 90-day new-hire ramp window can delay when a US-based closer's early commission is earned. BPO/overseas production always prices on the contract schedule.">
+        tooltip="Compare each backend's own live commission schedule against an alternate pay model: hourly wage as a non-recoverable draw, plus a single commission rate — tiered on each rep's own COMBINED monthly enrolled volume across all three programs — applied uniformly to that rep's Level Debt, Consumer Shield, and Legacy Capital commission alike. A 90-day new-hire ramp window can delay when a US-based closer's early commission is earned. Neither scenario touches BPO/overseas production — BPO closers are not on a per-deal schedule at all and earn the monthly volume bonus in 4b instead.">
         <Row cols={2} gap={14}>
           <Field label="Active pay model"
             tooltip="Which scenario drives every other panel, the month-by-month table, and the headline results above. Both scenarios are always computed — this only decides which one is 'live'.">
@@ -926,7 +951,7 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
             color: T.muted, marginBottom: 8, display: 'flex', alignItems: 'center',
           }}>
             New-hire ramp / probation window — US-based reps only
-            <Info text="Not a clawback: commission on deals a US-based closer writes during their first ramp window isn't treated as EARNED until this later deal-month, instead of the backend's normal deal-month-2 schedule. This is the legally safer structure for a California employer — courts have upheld delaying WHEN a commission is earned (even a 365-day vesting window), but are hostile to clawing back money already paid. It's also standard market practice for ramping reps on larger sales teams. BPO/overseas closer hours are never subject to this window; they always price on the contract schedule." />
+            <Info text="Not a clawback: commission on deals a US-based closer writes during their first ramp window isn't treated as EARNED until this later deal-month, instead of the backend's normal deal-month-2 schedule. This is the legally safer structure for a California employer — courts have upheld delaying WHEN a commission is earned (even a 365-day vesting window), but are hostile to clawing back money already paid. It's also standard market practice for ramping reps on larger sales teams. BPO/overseas closer hours are never subject to this window — BPO production is not on a per-deal schedule at all, so there is no payout month to delay." />
           </div>
           <Row cols={3} gap={14}>
             <Field label="Ramp policy">
@@ -1009,10 +1034,198 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
           commission is calculated: instead of each program paying its own separate schedule (Level Debt's company-wide
           tiered %, Shield's flat per-deal commission, Legacy's flat band), one rate — set by total diversified volume —
           applies across the board. The new-hire ramp window delays when a US-based closer's early commission is earned
-          (not a clawback of anything already paid), and never touches BPO/overseas production, which always prices on
-          the contract schedule. The 2-month non-producer policy isn't simulated as headcount churn — it's a
+          (not a clawback of anything already paid), and never touches BPO/overseas production — BPO closers are not on
+          a per-deal schedule at all, contract or draw. They earn the monthly volume bonus in 4b below. The 2-month non-producer policy isn't simulated as headcount churn — it's a
           hiring/management decision that sits outside this cash-flow model, so both scenarios use whatever roster is set
           below.
+        </Callout>
+      </Panel>
+
+      {/* ── 4c · BPO / overseas pay — the volume bonus, not the US schedule ─── */}
+      <Panel title="4b · BPO / Overseas Pay — Monthly Volume Bonus" accent={T.accent}
+        subtitle="BPO closers are not on the US per-deal schedule"
+        right={MonthPicker}
+        tooltip="BPO/overseas closers earn one monthly bonus: a share of the dollars THEY enrolled that calendar month, unlocked only if they personally clear a deal-count threshold. Miss the threshold and the bonus is zero. Clear it and the rate pays on that rep's whole month of enrolled volume. Turn this off and BPO production falls back to the US contract schedule — which is what the model did before, and what overstates payout on a BPO-heavy roster.">
+
+        <Row cols="repeat(auto-fit, minmax(200px, 1fr))" gap={10}>
+          <Field label="Pay model for BPO production"
+            tooltip="On: BPO-written deals carry no per-deal commission and the rep earns the volume bonus instead. Off: BPO deals price on the US contract schedule, exactly as they did before this split existed.">
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[true, false].map((v) => (
+                <button key={String(v)}
+                  onClick={() => patch({ bpoPay: { ...inputs.bpoPay, enabled: v } })}
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: 'pointer',
+                    fontSize: 11, fontWeight: 700,
+                    border: `1px solid ${inputs.bpoPay.enabled === v ? T.brand : T.line}`,
+                    background: inputs.bpoPay.enabled === v ? T.brand : '#fff',
+                    color: inputs.bpoPay.enabled === v ? '#fff' : T.body,
+                  }}>
+                  {v ? 'Volume bonus' : 'US contract schedule'}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Bonus paid" tooltip="Months between the calendar month the deals were enrolled and the money leaving the business. 1 = end of the following month.">
+            <NumberInput value={inputs.bpoPay.payoutLagMonths} min={0} max={6} suffix="mo in arrears"
+              onChange={(v) => patch({ bpoPay: { ...inputs.bpoPay, payoutLagMonths: v } })} />
+          </Field>
+          <Field label="Deal count tested on"
+            tooltip="Gross: the rep hit the threshold by writing the deals, whatever happens to them later. Surviving: only deals still live at payout count toward the threshold — a stricter reading that can drop a rep under the cliff.">
+            <div style={{ display: 'flex', gap: 6 }}>
+              {(['gross', 'surviving'] as const).map((v) => (
+                <button key={v}
+                  onClick={() => patch({ bpoPay: { ...inputs.bpoPay, thresholdBasis: v } })}
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: 'pointer',
+                    fontSize: 11, fontWeight: 700, textTransform: 'capitalize',
+                    border: `1px solid ${inputs.bpoPay.thresholdBasis === v ? T.brand : T.line}`,
+                    background: inputs.bpoPay.thresholdBasis === v ? T.brand : '#fff',
+                    color: inputs.bpoPay.thresholdBasis === v ? '#fff' : T.body,
+                  }}>
+                  {v === 'gross' ? 'Deals written' : 'Deals still live'}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Dollar base"
+            tooltip="Net of clawbacks: the rate is applied only to enrolled dollars still live at payout, so NSFs and first-payment failures never get paid on. Gross: the rate pays on everything written, and clawbacks are handled outside the model.">
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[true, false].map((v) => (
+                <button key={String(v)}
+                  onClick={() => patch({ bpoPay: { ...inputs.bpoPay, netOfClawbacks: v } })}
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 6, cursor: 'pointer',
+                    fontSize: 11, fontWeight: 700,
+                    border: `1px solid ${inputs.bpoPay.netOfClawbacks === v ? T.brand : T.line}`,
+                    background: inputs.bpoPay.netOfClawbacks === v ? T.brand : '#fff',
+                    color: inputs.bpoPay.netOfClawbacks === v ? '#fff' : T.body,
+                  }}>
+                  {v ? 'Net of NSF' : 'Gross enrolled'}
+                </button>
+              ))}
+            </div>
+          </Field>
+        </Row>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{
+            fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+            color: T.muted, marginBottom: 8,
+          }}>
+            Cliff tiers — rate by that rep&rsquo;s own monthly deal count, all 3 programs combined
+            <Info text="A cliff, not a ladder. Below the lowest threshold the rep earns nothing above their hourly rate. Clearing a threshold pays that rate on the rep's WHOLE month of enrolled dollars, not just the deals above the line." />
+          </div>
+          <Row cols="repeat(auto-fit, minmax(230px, 1fr))" gap={10}>
+            {inputs.bpoPay.tiers.map((tier, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+                <Field label="Deals / month">
+                  <NumberInput value={tier.minDealsPerMonth} min={0} max={500} suffix="deals"
+                    onChange={(v) => {
+                      const tiers = inputs.bpoPay.tiers.map((t, idx) => (idx === i ? { ...t, minDealsPerMonth: v } : t));
+                      patch({ bpoPay: { ...inputs.bpoPay, tiers } });
+                    }} />
+                </Field>
+                <Field label="Rate">
+                  <NumberInput value={tier.rate * 100} min={0} max={10} step={0.01} suffix="%"
+                    onChange={(v) => {
+                      const tiers = inputs.bpoPay.tiers.map((t, idx) => (idx === i ? { ...t, rate: v / 100 } : t));
+                      patch({ bpoPay: { ...inputs.bpoPay, tiers } });
+                    }} />
+                </Field>
+                {inputs.bpoPay.tiers.length > 1 && (
+                  <Btn size="sm" tone="danger" onClick={() => {
+                    const tiers = inputs.bpoPay.tiers.filter((_, idx) => idx !== i);
+                    patch({ bpoPay: { ...inputs.bpoPay, tiers } });
+                  }}>Remove</Btn>
+                )}
+              </div>
+            ))}
+          </Row>
+          <div style={{ marginTop: 8 }}>
+            <Btn size="sm" onClick={() => {
+              const last = inputs.bpoPay.tiers[inputs.bpoPay.tiers.length - 1];
+              const tiers = [...inputs.bpoPay.tiers, {
+                minDealsPerMonth: (last?.minDealsPerMonth ?? 20) + 5,
+                rate: (last?.rate ?? 0.0025) + 0.0005,
+              }];
+              patch({ bpoPay: { ...inputs.bpoPay, tiers } });
+            }}>+ Add tier</Btn>
+          </div>
+        </div>
+
+        {bpoMonth.lines.length > 0 ? (
+          <div style={{ marginTop: 16, overflowX: 'auto' }}>
+            <div style={{
+              fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+              color: T.muted, marginBottom: 8,
+            }}>Per BPO rep — month {stmtMonth}</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+              <thead><tr>
+                <th style={th}>Rep</th>
+                <th style={th}>Closer hrs<Info text="Paid hours this rep spends closing. Deals are attributed to a rep by their share of total closer hours — the same technique the model uses for manager overrides. Nothing here tracks named individuals' deals." /></th>
+                <th style={th}>Deals<Info text="Deals attributed to this rep this month, all three programs combined. This is the number tested against the cliff." /></th>
+                <th style={th}>Enrolled $</th>
+                <th style={th}>Tier</th>
+                <th style={th}>Base<Info text="The dollars the rate is actually applied to, after the NSF / clawback haircut if that setting is on." /></th>
+                <th style={th}>Bonus</th>
+              </tr></thead>
+              <tbody>
+                {bpoMonth.lines.map((l, i) => (
+                  <tr key={i} style={{ background: l.qualified ? 'transparent' : '#fff7f5' }}>
+                    <td style={td}>{l.name}</td>
+                    <td style={tdNum}>{fmtNum(l.closerHours, 1)}</td>
+                    <td style={tdNum}>{fmtNum(l.deals, 1)}</td>
+                    <td style={tdNum}>{fmtMoney(l.enrolledVolume)}</td>
+                    <td style={{ ...td, color: l.qualified ? T.body : T.bad, fontWeight: 600 }}>{l.tierLabel}</td>
+                    <td style={tdNum}>{fmtMoney(l.bonusBase)}</td>
+                    <td style={{ ...tdNum, fontWeight: 700 }}>{fmtMoney(l.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Callout tone="info">
+            No BPO/overseas seats are carrying closer hours this month, so nothing here applies. Add a BPO row in
+            Staffing &amp; Labor and set its role to Closer to see this model bite.
+          </Callout>
+        )}
+
+        <div style={{ marginTop: 14 }}>
+          <Row cols="repeat(auto-fit, minmax(178px, 1fr))" gap={10}>
+            <Stat label="Deals written — US vs BPO"
+              value={`${fmtNum(month?.usDeals ?? 0, 1)} / ${fmtNum(month?.bpoDeals ?? 0, 1)}`}
+              sub={`${fmtPct((month?.deals ?? 0) > 0 ? ((month?.bpoDeals ?? 0) / (month?.deals ?? 1)) * 100 : 0, 0)} of production is BPO-written`}
+              tooltip="How this month's deals split by who wrote them, attributed on closer hours. This ratio is the whole point of the section: it is the share of production that must NOT be priced on the US schedule." />
+            <Stat label="US commission — this month" value={fmtMoney(month?.repCommission ?? 0)}
+              sub="Per-deal schedule, US-attributed deals only"
+              tooltip="Per-deal commission on US-attributed production only. Before the split, this line was charged on every deal in the business regardless of who wrote it." />
+            <Stat label="BPO volume bonus — this month" value={fmtMoney(month?.bpoBonusPaid ?? 0)}
+              sub={`Accrued ${fmtMoney(month?.bpoBonus.accrued ?? 0)} on this month's production`}
+              tooltip="BPO variable comp actually leaving the business this month — the bonus accrued on production from the payout-lag months earlier." />
+            <Stat label="Overstatement removed — full horizon"
+              value={fmtMoney(Math.max(0, resultsBpoOff.totals.repCommission + resultsBpoOff.totals.bonuses
+                - (results.totals.repCommission + results.totals.bpoBonus + results.totals.bonuses)))}
+              sub="vs. pricing every deal on the US schedule"
+              tone="good"
+              tooltip="Total variable comp over the full horizon if BPO production were priced on the US contract schedule and drew the US spiffs, less what it actually costs under the volume bonus. This is the money the model was previously showing as an outflow that never happens." />
+          </Row>
+        </div>
+
+        <Callout tone={bpoAtRisk ? 'warn' : 'info'}>
+          <strong>Why this line exists.</strong> Deals are attributed by closer-hour share, so a roster of BPO closers
+          moves most of the production out of the US per-deal schedule and onto one monthly volume bonus. The bonus is a
+          cliff: a rep who writes {inputs.bpoPay.tiers[0]?.minDealsPerMonth ?? 25} deals earns
+          {' '}{((inputs.bpoPay.tiers[0]?.rate ?? 0) * 100).toFixed(2)}% of everything they enrolled that month, and a rep
+          one deal short earns nothing at all.
+          {bpoAtRisk && (
+            <> <strong>Right now at least one BPO rep is sitting within two deals of the cliff</strong> — at this
+            volume the bonus line is fragile, and a small slip in handle time or close rate zeroes it out entirely.
+            Treat the current figure as the optimistic case.</>
+          )}
+          {' '}The US spiff programs in Overrides &amp; Bonuses are set to US closers only, so BPO reps are not paid
+          twice; turn that off there if your BPO vendor contract actually includes them.
         </Callout>
       </Panel>
 
@@ -1297,12 +1510,21 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
           Bonus programs
           <Info text="Two of the four programs trigger on DAILY thresholds while this model runs monthly, so daily volume has to be inferred. Deals arrive in clumps, and a flat spread would never cross the 3-deals-in-a-day line at realistic volumes, understating real payouts." />
         </div>
-        <Row cols={5} gap={12} style={{ marginTop: 8 }}>
+        <Row cols={6} gap={12} style={{ marginTop: 8 }}>
           <Field label="Bonuses enabled" tooltip="Turn every bonus program off.">
             <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: T.body, paddingTop: 6 }}>
               <input type="checkbox" checked={inputs.bonusPolicy.enabled}
                 onChange={(e) => patch({ bonusPolicy: { ...inputs.bonusPolicy, enabled: e.target.checked } })} />
               {inputs.bonusPolicy.enabled ? 'On' : 'Off'}
+            </label>
+          </Field>
+          <Field label="Who earns these"
+            tooltip="These four spiffs are the US incentive plan. BPO closers earn the monthly volume bonus in 4b instead — paying them both double-counts BPO variable comp, which on a BPO-heavy roster is a large overstatement. Switch to 'Everyone' only if your BPO vendor contract genuinely includes these spiffs."
+            hint={inputs.bonusPolicy.usOnly ? 'BPO reps earn the 4b volume bonus' : 'BPO reps earn these AND the 4b bonus'}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: T.body, paddingTop: 6 }}>
+              <input type="checkbox" checked={inputs.bonusPolicy.usOnly}
+                onChange={(e) => patch({ bonusPolicy: { ...inputs.bonusPolicy, usOnly: e.target.checked } })} />
+              {inputs.bonusPolicy.usOnly ? 'US closers only' : 'Everyone'}
             </label>
           </Field>
           <Field label="Working days / month" tooltip="Used to convert monthly volume into a daily rate.">
@@ -1600,8 +1822,10 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
               <tr>
                 <th style={{ ...th, width: 42 }}>Mo<Info text={MONTH_COL_HELP.mo} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Deals<Info text={MONTH_COL_HELP.deals} /></th>
-                <th style={{ ...th, textAlign: 'right' }}>Revenue<Info text={MONTH_COL_HELP.revenue} /></th>
+                <th style={{ ...th, textAlign: 'right' }}>US / BPO<Info text={MONTH_COL_HELP.attribution} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Commission<Info text={MONTH_COL_HELP.commission} /></th>
+                <th style={{ ...th, textAlign: 'right' }}>BPO bonus<Info text={MONTH_COL_HELP.bpoBonus} /></th>
+                <th style={{ ...th, textAlign: 'right' }}>Revenue<Info text={MONTH_COL_HELP.revenue} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Override<Info text={MONTH_COL_HELP.override} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Bonuses<Info text={MONTH_COL_HELP.bonuses} /></th>
                 <th style={{ ...th, textAlign: 'right' }}>Overhead<Info text={MONTH_COL_HELP.overhead} /></th>
@@ -1621,8 +1845,12 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                   style={{ cursor: 'pointer', background: r.month === stmtMonth ? '#f0fdfa' : r.month === 1 ? T.warnBg : undefined }}>
                   <td style={{ ...td, fontWeight: 700, color: T.ink }}>{r.month}</td>
                   <td style={tdNum}>{fmtNum(r.deals, 0)}</td>
-                  <td style={tdNum}>{r.revenue > 0 ? fmtMoney(r.revenue) : <span style={{ color: T.warn, fontWeight: 700 }}>$0</span>}</td>
+                  <td style={{ ...tdNum, fontSize: 10.5, color: T.muted }}>
+                    {fmtNum(r.usDeals, 0)} / <span style={{ color: r.bpoDeals > 0 ? T.accent : T.faint, fontWeight: 600 }}>{fmtNum(r.bpoDeals, 0)}</span>
+                  </td>
                   <td style={{ ...tdNum, color: r.repCommission > 0 ? T.bad : T.faint }}>{r.repCommission > 0 ? `(${fmtMoney(r.repCommission)})` : '$0'}</td>
+                  <td style={{ ...tdNum, color: r.bpoBonusPaid > 0 ? T.bad : T.faint }}>{r.bpoBonusPaid > 0 ? `(${fmtMoney(r.bpoBonusPaid)})` : '$0'}</td>
+                  <td style={tdNum}>{r.revenue > 0 ? fmtMoney(r.revenue) : <span style={{ color: T.warn, fontWeight: 700 }}>$0</span>}</td>
                   <td style={{ ...tdNum, color: r.managerOverride > 0 ? T.bad : T.faint }}>{r.managerOverride > 0 ? `(${fmtMoney(r.managerOverride)})` : '$0'}</td>
                   <td style={{ ...tdNum, color: r.bonusPaid > 0 ? T.bad : T.faint }}>{r.bonusPaid > 0 ? `(${fmtMoney(r.bonusPaid)})` : '$0'}</td>
                   <td style={{ ...tdNum, color: T.bad }}>({fmtMoney(r.overhead)})</td>

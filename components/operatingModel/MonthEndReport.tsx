@@ -33,12 +33,20 @@ function monthCsv(inputs: ModelInputs, r: MonthRow): string {
     ...r.partners.map((p) => [BRANDS[p.key].name, p.dealsSubmitted, Math.round(p.activeDeals), p.revenue.toFixed(2)]),
     ['Total revenue', r.deals, '', r.revenue.toFixed(2)],
     [],
+    ['DEAL ATTRIBUTION', 'Deals', '', ''],
+    ['US-attributed', r.usDeals.toFixed(1)],
+    ['BPO-attributed', r.bpoDeals.toFixed(1)],
+    ...r.bpoBonus.lines.map((l) => [
+      `  ${l.name}`, l.deals.toFixed(1), l.tierLabel, (-l.amount).toFixed(2),
+    ]),
+    [],
     ['COMPENSATION', '', '', 'Amount'],
     ...r.partners.map((p) => [`Rep commission — ${BRANDS[p.key].name}`, '', '', (-p.repCommission).toFixed(2)]),
+    ['BPO volume bonus', `${r.bpoDeals.toFixed(1)} BPO-written deals`, '', (-r.bpoBonusPaid).toFixed(2)],
     ['Manager / owner overrides', '', '', (-r.managerOverride).toFixed(2)],
     ...r.bonuses.lines.map((b) => [b.label, b.detail, b.formula, (-b.amount).toFixed(2)]),
     ['Bonus holdback (provisional)', '', '', r.bonuses.heldBack.toFixed(2)],
-    ['Total compensation', '', '', (-(r.repCommission + r.managerOverride + r.bonusPaid)).toFixed(2)],
+    ['Total compensation', '', '', (-(r.repCommission + r.bpoBonusPaid + r.managerOverride + r.bonusPaid)).toFixed(2)],
     [],
     ['OPERATING COSTS', 'Detail', 'Formula', 'Amount'],
     ...r.costs.groups.flatMap((g) => [
@@ -57,7 +65,8 @@ function monthCsv(inputs: ModelInputs, r: MonthRow): string {
     [],
     ['CASH RECONCILIATION', '', '', 'Amount'],
     ['Revenue', '', '', r.revenue.toFixed(2)],
-    ['Less rep commission', '', '', (-r.repCommission).toFixed(2)],
+    ['Less rep commission (US)', '', '', (-r.repCommission).toFixed(2)],
+    ['Less BPO volume bonus', '', '', (-r.bpoBonusPaid).toFixed(2)],
     ['Less overrides', '', '', (-r.managerOverride).toFixed(2)],
     ['Less bonuses paid', '', '', (-r.bonusPaid).toFixed(2)],
     ['Less overhead', '', '', (-r.overhead).toFixed(2)],
@@ -72,14 +81,16 @@ function monthCsv(inputs: ModelInputs, r: MonthRow): string {
 
 function allMonthsCsv(results: ModelResults): string {
   const head = [
-    'Month', 'Deals', 'Revenue', 'Rep commission', 'Manager override', 'Bonuses paid',
+    'Month', 'Deals', 'US deals', 'BPO deals', 'Revenue', 'Rep commission (US)',
+    'BPO volume bonus', 'Manager override', 'Bonuses paid',
     'Bonus held back', 'Labor', 'Transfer cost', 'Overhead total', 'Net cash flow',
     'Cash position', 'Reserve target', 'Reserve met', 'Headcount', 'Utilization %',
     'Raw transfers', 'Duds', 'Billed transfers', 'Pass rate %', 'Close on all %',
     'Close on billed %', 'Cost per closed deal',
   ];
   const rows = results.months.map((r) => [
-    r.month, r.deals, r.revenue.toFixed(2), r.repCommission.toFixed(2),
+    r.month, r.deals, r.usDeals.toFixed(1), r.bpoDeals.toFixed(1),
+    r.revenue.toFixed(2), r.repCommission.toFixed(2), r.bpoBonusPaid.toFixed(2),
     r.managerOverride.toFixed(2), r.bonusPaid.toFixed(2), r.bonuses.heldBack.toFixed(2),
     r.laborCost.toFixed(2), r.transferCost.toFixed(2), r.overhead.toFixed(2),
     r.netCashFlow.toFixed(2), r.cashPosition.toFixed(2), r.reserveTarget.toFixed(2),
@@ -136,7 +147,7 @@ export function MonthEndReport({ inputs, results, month, setMonth }: {
 }) {
   const r = results.months[Math.min(month, results.months.length) - 1];
   if (!r) return null;
-  const totalComp = r.repCommission + r.managerOverride + r.bonusPaid;
+  const totalComp = r.repCommission + r.bpoBonusPaid + r.managerOverride + r.bonusPaid;
   const f = r.funnel;
 
   return (
@@ -196,6 +207,20 @@ export function MonthEndReport({ inputs, results, month, setMonth }: {
                   detail={`On team ${inputs.overridePolicy.base === 'enrolledVolume' ? 'enrolled debt volume'
                     : inputs.overridePolicy.base === 'repCommission' ? 'rep commission' : 'Funding Tier revenue'}`}
                   amount={r.managerOverride} indent={1} negative
+                />
+              )}
+              {r.bpoBonusPaid > 0 && (
+                <Line
+                  label="BPO volume bonus"
+                  detail={`${inputs.bpoPay.payoutLagMonths === 0 ? 'Same month' : `${inputs.bpoPay.payoutLagMonths} mo in arrears`} · BPO-written production, not the US per-deal schedule`}
+                  amount={r.bpoBonusPaid} indent={1} negative
+                />
+              )}
+              {inputs.bpoPay.enabled && r.bpoBonusPaid === 0 && r.bpoDeals > 0 && (
+                <Line
+                  label="BPO volume bonus"
+                  detail="No BPO rep cleared their deal-count cliff — nothing is owed"
+                  amount={0} indent={1}
                 />
               )}
               {r.bonuses.lines.filter((b) => b.amount > 0).map((b) => (

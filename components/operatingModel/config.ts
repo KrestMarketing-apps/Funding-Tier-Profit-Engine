@@ -210,6 +210,22 @@ export const DEFAULT_INPUTS: ModelInputs = {
     ramp: { enabled: true, rampMonths: 3, probationPayoutDealMonth: 3 },
   },
 
+  // BPO / overseas closers are not on the US per-deal schedule. One monthly
+  // volume bonus, cliff-gated on the rep's own deal count, paid at the end of
+  // the following month and exposed to the same clawback / NSF risk as
+  // everything else. Below 25 deals the rep earns nothing above their hourly.
+  bpoPay: {
+    enabled: true,
+    tiers: [
+      { minDealsPerMonth: 25, rate: 0.0025 },
+      { minDealsPerMonth: 30, rate: 0.0030 },
+    ],
+    payoutLagMonths: 1,
+    thresholdBasis: 'gross',
+    netOfClawbacks: true,
+    includeInOverrideBase: true,
+  },
+
   consumerShield: sharedShield(),
   legacy: sharedLegacy(),
 
@@ -240,6 +256,9 @@ export const DEFAULT_INPUTS: ModelInputs = {
   // Straight from the agent incentive reference.
   bonusPolicy: {
     enabled: true,
+    // The four spiff programs are the US plan. BPO closers earn the volume
+    // bonus in bpoPay instead — turning this off pays them both.
+    usOnly: true,
     workingDaysPerMonth: 21.7,
     dealConcentration: 1.6,
     manualHitDays3Plus: 0,

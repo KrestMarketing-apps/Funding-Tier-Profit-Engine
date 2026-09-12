@@ -246,11 +246,11 @@ export interface LevelDebtTerms {
 //                to a specific named rep anywhere else in this model either.
 //
 // SCOPE: the draw scenario — including the ramp policy below — applies only
-// to US-based reps (Employee.type !== 'bpo'). BPO/overseas production always
-// runs on the contract schedule, split from US production by closer-hour
-// share the same way manager overrides are split by team share elsewhere in
-// this file. In the typical roster (BPO staff as openers, 0 closer hours)
-// this is a no-op; it only matters if a BPO seat is configured as a closer.
+// to US-based reps (Employee.type !== 'bpo'). BPO/overseas production is not
+// on a per-deal schedule in EITHER mode: it is split off from US production by
+// closer-hour share and paid through BpoPayPolicy's monthly volume bonus
+// instead. On a roster where BPO seats are openers only (0 closer hours) the
+// split is a no-op; on a roster of BPO closers it is most of the business.
 export type RepPayMode = 'contract' | 'draw';
 
 // A rep's first RAMP window is a probationary/ramp period, not a clawback:
@@ -282,6 +282,67 @@ export interface RepPayPolicy {
   drawTiers: CommissionTier[];
   /** New-hire ramp/probation window — US-based reps only. See RampPolicy above. */
   ramp: RampPolicy;
+}
+
+// ── BPO / overseas pay ───────────────────────────────────────────────────────
+// BPO closers are NOT on the US per-deal contract schedule and never enter the
+// draw scenario. Their entire variable pay is a single monthly volume bonus: a
+// share of the total dollars THAT REP enrolled in the calendar month, unlocked
+// only if they personally cleared a deal-count threshold. Miss the threshold
+// and they earn nothing beyond their billed hourly rate — there is no partial
+// credit and no per-deal floor. Clearing a threshold pays the rate on the
+// rep's WHOLE month of enrolled dollars, not just the deals above the line.
+//
+// Why this matters to the model: with a BPO-heavy roster, most deals are
+// written by people who are not on the US schedule. Paying contract commission
+// on every deal regardless of who wrote it overstates payout badly — on a
+// 5-BPO-closer roster it roughly triples what the BPO seats actually cost in
+// variable comp.
+export interface BpoVolumeTier {
+  /** Deals the rep must enroll in the calendar month to unlock this rate. */
+  minDealsPerMonth: number;
+  /** Share of that rep's total enrolled dollars. 0.0025 = 0.25%. */
+  rate: number;
+}
+
+export type BpoThresholdBasis = 'gross' | 'surviving';
+
+export interface BpoPayPolicy {
+  /** Off = BPO production falls back to the US contract schedule (the old behaviour). */
+  enabled: boolean;
+  /** Cliff tiers on the rep's own monthly deal count, all three programs combined. */
+  tiers: BpoVolumeTier[];
+  /** Months between enrolling and the money leaving. 1 = end of the following month. */
+  payoutLagMonths: number;
+  /** Deal count tested against the thresholds: deals written, or deals still live at payout. */
+  thresholdBasis: BpoThresholdBasis;
+  /** Net the enrolled-dollar base down by the survival curve at payout (clawbacks / NSF). */
+  netOfClawbacks: boolean;
+  /** Manager override still accrues on BPO-written production. */
+  includeInOverrideBase: boolean;
+}
+
+export interface BpoRepLine {
+  name: string;
+  closerHours: number;
+  /** Deals attributed to this rep by their share of total closer hours. */
+  deals: number;
+  survivingDeals: number;
+  /** Gross dollars enrolled, before any clawback haircut. */
+  enrolledVolume: number;
+  /** The dollars the rate is actually applied to. */
+  bonusBase: number;
+  rate: number;
+  tierLabel: string;
+  qualified: boolean;
+  amount: number;
+}
+
+export interface BpoBonusResult {
+  lines: BpoRepLine[];
+  deals: number;
+  enrolledVolume: number;
+  accrued: number;
 }
 
 export interface ShieldProgram {
@@ -398,6 +459,13 @@ export interface LdEnrollmentTier { minEnrolledPerDay: number; bonus: number }
 
 export interface BonusPolicy {
   enabled: boolean;
+  /**
+   * These four spiff programs are the US incentive plan. BPO closers have
+   * their own single volume bonus (see BpoPayPolicy) and are excluded here by
+   * default — paying them both would double-count BPO variable comp, which is
+   * the exact overstatement this split exists to remove.
+   */
+  usOnly: boolean;
   /** Working days per month used to convert monthly volume into daily rates. */
   workingDaysPerMonth: number;
   /**
@@ -473,6 +541,7 @@ export interface ModelInputs {
   laborPolicy: LaborPolicy;
   levelDebt: LevelDebtTerms;
   repPay: RepPayPolicy;
+  bpoPay: BpoPayPolicy;
   consumerShield: ShieldTerms;
   legacy: LegacyTerms;
   remittanceLag: RemittanceLag;
@@ -548,8 +617,17 @@ export interface MonthRow {
   month: number;
   deals: number;
   dealsByBackend: Record<BackendKey, number>;
+  /** Deals written on US-attributed closer hours this month. */
+  usDeals: number;
+  /** Deals written on BPO/overseas closer hours this month. */
+  bpoDeals: number;
   revenue: number;
+  /** Per-deal commission on US-attributed production only, once BPO pay is on its own model. */
   repCommission: number;
+  /** BPO volume bonus accrued on this month's BPO-written production. */
+  bpoBonus: BpoBonusResult;
+  /** BPO volume bonus cash actually leaving the business this month. */
+  bpoBonusPaid: number;
   /** Override paid out in cash this month (accrued payoutLagMonths earlier). */
   managerOverride: number;
   /** Override accrued on this month's production. */
@@ -596,6 +674,8 @@ export interface ModelResults {
   totals: {
     revenue: number;
     repCommission: number;
+    /** BPO volume bonus paid across the horizon. */
+    bpoBonus: number;
     managerOverride: number;
     bonuses: number;
     overhead: number;
