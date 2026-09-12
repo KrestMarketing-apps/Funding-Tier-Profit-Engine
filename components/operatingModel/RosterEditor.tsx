@@ -1,82 +1,26 @@
 'use client';
 import React, { useState } from 'react';
-import type { DayKey, Employee, ModelInputs, MonthRow } from './types';
+import type { Employee, ModelInputs, MonthRow } from './types';
 import { DAY_KEYS } from './types';
 import { computeEmployeeCost, employeeActiveInMonth } from './labor';
 import {
-  DAY_LABELS, EMPLOYEE_TYPE_LABEL, IN_HOUSE_MIN_WAGE, BPO_RATE_MIN, BPO_RATE_MAX,
-  defaultShifts, makeEmployee, typeDefaults,
+  DAY_LABELS, EMPLOYEE_TYPE_LABEL, defaultShifts, makeEmployee, typeDefaults,
 } from './config';
+import { ScheduleEditor, hhmm } from './ScheduleEditor';
+import { ApplyProfileSelect, ProfileLibrary, useProfileStore } from './StaffingProfiles';
+import type { StaffingProfile } from './profiles';
+import { employeesFromProfile, profileFromEmployee, profilePatch } from './profiles';
 import {
   Btn, Callout, Field, Info, NumberInput, Panel, T, fmtMoney, fmtMoney2, fmtNum, inputStyle, td, tdNum, th,
 } from './ui';
-
-const hhmm = (h: number) => {
-  const hr = Math.floor(h); const mn = Math.round((h - hr) * 60);
-  const ampm = hr >= 12 ? 'pm' : 'am'; const disp = hr % 12 === 0 ? 12 : hr % 12;
-  return `${disp}${mn ? ':' + String(mn).padStart(2, '0') : ''}${ampm}`;
-};
-
-const TIME_OPTS: number[] = [];
-for (let h = 6; h <= 19; h += 0.5) TIME_OPTS.push(h);
-
-function ScheduleEditor({ emp, onChange }: { emp: Employee; onChange: (e: Employee) => void }) {
-  const set = (day: DayKey, patch: Partial<Employee['shifts'][DayKey]>) =>
-    onChange({ ...emp, shifts: { ...emp.shifts, [day]: { ...emp.shifts[day], ...patch } } });
-
-  return (
-    <div style={{ padding: '10px 12px', background: T.panel, borderRadius: 8, border: `1px solid ${T.line}` }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: T.muted, marginBottom: 8 }}>
-        Weekly schedule — all times PST
-        <Info text="Allowed clock window is Monday–Friday 6:00am–7:00pm PST and Saturday 6:00am–3:00pm PST. The default shift is 9:00am–6:00pm Monday–Friday, which is 9 clock hours less a 1-hour unpaid meal break = 8 paid hours per day." />
-      </div>
-      <div style={{ display: 'grid', gap: 5 }}>
-        {DAY_KEYS.filter((d) => d !== 'sun').map((day) => {
-          const s = emp.shifts[day];
-          const isSat = day === 'sat';
-          const max = isSat ? 15 : 19;
-          const paid = s.enabled ? Math.max(0, s.end - s.start - emp.unpaidBreakMinutes / 60) : 0;
-          return (
-            <div key={day} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 1fr 78px', gap: 8, alignItems: 'center' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: T.body, fontWeight: 600 }}>
-                <input type="checkbox" checked={s.enabled} onChange={(e) => set(day, { enabled: e.target.checked })} />
-                {DAY_LABELS[day]}
-              </label>
-              <select
-                value={s.start} disabled={!s.enabled}
-                onChange={(e) => set(day, { start: Number(e.target.value) })}
-                style={{ ...inputStyle, fontSize: 11.5, opacity: s.enabled ? 1 : 0.4 }}
-              >
-                {TIME_OPTS.filter((t) => t >= 6 && t < max).map((t) => <option key={t} value={t}>{hhmm(t)}</option>)}
-              </select>
-              <select
-                value={s.end} disabled={!s.enabled}
-                onChange={(e) => set(day, { end: Number(e.target.value) })}
-                style={{ ...inputStyle, fontSize: 11.5, opacity: s.enabled ? 1 : 0.4 }}
-              >
-                {TIME_OPTS.filter((t) => t > s.start && t <= max).map((t) => <option key={t} value={t}>{hhmm(t)}</option>)}
-              </select>
-              <span style={{ fontSize: 11, color: paid > 0 ? T.body : T.faint, fontFamily: T.mono, textAlign: 'right' }}>
-                {paid.toFixed(1)} paid
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ marginTop: 10, maxWidth: 210 }}>
-        <Field label="Unpaid meal break (min/day)" tooltip="Deducted from every worked day. California practice is a 60-minute unpaid meal break on a 9-hour span, leaving 8 paid hours. BPO contractors normally have none.">
-          <NumberInput value={emp.unpaidBreakMinutes} min={0} max={120} step={15}
-            onChange={(v) => onChange({ ...emp, unpaidBreakMinutes: v })} suffix="min" />
-        </Field>
-      </div>
-    </div>
-  );
-}
 
 export function RosterEditor({ inputs, setInputs, month }: {
   inputs: ModelInputs; setInputs: (i: ModelInputs) => void; month: MonthRow | undefined;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [showLibrary, setShowLibrary] = useState(false);
+  const [seed, setSeed] = useState<StaffingProfile | null>(null);
+  const store = useProfileStore();
   const policy = inputs.laborPolicy;
   const costs = inputs.roster.map((e) => computeEmployeeCost(e, policy));
 
@@ -111,6 +55,31 @@ export function RosterEditor({ inputs, setInputs, month }: {
       })],
     });
   };
+  const fallbackTeam = inputs.roster[0]?.teamId ?? 'team-a';
+
+  /** Drop N new people built from a saved profile into the roster. */
+  const addFromProfile = (p: Parameters<typeof employeesFromProfile>[0], seats: number) =>
+    setInputs({
+      ...inputs,
+      roster: [...inputs.roster, ...employeesFromProfile(p, inputs.roster, fallbackTeam, seats)],
+    });
+
+  /** Overwrite one existing person's terms with a profile, keeping their name. */
+  const applyProfileToRow = (id: string, p: Parameters<typeof employeesFromProfile>[0]) =>
+    setInputs({
+      ...inputs,
+      roster: inputs.roster.map((e) => (e.id === id ? { ...e, ...profilePatch(p, e.teamId || fallbackTeam) } : e)),
+    });
+
+  // "Save as profile" opens the profile editor pre-filled with this row's
+  // terms, rather than a browser prompt — the app runs inside a GoHighLevel
+  // iframe, where native dialogs can be suppressed.
+  const saveRowAsProfile = (e: Employee) => {
+    const hrs = fmtNum(computeEmployeeCost(e, policy).weeklyPaidHours, 0);
+    setSeed(profileFromEmployee(e, `${e.name} — ${hrs} hr`));
+    setShowLibrary(true);
+  };
+
   const teams = [...new Set(inputs.roster.map((e) => e.teamId))];
   const remove = (id: string) =>
     setInputs({ ...inputs, roster: inputs.roster.filter((e) => e.id !== id) });
@@ -141,13 +110,28 @@ export function RosterEditor({ inputs, setInputs, month }: {
       subtitle="Agents × rate × weekly hours = monthly labor. Add or remove people with + / −."
       right={
         <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <Btn onClick={() => add('inhouse')} size="sm" tone="primary">+ In-House</Btn>
+          <Btn onClick={() => setShowLibrary((v) => !v)} size="sm" tone="primary"
+            title="Saved vendor rates and schedules — add a whole desk in one click">
+            {showLibrary ? '▾ Profiles' : '▸ Profiles'}
+          </Btn>
+          <Btn onClick={() => add('inhouse')} size="sm">+ In-House</Btn>
           <Btn onClick={() => add('bpo')} size="sm">+ BPO</Btn>
           <Btn onClick={() => add('manager')} size="sm">+ Manager</Btn>
           <Btn onClick={() => add('owner')} size="sm">+ Owner</Btn>
         </span>
       }
     >
+      {showLibrary && (
+        <ProfileLibrary
+          store={store}
+          policy={policy}
+          onApply={(p, seats) => addFromProfile(p, seats)}
+          onClose={() => setShowLibrary(false)}
+          seed={seed}
+          onSeedUsed={() => setSeed(null)}
+        />
+      )}
+
       <div style={{ overflowX: 'auto' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 1080 }}>
           <thead>
@@ -269,10 +253,18 @@ export function RosterEditor({ inputs, setInputs, month }: {
                     <tr>
                       <td colSpan={15} style={{ padding: '4px 10px 12px 34px', borderBottom: `1px solid ${T.lineSoft}` }}>
                         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 460px) 1fr', gap: 14 }}>
-                          <ScheduleEditor emp={e} onChange={(next) => setInputs({
-                            ...inputs, roster: inputs.roster.map((x) => (x.id === e.id ? next : x)),
-                          })} />
+                          <ScheduleEditor
+                            shifts={e.shifts}
+                            unpaidBreakMinutes={e.unpaidBreakMinutes}
+                            onChange={(n) => update(e.id, { shifts: n.shifts, unpaidBreakMinutes: n.unpaidBreakMinutes })}
+                          />
                           <div style={{ display: 'grid', gap: 8, alignContent: 'start' }}>
+                            <Field label="Staffing profile" tooltip="Apply a saved vendor profile to overwrite this person's rate, schedule, break, overtime rule, role and team in one step — or save what is on this row as a new profile to reuse later.">
+                              <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                <ApplyProfileSelect store={store} onApply={(p) => applyProfileToRow(e.id, p)} />
+                                <Btn onClick={() => saveRowAsProfile(e)} size="sm" title="Save this row's terms as a reusable profile">Save as profile</Btn>
+                              </span>
+                            </Field>
                             <Field label="Overtime eligible" tooltip="California W2 employees accrue a 1.5× premium above 40 paid hours per week. BPO contractors normally bill a flat rate with no premium.">
                               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.body }}>
                                 <input type="checkbox" checked={e.otEligible} onChange={(ev) => update(e.id, { otEligible: ev.target.checked })} />
@@ -365,10 +357,37 @@ export function RosterEditor({ inputs, setInputs, month }: {
           {[...new Set(costs.flatMap((c) => c.warnings))].map((w, i) => <div key={i}>⚠ {w}</div>)}
         </Callout>
       )}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 10,
+        marginTop: 12, padding: '10px 11px', border: `1px solid ${T.line}`, borderRadius: 8, background: T.panel,
+      }}>
+        <Field label="In-house wage floor" tooltip="The legal minimum for W2 / California staff. Rows below this are flagged.">
+          <NumberInput value={policy.inHouseMinWage} min={0} step={0.05} prefix="$"
+            onChange={(v) => setInputs({ ...inputs, laborPolicy: { ...policy, inHouseMinWage: v } })} />
+        </Field>
+        <Field label="BPO band — min" tooltip="Lowest hourly rate you accept from an overseas desk. Set this to your real vendor range; rows outside the band are flagged, not blocked.">
+          <NumberInput value={policy.bpoRateMin} min={0} step={0.25} prefix="$"
+            onChange={(v) => setInputs({ ...inputs, laborPolicy: { ...policy, bpoRateMin: v } })} />
+        </Field>
+        <Field label="BPO band — max" tooltip="Highest hourly rate you accept from an overseas desk. Raise it if your vendors bill above the original $3–$8 assumption.">
+          <NumberInput value={policy.bpoRateMax} min={0} step={0.25} prefix="$"
+            onChange={(v) => setInputs({ ...inputs, laborPolicy: { ...policy, bpoRateMax: Math.max(v, policy.bpoRateMin) } })} />
+        </Field>
+        <Field label="OT threshold" tooltip="Paid hours per week above which overtime-eligible staff accrue the premium.">
+          <NumberInput value={policy.otThresholdHrsPerWeek} min={0} step={1} suffix="hrs/wk"
+            onChange={(v) => setInputs({ ...inputs, laborPolicy: { ...policy, otThresholdHrsPerWeek: v } })} />
+        </Field>
+        <Field label="OT multiplier" tooltip="Premium applied to paid hours above the threshold. California is 1.5×.">
+          <NumberInput value={policy.otMultiplier} min={1} step={0.25} suffix="×"
+            onChange={(v) => setInputs({ ...inputs, laborPolicy: { ...policy, otMultiplier: v } })} />
+        </Field>
+      </div>
+
       <Callout>
-        <strong>Rate rules.</strong> In-House / CA agents cannot be paid below the ${IN_HOUSE_MIN_WAGE.toFixed(2)} California minimum wage,
-        and accrue 1.5× on paid hours above {policy.otThresholdHrsPerWeek} per week. BPO agents bill a flat
-        ${BPO_RATE_MIN}–${BPO_RATE_MAX} per hour with no overtime premium. Deal volume is driven by
+        <strong>Rate rules.</strong> In-House / CA agents cannot be paid below the ${policy.inHouseMinWage.toFixed(2)} California minimum wage,
+        and accrue {policy.otMultiplier}× on paid hours above {policy.otThresholdHrsPerWeek} per week. BPO agents bill a flat
+        ${policy.bpoRateMin}–${policy.bpoRateMax} per hour with no overtime premium — edit that band above to match what your
+        vendors actually charge. Deal volume is driven by
         <strong> closer hours only</strong> — openers feed the transfer pool, which reduces what you buy from the vendor.
       </Callout>
     </Panel>
