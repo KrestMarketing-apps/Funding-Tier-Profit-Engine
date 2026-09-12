@@ -12,7 +12,9 @@ const ALLOWED_ROLES: Role[] = ["admin"];
 // Reachable without a session. /login carries its script inline and needs no
 // JS bundle, which is why /_next/* can stay gated and the app's compiled code
 // stays private.
-const OPEN = ["/login", "/ghl", "/api/ghl-sso", "/no-access"];
+// /api/agent-ops/cron carries no session by definition — the scheduler calls
+// it. It is closed by CRON_SECRET inside the route instead.
+const OPEN = ["/login", "/ghl", "/api/ghl-sso", "/no-access", "/api/agent-ops/cron"];
 const OPEN_FILES = [
   "/favicon.ico",
   "/favicon-32x32.png",
