@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useCallback, useRef } from "react";
 import ToolShell, { ControlRow, Control, MetricsGrid, Metric } from "./ToolShell";
+import { Icon, type IconName } from "./operatingModel/ui";
 import {
   ELP_MIN_DEBT, ELP_FEE_MIN, ELP_FEE_MAX, ELP_MAINT_OPTIONS, ELP_TERM_MAX,
   ELP_BLOCKED_STATES, ELP_TIER_RATE_FILE_THRESHOLD,
@@ -468,23 +469,26 @@ function InlineTip({ text, width = 260 }: { text: string; width?: number }) {
 // ACCORDION
 // ─────────────────────────────────────────────
 
-function Accordion({ title, defaultOpen=false, children, badge, accent=FT_GREEN }: {
+/**
+ * Section card. This used to be a collapsible accordion, which made sense when
+ * the whole model lived on one scroll — it does not now. The left rail already
+ * shows one section at a time, so a second click to unfold the thing you just
+ * navigated to was pure friction, and anything left folded was content you
+ * could not find. The header stays for the title and badge; the body is
+ * always open.
+ */
+function Accordion({ title, children, badge, accent=FT_GREEN }: {
   title:string; defaultOpen?:boolean; children:React.ReactNode; badge?:string; accent?:string;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   return (
     <div style={{ border:"1px solid #e2e8f0", borderRadius:16, overflow:"hidden", background:"#fff" }}>
-      <button onClick={() => setOpen(o=>!o)} style={{
-        width:"100%", textAlign:"left", background:"#fff", border:"none",
-        padding:"13px 18px", cursor:"pointer", display:"flex", justifyContent:"space-between", alignItems:"center",
-      }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <span style={{ fontWeight:800, fontSize:16, color:"#0f172a" }}>{title}</span>
-          {badge && <span style={{ fontSize:11, fontWeight:700, background:accent+"22", color:accent, padding:"2px 8px", borderRadius:99 }}>{badge}</span>}
-        </div>
-        <span style={{ fontSize:20, fontWeight:900, color:accent }}>{open?"−":"+"}</span>
-      </button>
-      {open && <div style={{ borderTop:"1px solid #e2e8f0", padding:18 }}>{children}</div>}
+      <div style={{ padding:"13px 18px", display:"flex", justifyContent:"space-between",
+        alignItems:"center", gap:10, flexWrap:"wrap" }}>
+        <span style={{ fontWeight:800, fontSize:16, color:"#0f172a" }}>{title}</span>
+        {badge && <span style={{ fontSize:11, fontWeight:700, background:accent+"22", color:accent,
+          padding:"2px 8px", borderRadius:99 }}>{badge}</span>}
+      </div>
+      <div style={{ borderTop:"1px solid #e2e8f0", padding:18 }}>{children}</div>
     </div>
   );
 }
@@ -1124,44 +1128,39 @@ function RevenueCurve({ points, accent, accentDark, notableMonths }: {
 // CS PROGRAM ACCORDION
 // ─────────────────────────────────────────────
 
-function ProgramAccordion({ program, open, onToggle }: {
-  program:ConsumerShieldProgram; open:boolean; onToggle:()=>void;
-}) {
+/**
+ * One Consumer Shield band, opened out. The nine bands used to be nine stacked
+ * accordions; they are now a pill selector plus this panel, so the section
+ * shows a full band without a click-to-unfold and without nine revenue curves
+ * queued up underneath it.
+ */
+function ProgramDetail({ program }: { program:ConsumerShieldProgram }) {
   const net=program.payment-40,front=round2(net*Math.min(4,program.term));
   const tail=round2(net*0.35),fullRev=round2(front+Math.max(0,program.term-4)*tail);
   const pts=Array.from({length:program.term},(_,i)=>({month:i+1,y:csRevenueAt(i+1,net,program.term)}));
   return (
-    <div style={{ border:"1px solid #e2e8f0", borderRadius:16, overflow:"hidden", background:"#fff" }}>
-      <button onClick={onToggle} style={{ width:"100%", textAlign:"left", background:"#fff", border:"none", padding:"11px 16px", cursor:"pointer" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:0, flexWrap:"wrap" }}>
-            <span style={{ fontWeight:800, color:"#0f172a", fontSize:14, width:120, flexShrink:0 }}>{program.label}</span>
-            <span style={{ fontSize:12, color:"#64748b", width:170, flexShrink:0 }}>{program.debtRange}</span>
-            <span style={{ fontSize:12, fontWeight:800, color:FT_BLUE, width:130, flexShrink:0 }}>Net: {money.format(net)}/mo</span>
-            <span style={{ fontSize:12, color:"#64748b", width:120, flexShrink:0 }}>{program.term} mo · {money.format(program.payment)}/mo</span>
-          </div>
-          <span style={{ fontSize:20, fontWeight:900, color:FT_BLUE, flexShrink:0, paddingLeft:8 }}>{open?"−":"+"}</span>
-        </div>
-      </button>
-      {open&&(
-        <div style={{ borderTop:"1px solid #e2e8f0", padding:16 }}>
-          <div style={{ overflowX:"auto", borderRadius:11, border:"1px solid #e2e8f0", marginBottom:14 }}>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
-              <thead><tr style={{ background:"#f8fafc" }}>
-                <th style={{ ...TH, textAlign:"center" }}>Front Revenue <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8" }}>Months 1–4</span></th>
-                <th style={{ ...TH, textAlign:"center" }}>Tail End – Revenue <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8" }}>Per month 5+</span></th>
-                <th style={{ ...TH, textAlign:"center", borderRight:"none" }}>Full Revenue <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8" }}>If full term</span></th>
-              </tr></thead>
-              <tbody><tr>
-                <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:FT_BLUE }}>{money.format(front)}</td>
-                <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:FT_BLUE }}>{money.format(tail)}<span style={{ fontSize:11, color:"#94a3b8" }}>/mo</span></td>
-                <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:"#1552a8", borderRight:"none" }}>{money.format(fullRev)}</td>
-              </tr></tbody>
-            </table>
-          </div>
-          <RevenueCurve points={pts} accent={FT_BLUE} accentDark="#1552a8" notableMonths={[1,4,program.term]} />
-        </div>
-      )}
+    <div style={{ border:"1px solid #e2e8f0", borderRadius:16, background:"#fff", padding:16 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:0, flexWrap:"wrap", marginBottom:14 }}>
+        <span style={{ fontWeight:800, color:"#0f172a", fontSize:15, width:130, flexShrink:0 }}>{program.label}</span>
+        <span style={{ fontSize:12, color:"#64748b", width:170, flexShrink:0 }}>{program.debtRange}</span>
+        <span style={{ fontSize:12, fontWeight:800, color:FT_BLUE, width:130, flexShrink:0 }}>Net: {money.format(net)}/mo</span>
+        <span style={{ fontSize:12, color:"#64748b", width:140, flexShrink:0 }}>{program.term} mo · {money.format(program.payment)}/mo</span>
+      </div>
+      <div style={{ overflowX:"auto", borderRadius:11, border:"1px solid #e2e8f0", marginBottom:14 }}>
+        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+          <thead><tr style={{ background:"#f8fafc" }}>
+            <th style={{ ...TH, textAlign:"center" }}>Front Revenue <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8" }}>Months 1–4</span></th>
+            <th style={{ ...TH, textAlign:"center" }}>Tail End – Revenue <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8" }}>Per month 5+</span></th>
+            <th style={{ ...TH, textAlign:"center", borderRight:"none" }}>Full Revenue <span style={{ fontSize:10, fontWeight:600, color:"#94a3b8" }}>If full term</span></th>
+          </tr></thead>
+          <tbody><tr>
+            <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:FT_BLUE }}>{money.format(front)}</td>
+            <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:FT_BLUE }}>{money.format(tail)}<span style={{ fontSize:11, color:"#94a3b8" }}>/mo</span></td>
+            <td style={{ ...TD, textAlign:"center", fontSize:20, fontWeight:800, color:"#1552a8", borderRight:"none" }}>{money.format(fullRev)}</td>
+          </tr></tbody>
+        </table>
+      </div>
+      <RevenueCurve points={pts} accent={FT_BLUE} accentDark="#1552a8" notableMonths={[1,4,program.term]} />
     </div>
   );
 }
@@ -1611,6 +1610,232 @@ function SnapshotHead({ k, logo, name, warn }: {
 // MAIN
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// NAVIGATION
+//
+// This page was one long scroll: seventeen panels, several of them collapsed,
+// so understanding the business model meant paging past sections you did not
+// want and unfolding ones that had hidden themselves. It is now a router, the
+// same pattern the Operating Model uses — the left rail picks ONE section, the
+// body shows that section in full, and nothing is collapsed.
+//
+// The order of the rail IS the order of the argument: the answer first, then
+// the assumptions that produced it, then each backend in detail, then what the
+// whole book does.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SectionId =
+  | "compare" | "funnels" | "quality" | "routing" | "elpterms" | "snapshots"
+  | "csfunnel" | "elpfunnel" | "csmilestones" | "elpmilestones" | "timelines"
+  | "payout" | "csprograms" | "elpbands" | "reppay" | "portfolio" | "notes";
+
+interface NavItem {
+  id: SectionId;
+  label: string;
+  /** One line under the label — what the section is FOR, not what it holds. */
+  hint: string;
+  icon: IconName;
+  /** Hairline above this item: the reading order changes register here. */
+  ruleAbove?: boolean;
+}
+
+const NAV: NavItem[] = [
+  { id:"compare",       label:"Backend Comparison", hint:"All three, one deal",      icon:"layers" },
+  { id:"funnels",       label:"Survival Funnels",   hint:"1 · Milestone drop-off",   icon:"bars",      ruleAbove:true },
+  { id:"quality",       label:"Lead Quality",       hint:"2 · Churn-risk adjuster",  icon:"shield" },
+  { id:"routing",       label:"Cash Urgency",       hint:"3 · Routing driver",       icon:"gauge" },
+  { id:"elpterms",      label:"ELP Program Terms",  hint:"4 · Draft sets the term",  icon:"briefcase" },
+  { id:"snapshots",     label:"Deal Snapshots",     hint:"Each backend on this deal", icon:"clipboard", ruleAbove:true },
+  { id:"csfunnel",      label:"CS Revenue Funnel",  hint:"Where CS revenue comes from",  icon:"sigma" },
+  { id:"elpfunnel",     label:"ELP Revenue Funnel", hint:"Where ELP revenue comes from", icon:"sigma" },
+  { id:"csmilestones",  label:"CS Milestones",      hint:"Cumulative revenue curve", icon:"trend" },
+  { id:"elpmilestones", label:"ELP Milestones",     hint:"Cumulative revenue curve", icon:"trend" },
+  { id:"timelines",     label:"Monthly Timelines",  hint:"Month by month, both",     icon:"calendar" },
+  { id:"payout",        label:"Payout & Liability", hint:"When the money clears",    icon:"wallet" },
+  { id:"csprograms",    label:"CS Program Bands",   hint:"Offerings A–I",            icon:"card" },
+  { id:"elpbands",      label:"ELP Debt Bands",     hint:"Economics across bands",   icon:"receipt" },
+  { id:"reppay",        label:"Rep Economics",      hint:"Commission cost per deal", icon:"award",     ruleAbove:true },
+  { id:"portfolio",     label:"Portfolio Forecast", hint:"The whole book",           icon:"users" },
+  { id:"notes",         label:"Operator Notes",     hint:"Rules and caveats",        icon:"ledger" },
+];
+
+const PE_CSS = `
+/* APP SHELL.
+   ToolShell's frame is a 1100px card floating in white space, which reads as a
+   document rather than an application once there is a navigation rail — the
+   rail would float mid-page with nothing meeting the bar above it. Scoped by
+   data attribute so every other Funding Tier tool keeps the card.
+
+   overflow must return to visible: an overflow:hidden ancestor becomes a
+   scroll container and silently kills position:sticky on the rail. */
+[data-ft-tool="Profit Engine"] {
+  max-width: none; margin: 0; border: 0; border-radius: 0;
+  box-shadow: none; overflow: visible;
+  min-height: calc(100vh - var(--ft-toolkit-height, 0px));
+}
+/* The body panel carried the page padding; the rail now owns its own edge, so
+   padding moves inward to .pe-main. Selected as the hero's next sibling
+   because ToolShell's class names are CSS-module hashes. */
+[data-ft-tool="Profit Engine"] > [data-mode] + div { padding: 0; }
+
+/* HERO — compacted for this tool only. The shared hero is built for a landing
+   screen; on a page you work in, 30px of padding and a 25px title reappeared
+   every time you changed section and pushed the controls most of a screen
+   down. The deal inputs and the three expected-revenue figures stay — they are
+   the context every section is read against. */
+[data-ft-tool="Profit Engine"] > [data-mode] { padding: 11px 20px 12px; }
+[data-ft-tool="Profit Engine"] > [data-mode] > div:first-child { margin-bottom: 7px; }
+[data-ft-tool="Profit Engine"] > [data-mode] h1 { font-size: 17px; margin: 0; }
+/* The subtitle repeats what the title and the section hints already say. */
+[data-ft-tool="Profit Engine"] > [data-mode] h1 + p { display: none; }
+[data-ft-tool="Profit Engine"] > [data-mode] > div:last-child { margin-top: 9px; }
+
+.pe-shell { display: grid; grid-template-columns: 246px minmax(0, 1fr); gap: 0; align-items: start; }
+.pe-main {
+  min-width: 0; padding: 15px 24px 34px;
+  scroll-margin-top: calc(var(--ft-toolkit-height, 0px) + 12px);
+}
+/* Grid and flex items default to min-width:auto, so a wide table inside a card
+   stretches the card — and with it the page — instead of scrolling inside its
+   own overflow-x wrapper. That is what made the whole document scroll sideways
+   on a phone. Clamp the section wrapper and every card in it. */
+.pe-main > div, .pe-main > div > * { min-width: 0; }
+
+/* RAIL — inverted, flush to the left edge and under the hero, full viewport
+   height with its own scroll. The explicit height also sets the grid row, so
+   the shell fills the screen on a short section and the rail never stops
+   halfway down. */
+.pe-nav {
+  position: sticky; top: var(--ft-toolkit-height, 0px);
+  height: calc(100vh - var(--ft-toolkit-height, 0px)); overflow-y: auto;
+  border: 0; border-right: 1px solid rgba(255,255,255,.09);
+  border-radius: 0; padding: 10px 8px 20px;
+  background: linear-gradient(180deg, #0b1622 0%, #0e1e2b 100%);
+}
+.pe-nav-cap {
+  font-size: 9px; letter-spacing: .6px; text-transform: uppercase; font-weight: 800;
+  color: rgba(245,248,247,.45); padding: 7px 10px;
+}
+.pe-nav-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  border: 1px solid transparent; background: transparent; border-radius: 9px;
+  padding: 7px 9px; cursor: pointer; font-family: inherit; color: rgba(245,248,247,.80);
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.pe-nav-btn + .pe-nav-btn { margin-top: 2px; }
+.pe-nav-btn:hover { background: rgba(255,255,255,.07); color: #f5f8f7; }
+.pe-nav-btn:focus-visible { outline: 2px solid #0f9d8a; outline-offset: 1px; }
+.pe-nav-btn[aria-current="true"] {
+  background: rgba(20,184,166,.16); border-color: rgba(45,212,191,.38); color: #ffffff;
+}
+.pe-nav-ico {
+  width: 27px; height: 27px; border-radius: 8px; display: flex; align-items: center;
+  justify-content: center; background: rgba(255,255,255,.06); color: rgba(245,248,247,.62);
+  border: 1px solid rgba(255,255,255,.10); flex: 0 0 auto;
+}
+.pe-nav-btn[aria-current="true"] .pe-nav-ico {
+  background: linear-gradient(135deg, #0f9d8a 0%, #0b7d6e 100%); color: #fff;
+  border-color: transparent; box-shadow: 0 2px 10px -2px rgba(15,157,138,.75);
+}
+.pe-nav-txt { min-width: 0; display: block; }
+.pe-nav-lbl { display: block; font-size: 12.5px; font-weight: 700; line-height: 1.25; }
+.pe-nav-hint { display: block; font-size: 10px; color: rgba(245,248,247,.45); margin-top: 1px; line-height: 1.3; }
+.pe-nav-btn[aria-current="true"] .pe-nav-hint { color: #2dd4bf; }
+.pe-nav-sep { height: 1px; background: rgba(255,255,255,.10); margin: 8px 10px; }
+
+/* SECTION BAR — says where you are and carries the glossary. Sticky under the
+   toolkit bar; the negative margins let its background span the full content
+   column rather than leaving the page showing through at the gutters. */
+.pe-bar {
+  position: sticky; top: var(--ft-toolkit-height, 0px); z-index: 20;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: -15px -24px 11px; padding: 12px 24px 10px; flex-wrap: wrap;
+  background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+}
+.pe-bar-t { display: flex; align-items: center; gap: 8px; color: #0f172a; min-width: 0; }
+.pe-bar-lbl { font-size: 13px; font-weight: 800; letter-spacing: -.2px; }
+.pe-bar-sub { font-size: 10.5px; color: #94a3b8; font-weight: 600; }
+.pe-kb {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  border: 1px solid #99e5da; background: #e6f7f4; color: #0b7d6e;
+  border-radius: 8px; padding: 5px 10px; font-family: inherit; font-size: 11.5px; font-weight: 700;
+  white-space: nowrap; flex: 0 0 auto;
+}
+.pe-kb:hover { background: #d7f2ec; }
+.pe-kb:focus-visible { outline: 2px solid #0f9d8a; outline-offset: 1px; }
+
+/* PAGER — read the model straight through without returning to the rail. */
+.pe-pager {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-top: 16px; padding-top: 13px; border-top: 1px solid #e2e8f0; flex-wrap: wrap;
+}
+.pe-step { font-size: 10.5px; color: #94a3b8; font-weight: 600; }
+.pe-page-btn {
+  border: 1px solid #e2e8f0; background: #fff; color: #334155; border-radius: 9px;
+  padding: 7px 13px; font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+}
+.pe-page-btn:hover { background: #f1f5f9; }
+.pe-page-btn.primary {
+  background: linear-gradient(135deg, #0f9d8a 0%, #0b7d6e 100%);
+  border-color: transparent; color: #fff;
+}
+.pe-page-btn:focus-visible { outline: 2px solid #0f9d8a; outline-offset: 1px; }
+
+/* BAND PILLS — the nine Consumer Shield offerings, one open at a time. */
+.pe-pills { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+.pe-pill {
+  display: flex; flex-direction: column; gap: 1px; text-align: left; cursor: pointer;
+  border: 1px solid #e2e8f0; background: #fff; border-radius: 10px; padding: 6px 11px;
+  font-family: inherit; color: #334155;
+}
+.pe-pill:hover { border-color: #94a3b8; }
+.pe-pill[aria-current="true"] {
+  background: #1a6ed80f; border-color: #1a6ed8; color: #1552a8;
+}
+.pe-pill-l { font-size: 12px; font-weight: 800; }
+.pe-pill-s { font-size: 10px; color: #94a3b8; font-weight: 600; }
+.pe-pill[aria-current="true"] .pe-pill-s { color: #1a6ed8; }
+
+@media (max-width: 1000px) {
+  .pe-shell { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .pe-main { padding: 13px 16px 28px; }
+  .pe-bar { margin: -13px -16px 11px; padding: 11px 16px 9px; }
+  .pe-nav {
+    position: static; height: auto; max-height: none; display: flex; gap: 6px;
+    overflow-x: auto; padding: 8px; border-right: 0;
+    border-bottom: 1px solid rgba(255,255,255,.09);
+  }
+  .pe-nav-btn { flex: 0 0 auto; width: auto; }
+  .pe-nav-btn + .pe-nav-btn { margin-top: 0; }
+  .pe-nav-hint, .pe-nav-sep, .pe-nav-cap { display: none !important; }
+}
+`;
+
+function SideNav({ active, onSelect }: { active: SectionId; onSelect: (id: SectionId) => void }) {
+  return (
+    <nav className="pe-nav" aria-label="Profit Engine sections">
+      <div className="pe-nav-cap">Profit Engine</div>
+      {NAV.map((item) => (
+        <React.Fragment key={item.id}>
+          {item.ruleAbove && <div className="pe-nav-sep" />}
+          <button
+            type="button"
+            className="pe-nav-btn"
+            aria-current={item.id === active}
+            onClick={() => onSelect(item.id)}
+          >
+            <span className="pe-nav-ico"><Icon name={item.icon} size={15} /></span>
+            <span className="pe-nav-txt">
+              <span className="pe-nav-lbl">{item.label}</span>
+              <span className="pe-nav-hint">{item.hint}</span>
+            </span>
+          </button>
+        </React.Fragment>
+      ))}
+    </nav>
+  );
+}
+
 export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { mode?: "admin" | "agent" }) {
   const [debtAmount,       setDebtAmount]       = useState(20000);
   const [csFunnel,         setCsFunnel]         = useState<Funnel>({ p2:75, p4:60, be:40, comp:25 });
@@ -1637,7 +1862,32 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
   const [mixLdPct,         setMixLdPct]         = useState(53);
   const [mixElpPct,        setMixElpPct]        = useState(24);
   const [kbOpen,           setKbOpen]           = useState(false);
-  const [openProgram,      setOpenProgram]      = useState<string|null>("CS Program A");
+  const [openProgram,      setOpenProgram]      = useState<string>("CS Program A");
+  const [active,           setActive]           = useState<SectionId>("compare");
+  const mainRef = useRef<HTMLDivElement>(null);
+  const navIndex = Math.max(0, NAV.findIndex(n => n.id === active));
+  const nav = NAV[navIndex];
+  const activeProgram =
+    consumerShieldPrograms.find(p => p.label === openProgram) ?? consumerShieldPrograms[0];
+
+  /**
+   * Changing section must not drag the hero back into view, so scroll to the
+   * top of the CONTENT rather than the document — and only ever upward. If you
+   * are already above that line, nothing moves.
+   */
+  const goTo = (id: SectionId) => {
+    setActive(id);
+    if (typeof window === "undefined") return;
+    requestAnimationFrame(() => {
+      const el = mainRef.current;
+      if (!el) return;
+      const bar = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue("--ft-toolkit-height"),
+      ) || 0;
+      const top = el.getBoundingClientRect().top + window.scrollY - bar - 12;
+      if (window.scrollY > top) window.scrollTo({ top, behavior: "smooth" });
+    });
+  };
 
   const elpBaseTerms: ElpTerms = useMemo(() => ({
     feeRatePct: elpFeeRate, maintFee: elpMaintFee, split: elpSplit,
@@ -1838,12 +2088,6 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
 
       <KnowledgeBase open={kbOpen} onClose={() => setKbOpen(false)} />
 
-      <button onClick={() => setKbOpen(true)} style={{ position:"fixed", right:20, bottom:20, zIndex:1000,
-        border:"none", borderRadius:999, background:FT_GREEN, color:"#fff", padding:"11px 16px",
-        fontWeight:800, fontSize:13, boxShadow:"0 10px 28px rgba(15,157,138,0.35)", cursor:"pointer" }}>
-        Legend / Knowledge Base
-      </button>
-
       <ToolShell
         mode={mode}
         tool="Profit Engine"
@@ -1855,16 +2099,53 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
       >
 
       {/* MAIN — ToolShell supplies the frame and padding */}
-      <div style={{ display:"grid", gap:18 }}>
+      {/* dangerouslySetInnerHTML, not a text child: React escapes quotes inside a
+          <style> text node on the server but not on the client, and the
+          [aria-current="true"] selectors would hydrate mismatched. */}
+      <style dangerouslySetInnerHTML={{ __html: PE_CSS }} />
+      <div className="pe-shell">
+        <SideNav active={active} onSelect={goTo} />
+        <div className="pe-main" ref={mainRef}>
+
+        {/* Where you are, and the one control that belongs on every section. */}
+        <div className="pe-bar">
+          <div className="pe-bar-t">
+            <Icon name={nav.icon} size={15} />
+            <span className="pe-bar-lbl">{nav.label}</span>
+            <span className="pe-bar-sub">Section {navIndex + 1} of {NAV.length}</span>
+          </div>
+          <button type="button" className="pe-kb" onClick={() => setKbOpen(true)}
+            title="Term definitions and revenue-model reference">
+            <Icon name="ledger" size={13} />
+            Legend / Knowledge Base
+          </button>
+        </div>
+
+        {active === "compare" && (<div style={{ display:"grid", gap:18 }}>
+        {/* Head-to-head */}
+        <BackendComparison analysis={deal} />
+
+        </div>)}
+
+        {active === "funnels" && (<div style={{ display:"grid", gap:18 }}>
 
         {funnelPanel}
 
         {/* Headline metrics now live in the ToolShell hero — the recommendation
             and the three expected-revenue figures were duplicated here. */}
 
-        {/* Head-to-head */}
-        <BackendComparison analysis={deal} />
+        </div>)}
 
+        {active === "quality" && (<div style={{ display:"grid", gap:18 }}>
+        {/* Lead quality — side by side */}
+        <div className="ft-grid-2">
+          <LeadQualityPanel prefix="CS"  quality={csLeadQuality}  onChange={setCsLeadQuality}  funnel={csFunnel}  eff={csEff}  accent={FT_BLUE} />
+          <LeadQualityPanel prefix="ELP" quality={elpLeadQuality} onChange={setElpLeadQuality} funnel={elpFunnel} eff={elpEff} accent={FT_CYAN} />
+        </div>
+
+        </div>)}
+
+        {active === "routing" && (<div style={{ display:"grid", gap:18 }}>
         {/* Cash urgency */}
         <CashUrgencyPanel
           urgency={cashUrgency} onChange={setCashUrgency}
@@ -1874,12 +2155,18 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           routing={routing} debtAmount={debtAmount} analysis={deal}
         />
 
+        </div>)}
+
+        {active === "elpterms" && (<div style={{ display:"grid", gap:18 }}>
         {/* ELP program terms */}
         <ElpTermsPanel terms={elpTerms} sched={deal.elp.schedule} debtAmount={debtAmount} files={portfolioDeals}
           targetDraft={elpTargetDraft} onDraftChange={setElpTargetDraft}
           csPayment={deal.cs.payment} csTerm={deal.cs.term} ldRevenue={deal.ld.expectedRevenue}
           onChange={t => { setElpFeeRate(t.feeRatePct); setElpMaintFee(t.maintFee); setElpSplit(t.split); }} />
 
+        </div>)}
+
+        {active === "snapshots" && (<div style={{ display:"grid", gap:18 }}>
         {/* Snapshots — settlement, resolution, validation */}
         <div className="ft-grid-3">
           {/* LEVEL DEBT — settlement */}
@@ -1972,12 +2259,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           </div>
         </div>
 
-        {/* Lead quality — side by side */}
-        <div className="ft-grid-2">
-          <LeadQualityPanel prefix="CS"  quality={csLeadQuality}  onChange={setCsLeadQuality}  funnel={csFunnel}  eff={csEff}  accent={FT_BLUE} />
-          <LeadQualityPanel prefix="ELP" quality={elpLeadQuality} onChange={setElpLeadQuality} funnel={elpFunnel} eff={elpEff} accent={FT_CYAN} />
-        </div>
+        </div>)}
 
+        {active === "csfunnel" && (<div style={{ display:"grid", gap:18 }}>
         {/* Funnel explainers */}
         <Accordion title="Consumer Shield — Expected Revenue Funnel" defaultOpen={true} accent={FT_BLUE}
           badge={money.format(deal.cs.expectedRevenue)+" / deal"}>
@@ -1986,6 +2270,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
             fullRev={deal.cs.fullRevenue} ldRev={deal.ld.expectedRevenue} expected={deal.cs.expectedRevenue} />
         </Accordion>
 
+        </div>)}
+
+        {active === "elpfunnel" && (<div style={{ display:"grid", gap:18 }}>
         <Accordion title="Elite Legal Practice — Expected Revenue Funnel" defaultOpen={true} accent={FT_CYAN}
           badge={money.format(deal.elp.expectedRevenue)+" / deal"}>
           <FunnelExplainer prefix="ELP" accent={FT_CYAN} eff={elpEff}
@@ -1993,6 +2280,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
             fullRev={deal.elp.fullRevenue} ldRev={deal.ld.expectedRevenue} expected={deal.elp.expectedRevenue} />
         </Accordion>
 
+        </div>)}
+
+        {active === "csmilestones" && (<div style={{ display:"grid", gap:18 }}>
         {/* Milestone timelines */}
         <Accordion title="Consumer Shield Revenue Milestones" defaultOpen={true} accent={FT_BLUE} badge="Hover dots for detail">
           <MilestonesTimeline timeline={deal.cs.timeline}
@@ -2009,6 +2299,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           </div>
         </Accordion>
 
+        </div>)}
+
+        {active === "elpmilestones" && (<div style={{ display:"grid", gap:18 }}>
         <Accordion title="Elite Legal Practice Revenue Milestones" defaultOpen={true} accent={FT_CYAN} badge="Hover dots for detail">
           <MilestonesTimeline timeline={deal.elp.timeline}
             breakEvenMonth={deal.elp.breakEvenMonth} liabilityClearMonth={deal.elp.liabilityClearMonth}
@@ -2033,24 +2326,53 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           )}
         </Accordion>
 
+        </div>)}
+
+        {active === "timelines" && (<div style={{ display:"grid", gap:18 }}>
+        {/* Monthly revenue timelines */}
+        <Accordion title="Consumer Shield Monthly Revenue Timeline" accent={FT_BLUE}>
+          <MonthlyRevenueTable timeline={deal.cs.timeline} breakEvenMonth={deal.cs.breakEvenMonth}
+            liabilityClearMonth={deal.cs.liabilityClearMonth} frontPhase="Front" frontEndsMonth={4}
+            accent={FT_BLUE} accentDark="#1552a8" />
+        </Accordion>
+
+        <Accordion title="Elite Legal Practice Monthly Revenue Timeline" accent={FT_CYAN}>
+          <MonthlyRevenueTable timeline={deal.elp.timeline} breakEvenMonth={deal.elp.breakEvenMonth}
+            liabilityClearMonth={deal.elp.liabilityClearMonth} frontPhase="Pass-Through" frontEndsMonth={2}
+            accent={FT_CYAN} accentDark={FT_CYAN_DARK} />
+        </Accordion>
+
+        </div>)}
+
+        {active === "payout" && (<div style={{ display:"grid", gap:18 }}>
         {/* Payout + liability */}
         <PayoutLiabilityAccordion />
 
-        {/* CS offerings */}
+        </div>)}
+
+        {active === "csprograms" && (<div style={{ display:"grid", gap:18 }}>
+        {/* CS offerings — pill selector, one band open at a time */}
         <div style={card}>
           <h2 style={{ margin:"0 0 6px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Consumer Shield Offerings / Retention Scenarios</h2>
-          <div style={{ fontSize:13, color:"#64748b", lineHeight:1.6, marginBottom:14 }}>
-            Expand each offering for the full revenue breakdown and interactive revenue curve.
+          <div style={{ fontSize:13, color:"#64748b", lineHeight:1.6, marginBottom:12 }}>
+            Nine bands, one on screen at a time — the same rule the section menu follows. Pick a band for its
+            revenue breakdown and revenue curve.
           </div>
-          <div style={{ display:"grid", gap:10 }}>
+          <div className="pe-pills">
             {consumerShieldPrograms.map(prog => (
-              <ProgramAccordion key={prog.label} program={prog}
-                open={openProgram===prog.label}
-                onToggle={() => setOpenProgram(c => c===prog.label ? null : prog.label)} />
+              <button key={prog.label} type="button" className="pe-pill"
+                aria-current={activeProgram.label === prog.label}
+                onClick={() => setOpenProgram(prog.label)}>
+                <span className="pe-pill-l">{prog.label}</span>
+                <span className="pe-pill-s">{prog.debtRange}</span>
+              </button>
             ))}
           </div>
+          <ProgramDetail program={activeProgram} />
         </div>
+        </div>)}
 
+        {active === "elpbands" && (<div style={{ display:"grid", gap:18 }}>
         {/* ELP band sweep */}
         <Accordion title="Elite Legal Practice — Economics Across Debt Bands" accent={FT_CYAN}
           badge={`${elpTerms.feeRatePct}% fee · ${money.format(elpTerms.maintFee)} maint · ${elpTerms.split?"split":"monthly"}`}>
@@ -2082,19 +2404,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           </div>
         </Accordion>
 
-        {/* Monthly revenue timelines */}
-        <Accordion title="Consumer Shield Monthly Revenue Timeline" accent={FT_BLUE}>
-          <MonthlyRevenueTable timeline={deal.cs.timeline} breakEvenMonth={deal.cs.breakEvenMonth}
-            liabilityClearMonth={deal.cs.liabilityClearMonth} frontPhase="Front" frontEndsMonth={4}
-            accent={FT_BLUE} accentDark="#1552a8" />
-        </Accordion>
+        </div>)}
 
-        <Accordion title="Elite Legal Practice Monthly Revenue Timeline" accent={FT_CYAN}>
-          <MonthlyRevenueTable timeline={deal.elp.timeline} breakEvenMonth={deal.elp.breakEvenMonth}
-            liabilityClearMonth={deal.elp.liabilityClearMonth} frontPhase="Pass-Through" frontEndsMonth={2}
-            accent={FT_CYAN} accentDark={FT_CYAN_DARK} />
-        </Accordion>
-
+        {active === "reppay" && (<div style={{ display:"grid", gap:18 }}>
         {/* Rep economics */}
         <div style={card}>
           <h2 style={{ margin:"0 0 4px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Sales Rep Economics</h2>
@@ -2129,6 +2441,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           </div>
         </div>
 
+        </div>)}
+
+        {active === "portfolio" && (<div style={{ display:"grid", gap:18 }}>
         {/* Portfolio forecast */}
         <div style={card}>
           <h2 style={{ margin:"0 0 4px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Portfolio Forecast</h2>
@@ -2264,6 +2579,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           </div>
         </div>
 
+        </div>)}
+
+        {active === "notes" && (<div style={{ display:"grid", gap:18 }}>
         {/* Operator notes */}
         <div style={card}>
           <h2 style={{ margin:"0 0 10px", fontSize:18, fontWeight:800, color:"#0f172a" }}>Operator Notes</h2>
@@ -2285,6 +2603,20 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
           ))}
         </div>
 
+        </div>)}
+
+        {/* Walk the model in order without going back to the menu. */}
+        <div className="pe-pager">
+          {navIndex > 0
+            ? <button type="button" className="pe-page-btn" onClick={() => goTo(NAV[navIndex - 1].id)}>← {NAV[navIndex - 1].label}</button>
+            : <span />}
+          <span className="pe-step">{NAV.length - navIndex - 1} more section{NAV.length - navIndex - 1 === 1 ? "" : "s"}</span>
+          {navIndex < NAV.length - 1
+            ? <button type="button" className="pe-page-btn primary" onClick={() => goTo(NAV[navIndex + 1].id)}>{NAV[navIndex + 1].label} →</button>
+            : <span />}
+        </div>
+
+        </div>
       </div>
       </ToolShell>
 
