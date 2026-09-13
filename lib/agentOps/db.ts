@@ -178,6 +178,86 @@ const DDL: string[] = [
      primary key (agent_id, day)
    )`,
 
+  // Draft-level payment history. The vesting gate is a DRAFT COUNT, so the
+  // gate cannot be evaluated from a file-level status alone — it needs the
+  // individual drafts and what each one did. Where a backend reports only a
+  // status, rows are reconstructed and marked source='inferred' so a
+  // reconstructed history is never mistaken for a reported one.
+  `create table if not exists ao_deal_payments (
+     id bigserial primary key,
+     deal_id text not null,
+     backend text not null,
+     payment_number integer not null,
+     due_at date,
+     cleared_at date,
+     amount numeric(12,2),
+     status text not null default 'scheduled',
+     source text not null default 'backend_report',
+     batch_id bigint,
+     raw jsonb,
+     imported_at timestamptz not null default now()
+   )`,
+  `create unique index if not exists ao_deal_payments_key
+     on ao_deal_payments (deal_id, payment_number)`,
+  `create index if not exists ao_deal_payments_deal on ao_deal_payments (deal_id)`,
+
+  // The canonical deal: the GHL claim and the matched backend file resolved
+  // into one row, plus everything the pay decision depends on.
+  //
+  // enrolled_debt is what was sold; realized_enrolled_debt is what survived
+  // after the backend removed creditors. Payout and commission are computed on
+  // the realized figure, never the sold one — keeping both is what makes the
+  // variance visible instead of silently shrinking the number.
+  `create table if not exists ao_deals (
+     id text primary key,
+     enrollment_id text,
+     backend_file_id bigint,
+     backend text not null default 'UNKNOWN',
+     program_type text,
+     agent_id text,
+     client_name text,
+     enrolled_debt numeric(12,2),
+     realized_enrolled_debt numeric(12,2),
+     enrolled_at date,
+     payment_schedule text not null default 'unknown',
+     schedule_declared text,
+     schedule_observed text,
+     schedule_conflict boolean not null default false,
+     schedule_basis text,
+     expected_payout_amount numeric(12,2),
+     expected_payout_at date,
+     realized_payout_amount numeric(12,2),
+     realized_payout_at date,
+     first_payment_at date,
+     cancelled_at date,
+     drafts_cleared integer not null default 0,
+     drafts_required integer,
+     nsf_count integer not null default 0,
+     vesting_state text not null default 'held',
+     vesting_reason text,
+     computed_at timestamptz not null default now()
+   )`,
+  `create index if not exists ao_deals_agent on ao_deals (agent_id, enrolled_at)`,
+  `create index if not exists ao_deals_vesting on ao_deals (vesting_state)`,
+
+  // Rep pay, one row per movement. Never updated in place: a clawback is a new
+  // negative row, so the ledger reads as a history and the sum is the balance.
+  // "Why was I paid this" has to be answerable line by line.
+  `create table if not exists ao_comp_ledger (
+     id bigserial primary key,
+     deal_id text not null,
+     agent_id text,
+     kind text not null,
+     amount numeric(12,2) not null,
+     basis text,
+     period text,
+     occurred_at timestamptz not null default now(),
+     created_by text,
+     note text
+   )`,
+  `create index if not exists ao_comp_ledger_agent on ao_comp_ledger (agent_id, occurred_at)`,
+  `create index if not exists ao_comp_ledger_deal on ao_comp_ledger (deal_id)`,
+
   `create table if not exists ao_sync_runs (
      id bigserial primary key,
      started_at timestamptz not null default now(),
