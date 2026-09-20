@@ -155,8 +155,9 @@ export default async function MyPayPage({ searchParams }: { searchParams: { as?:
             <li>You are paid on a deal once <strong>the client&apos;s first program payment clears</strong> and <strong>the backend has paid Funding Tier</strong> on it.</li>
             <li>A program payment is one month of the client&apos;s plan. On a split, bi-weekly or semi-monthly plan, <strong>both</strong> drafts for the month must clear — two drafts count as one payment.</li>
             <li><strong>Level Debt:</strong> first payment clears 1st–15th → paid the 1st of next month; clears 16th–end of month → paid the 15th of next month. Final once the 2nd program payment clears — if the client cancels before that, Level takes its payout back and the commission is deducted from your next payment.</li>
-            <li><strong>Shield Services:</strong> first payment clears → paid the 20th of the following month. Final once paid.</li>
-            <li><strong>Elite Legal Practice:</strong> first payment clears → paid the 20th of the following month. Final once paid.</li>
+            <li><strong>Shield Services:</strong> first payment clears → paid the 20th of the following month. An ordinary cancellation does not take it back.</li>
+            <li><strong>Elite Legal Practice:</strong> first payment clears → paid the 20th of the following month. An ordinary cancellation does not take it back.</li>
+            <li><strong>Disputes:</strong> if a client formally disputes or charges back any payment, at any point, all commission and any bonus already paid on that file is clawed back.</li>
             <li>If a backend pays Funding Tier late, your date moves to its next pay day at least 5 days after the money arrives — you will see the new date here.</li>
           </ul>
         </div>

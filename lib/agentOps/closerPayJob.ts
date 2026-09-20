@@ -117,14 +117,26 @@ export async function recomputeCloserPay(opts: { asOf?: string; pushToGhl?: bool
   const fileById = new Map(files.map((f) => [f.id, f]));
 
   const draftsByFile = new Map<string, DealPayment[]>();
+  const disputedByFile = new Map<string, string>();
   for (const r of draftRows) {
     const k = `${r.backend}|${r.file_key}`;
     const list = draftsByFile.get(k) ?? draftsByFile.set(k, []).get(k)!;
+    // A disputed draft is, for cadence purposes, a returned one; the dispute
+    // itself is carried separately because it overrides every other rule.
+    if (r.status === 'disputed') {
+      const when = d10(r.returned_at) ?? d10(r.due_at) ?? d10(r.cleared_at) ?? new Date().toISOString().slice(0, 10);
+      const prev = disputedByFile.get(k);
+      if (!prev || when < prev) disputedByFile.set(k, when);
+    }
     list.push({
       paymentNumber: r.draft_number ?? list.length + 1, dueAt: d10(r.due_at), clearedAt: d10(r.cleared_at),
-      amount: r.amount == null ? null : Number(r.amount), status: r.status, source: r.source,
+      amount: r.amount == null ? null : Number(r.amount), status: r.status === 'disputed' ? 'returned' : r.status, source: r.source,
     });
   }
+  const disputedFor = (f: BackendFile & { cancelledAt: string | null }) =>
+    disputedByFile.get(`${f.backend}|${fileKeyFor(f.externalId, null)}`)
+    ?? (f.externalId ? null : disputedByFile.get(`${f.backend}|${fileKeyFor(null, f.clientName)}`))
+    ?? (/dispute|chargeback|charge back/i.test(f.fileStatus ?? '') ? (f.cancelledAt ?? new Date().toISOString().slice(0, 10)) : null);
   const draftsFor = (f: BackendFile) => [
     ...(draftsByFile.get(`${f.backend}|${fileKeyFor(f.externalId, null)}`) ?? []),
     ...(f.externalId ? [] : draftsByFile.get(`${f.backend}|${fileKeyFor(null, f.clientName)}`) ?? []),
@@ -191,7 +203,7 @@ export async function recomputeCloserPay(opts: { asOf?: string; pushToGhl?: bool
       const cancelledAt = file.cancelledAt ?? (CANCELLED.test(file.fileStatus ?? '') ? new Date().toISOString().slice(0, 10) : null);
       v = evaluateCloserPay({
         dealId: e.id, backend, commission: comp.amount, drafts: draftsFor(file),
-        declaredSchedule: file.declared, cancelledAt, backendPaidAt: file.payoutAt,
+        declaredSchedule: file.declared, cancelledAt, backendPaidAt: file.payoutAt, disputedAt: disputedFor(file),
         separation: a?.separated_at && a?.separation_type
           ? { at: d10(a.separated_at)!, type: a.separation_type as SeparationType } : null,
         paidAmount: led.paid, recoveredAmount: led.recovered, asOf: opts.asOf,

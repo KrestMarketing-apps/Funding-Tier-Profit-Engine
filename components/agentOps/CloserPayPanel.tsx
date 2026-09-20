@@ -334,7 +334,7 @@ export function CloserPayPanel({ onOverride }: {
         <div style={{ fontSize: 11.5, color: T.muted, marginTop: 6 }}>
           A program payment is one month of the client&apos;s plan. On split, bi-weekly or semi-monthly plans both drafts
           for the month must clear before it counts — two drafts are never two payments. If the backend pays Funding Tier
-          late, the pay date moves to the backend&apos;s next pay day at least 5 days after the money arrives.
+          late, the pay date moves to the backend&apos;s next pay day at least 5 days after the money arrives. A formal dispute or chargeback on any payment claws back all commission paid on that file, whatever the payment count.
         </div>
       </Panel>
     </>

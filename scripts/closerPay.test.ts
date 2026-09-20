@@ -113,6 +113,20 @@ console.log('\n=== Chargebacks ===');
   check('cancelled before any payment → nothing owed', v.state === 'cancelled');
 }
 
+console.log('\n=== Disputes override everything ===');
+{
+  const v = run({ drafts: [d('2026-06-05'), d('2026-07-05'), d('2026-08-05')], backendPaidAt: '2026-07-15', paidAmount: 350, disputedAt: '2026-08-20' });
+  check('Shield file disputed after 3 payments → full clawback despite being "final"', v.state === 'clawback' && v.clawbackAmount === 350, `${v.state} ${v.clawbackAmount}`);
+}
+{
+  const v = run({ backend: 'LEVEL', commission: 400, drafts: [d('2026-06-05')], backendPaidAt: '2026-06-25', disputedAt: '2026-06-20' });
+  check('disputed before being paid → nothing owed', v.state === 'cancelled' && v.owedAmount === 0, v.state);
+}
+{
+  const v = run({ declaredSchedule: null, drafts: [d('2026-06-05')], paidAmount: 350, disputedAt: '2026-06-20' });
+  check('dispute applies even while the plan type is unconfirmed', v.state === 'clawback', v.state);
+}
+
 console.log('\n=== Closers who leave ===');
 {
   const v = run({ drafts: [d('2026-08-12')], backendPaidAt: '2026-09-15', separation: { at: '2026-09-01', type: 'for_cause' } });

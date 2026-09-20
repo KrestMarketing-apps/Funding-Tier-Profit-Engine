@@ -496,7 +496,7 @@ function LevelDebtTab(){
         </PolicySection>
         <PolicySection heading="Chargebacks and Clawbacks">
           <AlertBox color={RED} bg="#fef2f2">
-            <strong>Chargeback Rule:</strong> Level Debt takes its payout back if the client's <strong>2nd program payment</strong> does not clear. Your commission is final once the 2nd program payment clears; before that, a cancellation or failed 2nd payment is deducted from your next payment.
+            <strong>Chargeback Rule:</strong> Level Debt takes its payout back if the client's <strong>2nd program payment</strong> does not clear. Your commission is final once the 2nd program payment clears; before that, a cancellation or failed 2nd payment is deducted from your next payment.<br/><br/><strong>Disputes:</strong> if a client formally disputes or charges back any payment, at any point in the program, all commission and any bonus already paid on that file is clawed back.
           </AlertBox>
           <PolicyTable
             headers={["Scenario","Chargeback Risk","Your Liability"]}
@@ -619,6 +619,7 @@ function CSTab(){
         <PolicySection heading="Chargebacks and Clawbacks">
           <AlertBox color={RED} bg="#fef2f2">
             Once the first program payment has cleared and you have been paid, an ordinary cancellation does not take the commission back.<br/><br/>
+            <strong>Disputes:</strong> if a client formally disputes or charges back any payment, at any point in the program, all commission and any bonus already paid on that file is clawed back.<br/><br/>
             <strong>NSF / Returned Payments:</strong> A returned payment does not count as cleared.
           </AlertBox>
         </PolicySection>
@@ -1247,6 +1248,7 @@ function LegacyCapitalTab(){
         <PolicySection heading="Chargebacks and Clawbacks">
           <AlertBox color={RED} bg="#fef2f2">
             Once the first program payment has cleared and you have been paid, an ordinary cancellation does not take the commission back.<br/><br/>
+            <strong>Disputes:</strong> if a client formally disputes or charges back any payment, at any point in the program, all commission and any bonus already paid on that file is clawed back.<br/><br/>
             <strong>NSF / Returned Payments:</strong> A returned payment does not count as cleared. Commission milestones are not met until valid, cleared payments are confirmed.
           </AlertBox>
         </PolicySection>

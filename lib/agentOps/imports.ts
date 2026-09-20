@@ -137,7 +137,8 @@ export interface ParsedDraft {
   dueAt: string | null;
   clearedAt: string | null;
   returnedAt: string | null;
-  status: 'scheduled' | 'cleared' | 'nsf' | 'returned' | 'skipped' | 'cancelled';
+  /** 'disputed' = the client disputed or charged back the payment (ACH unauthorized returns included). */
+  status: 'scheduled' | 'cleared' | 'nsf' | 'returned' | 'skipped' | 'cancelled' | 'disputed';
   amount: number | null;
   source: 'backend_report' | 'inferred';
 }
@@ -155,6 +156,7 @@ export function scheduleFromText(v: string | null | undefined): DeclaredSchedule
 
 function draftStatus(raw: string | undefined, clearedAt: string | null, returnedAt: string | null): ParsedDraft['status'] {
   const t = (raw ?? '').toLowerCase();
+  if (/dispute|chargeback|charge back|unauthori|\br(05|07|10|29)\b/.test(t)) return 'disputed';
   if (/nsf|insufficient/.test(t)) return 'nsf';
   if (/return|reject|fail|declin/.test(t) || returnedAt) return 'returned';
   if (/cancel|void/.test(t)) return 'cancelled';
@@ -338,4 +340,4 @@ export function fileKeyFor(externalId: string | null | undefined, clientName: st
   return `name:${(clientName ?? '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim()}`;
 }
 
-const rank = (s: ParsedDraft['status']) => ({ scheduled: 0, skipped: 1, cleared: 2, cancelled: 2, returned: 3, nsf: 3 }[s]);
+const rank = (s: ParsedDraft['status']) => ({ scheduled: 0, skipped: 1, cleared: 2, cancelled: 2, returned: 3, nsf: 3, disputed: 4 }[s]);

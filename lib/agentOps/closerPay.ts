@@ -33,7 +33,12 @@
 //      A paid Level deal is "at risk" until its 2nd program payment clears;
 //      if it cancels first, the commission becomes a clawback.
 //
-//   5. A closer who leaves:
+//   5. Disputes override everything: if the client formally disputes or charges
+//      back ANY payment, at any point in the program, all commission already
+//      paid on that file is clawed back and nothing more is owed. This is the
+//      published policy (AI Deal Router, Commission, Bonuses & Spiffs).
+//
+//   6. A closer who leaves:
 //        for cause (deserted, quit without notice, harmed the company)
 //            → nothing unpaid at the separation date is paid.
 //        performance (missed goals/KPIs)
@@ -151,6 +156,8 @@ export interface CloserPayInput {
   declaredSchedule?: PaymentSchedule | null;
   /** When the backend reported the file cancelled, if it has. */
   cancelledAt?: string | null;
+  /** When the client formally disputed or charged back a payment, if they did. */
+  disputedAt?: string | null;
   /** When the backend paid Funding Tier on this file, if confirmed. */
   backendPaidAt?: string | null;
   /** Closer's separation, if they have left. */
@@ -253,6 +260,18 @@ export function evaluateCloserPay(input: CloserPayInput): CloserPayVerdict {
   const schedule = sv.schedule;
   const cancelledAt = dayOf(input.cancelledAt);
   const separation = input.separation ? { at: dayOf(input.separation.at) as Date, type: input.separation.type } : null;
+
+  const disputedAt = dayOf(input.disputedAt);
+  if (disputedAt) {
+    const owedBack = round(paidAmount - recovered);
+    return {
+      ...base, schedule, programPaymentsCleared: programPayments(input.drafts, schedule).length,
+      state: owedBack > 0 ? 'clawback' : 'cancelled', owedAmount: 0, clawbackAmount: Math.max(0, owedBack),
+      reason: owedBack > 0
+        ? `The client disputed or charged back a payment on ${fmtDay(iso(disputedAt))}. Under the dispute policy all commission paid on this file (${money(paidAmount)}) is clawed back from your next payment.`
+        : `The client disputed or charged back a payment on ${fmtDay(iso(disputedAt))} — no commission is owed on this file.`,
+    };
+  }
 
   if (schedule === 'unknown' || sv.conflict) {
     // Held — but a deal paid already still has to show what it is owed back.
