@@ -127,5 +127,15 @@ console.log('\n=== Closers who leave ===');
   check('performance separation → first payout still paid', v.state === 'scheduled' && v.owedAmount === 350, `${v.state} ${v.owedAmount}`);
 }
 
+console.log('\n=== Commission amounts match the published agent page ===');
+{
+  const { commissionFor } = require('../lib/agentOps/closerPayJob');
+  check('Level $25,000 at Tier 1 = $250', commissionFor('LEVEL', 25000, 400000).amount === 250);
+  check('Level $25,000 at Tier 2 ($1M+) = $287.50', commissionFor('LEVEL', 25000, 1200000).amount === 287.5);
+  check('Level $25,000 at Tier 3 ($2M+) = $325', commissionFor('LEVEL', 25000, 2500000).amount === 325);
+  check('Shield $20,000 = Program F $350', commissionFor('CS', 20000, 0).amount === 350);
+  check('ELP $22,000 = Band L4 $350', commissionFor('LEGACY', 22000, 0).amount === 350);
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

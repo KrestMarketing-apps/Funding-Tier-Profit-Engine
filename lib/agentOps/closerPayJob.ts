@@ -6,8 +6,22 @@ import { ghlConfigs, ghlFetch } from './ghl';
 import type { DealPayment, PaymentSchedule } from './vesting';
 import type { Agent, BackendFile, BackendKey, Enrollment } from './types';
 import {
-  CONSUMER_SHIELD, DEFAULT_ASSUMPTIONS, LEGACY_CAPITAL, levelDebtCommission,
+  CONSUMER_SHIELD, DEFAULT_ASSUMPTIONS, LEGACY_CAPITAL, resolveLevelCommissionRate, type CommissionTier,
 } from '../../components/fundingTierEngine';
+
+/**
+ * Level Debt closer tiers — what closers are PROMISED, as published on the
+ * Commission, Bonuses & Spiffs page (ai.fundingtier.com/agents/commission-
+ * bonuses-spiffs): 1.00% / 1.15% / 1.30% at $0 / $1M / $2M monthly Level
+ * volume. Pay follows the published promise. These differ from the tiers the
+ * Profit Engine's cost model uses (DEFAULT_ASSUMPTIONS.levelDebt), which is a
+ * known open question — keep this in step with the agent page.
+ */
+export const LEVEL_CLOSER_TIERS: CommissionTier[] = [
+  { threshold: 0, rate: 0.01 },
+  { threshold: 1_000_000, rate: 0.0115 },
+  { threshold: 2_000_000, rate: 0.013 },
+];
 
 /**
  * Rebuild ao_closer_pay: every enrolled deal, who is credited, what the
@@ -30,7 +44,8 @@ export function commissionFor(
   const a = DEFAULT_ASSUMPTIONS;
   if (!debt || debt <= 0) return { amount: 0, basis: 'No enrolled debt on the file yet.' };
   if (backend === 'LEVEL') {
-    const { amount, rate } = levelDebtCommission(debt, closerLevelVolumeThisMonth, a);
+    const rate = resolveLevelCommissionRate(closerLevelVolumeThisMonth, LEVEL_CLOSER_TIERS);
+    const amount = Math.round(debt * rate * 100) / 100;
     return { amount, basis: `${(rate * 100).toFixed(2)}% of $${debt.toLocaleString('en-US')} enrolled (tier on $${Math.round(closerLevelVolumeThisMonth).toLocaleString('en-US')} Level volume that month)` };
   }
   if (backend === 'CS') {

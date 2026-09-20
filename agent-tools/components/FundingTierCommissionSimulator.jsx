@@ -238,8 +238,8 @@ function TabBar({tabs,active,onSelect}){
 function PayoutTimeline({band,color}){
   const steps=[
     {label:"Deal Enrolled",month:"Month 1",amt:null},
-    {label:"Payment 2 Clears",month:"Month 2",amt:fmt(band.p2)},
-    ...(band.p4>0?[{label:"Payment 4 Clears",month:"Month 4",amt:fmt(band.p4)}]:[]),
+    {label:"Payment 1 Clears",month:"Whole first month",amt:null},
+    {label:"You're Paid",month:"20th of the next month",amt:fmt(band.total)},
   ];
   return(
     <div style={{background:"#f8fafc",borderRadius:12,padding:"16px 18px"}}>
@@ -489,20 +489,21 @@ function LevelDebtTab(){
         </PolicySection>
         <PolicySection heading="When You Get Paid — Payout Timing">
           <AlertBox color={G} bg="#f0fdf9">
-            <strong>Payout date:</strong> After the client successfully completes <strong>2 monthly program payments</strong>, commissions are paid on the <strong>20th of the following month</strong>.
+            <strong>Payout date:</strong> You are paid once the client's <strong>first program payment clears</strong> and Level Debt has paid Funding Tier. Payment clears the <strong>1st–15th</strong> → paid the <strong>1st of next month</strong>. Clears the <strong>16th–end of month</strong> → paid the <strong>15th of next month</strong>.<br/><br/>
+            <strong>Twice-a-month plans:</strong> a program payment is one month of the plan. On split, bi-weekly or semi-monthly plans both drafts for the month must clear — two drafts never count as two payments.<br/><br/>
+            Track every deal on <a href="/agent-tools/my-pay">My Deals &amp; Pay</a>.
           </AlertBox>
         </PolicySection>
         <PolicySection heading="Chargebacks and Clawbacks">
           <AlertBox color={RED} bg="#fef2f2">
-            <strong>Chargeback Rule:</strong> A client must complete a minimum of <strong>3 program payments</strong> to be fully outside the chargeback liability window.
+            <strong>Chargeback Rule:</strong> Level Debt takes its payout back if the client's <strong>2nd program payment</strong> does not clear. Your commission is final once the 2nd program payment clears; before that, a cancellation or failed 2nd payment is deducted from your next payment.
           </AlertBox>
           <PolicyTable
             headers={["Scenario","Chargeback Risk","Your Liability"]}
             rows={[
-              ["Client completes 2 payments — then cancels","Yes","Possible clawback"],
-              ["Client completes 3+ payments","No","No clawback"],
-              ["Client returns NSF on any payment","Yes","Possible clawback"],
-              ["Client completes full program","No","Commission fully earned"],
+              ["Client cancels before payment 1 clears","—","No commission earned"],
+              ["Payment 1 clears, then cancels or payment 2 fails","Yes","Clawed back from your next payment"],
+              ["Payment 2 clears","No","Commission final"],
             ]}
           />
         </PolicySection>
@@ -550,15 +551,12 @@ function CSTab(){
               borderRadius:10,padding:"9px 16px",border:`1px solid ${BLUE}33`,marginBottom:16}}>
               <span style={{fontWeight:900,fontSize:15,color:BLUE}}>{prog.label}</span>
               <span style={{fontSize:13,color:"#64748b",fontWeight:600}}>{prog.range}</span>
-              {prog.p4===0&&<span style={{fontSize:11,fontWeight:800,background:G+"22",color:GD,padding:"2px 8px",borderRadius:99}}>Full payout at P2</span>}
+              <span style={{fontSize:11,fontWeight:800,background:G+"22",color:GD,padding:"2px 8px",borderRadius:99}}>Single payout</span>
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
               <MetricCard title="Total Commission" value={fmt(prog.total)} sub="Full amount for this deal" accent={BLUE} large/>
-              <MetricCard title="Paid at Payment 2" value={fmt(prog.p2)} sub="20th of Month 3" accent={BLUE}/>
-              <MetricCard title={prog.p4>0?"Paid at Payment 4":"Second Payout"}
-                value={prog.p4>0?fmt(prog.p4):"—"}
-                sub={prog.p4>0?"20th of Month 5":"Single payout — no split on this tier"}
-                accent={prog.p4>0?BLUE:"#e2e8f0"}/>
+              <MetricCard title="When You're Paid" value="20th of next month" sub="after payment 1 clears & the backend pays Funding Tier" accent={BLUE}/>
+              <MetricCard title="Final" value="Once paid" sub="no clawback on ordinary cancellation" accent="#e2e8f0"/>
             </div>
             <PayoutTimeline band={prog} color={BLUE}/>
           </>
@@ -571,7 +569,7 @@ function CSTab(){
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:14}}>
             <thead>
               <tr style={{background:DARK}}>
-                {["Program","Debt Range","At Payment 2","At Payment 4","Total Commission"].map(h=>(
+                {["Program","Debt Range","Commission","When It's Paid"].map(h=>(
                   <th key={h} style={{padding:"11px 14px",color:"#fff",fontWeight:700,fontSize:13,textAlign:"left",borderRight:"1px solid rgba(255,255,255,0.15)"}}>{h}</th>
                 ))}
               </tr>
@@ -586,16 +584,15 @@ function CSTab(){
                       {isActive&&<span style={{fontSize:11,background:BLUE+"22",color:BLUE,padding:"1px 7px",borderRadius:99,marginLeft:6,fontWeight:700}}>current</span>}
                     </td>
                     <td style={{padding:"10px 14px",color:"#475569",fontWeight:600,borderRight:`1px solid ${BORDER}`}}>{p.range}</td>
-                    <td style={{padding:"10px 14px",fontWeight:800,color:BLUE,fontSize:14,borderRight:`1px solid ${BORDER}`}}>{fmt(p.p2)}</td>
-                    <td style={{padding:"10px 14px",color:p.p4>0?BLUE:"#94a3b8",fontWeight:p.p4>0?800:500,borderRight:`1px solid ${BORDER}`}}>{p.p4>0?fmt(p.p4):"—"}</td>
-                    <td style={{padding:"10px 14px",fontWeight:900,fontSize:16,color:GD}}>{fmt(p.total)}</td>
+                    <td style={{padding:"10px 14px",fontWeight:900,fontSize:16,color:GD,borderRight:`1px solid ${BORDER}`}}>{fmt(p.total)}</td>
+                    <td style={{padding:"10px 14px",color:"#475569",fontWeight:600}}>20th of the month after payment 1 clears</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        <div style={{fontSize:13,color:"#64748b",marginTop:10,fontWeight:600}}>* Programs A, B, and C: $150 guaranteed minimum paid in full at Payment 2. No split.</div>
+        <div style={{fontSize:13,color:"#64748b",marginTop:10,fontWeight:600}}>* Every program pays in one payment, the 20th of the month after the client's first program payment clears.</div>
       </Card>
 
       <Accordion title="Consumer Shield Debt Validation Agent Commissions — Full Policy Explained" color={BLUE}>
@@ -609,20 +606,20 @@ function CSTab(){
         </PolicySection>
         <PolicySection heading="Commission Structure — Flat Rates by Program">
           <PolicyTable
-            headers={["Program","Debt Range","Paid at Payment 2","Paid at Payment 4","Your Total"]}
-            rows={CS_PROGS.map(p=>[p.label,p.range,fmt(p.p2),p.p4>0?fmt(p.p4):"—",fmt(p.total)])}
+            headers={["Program","Debt Range","Your Commission"]}
+            rows={CS_PROGS.map(p=>[p.label,p.range,fmt(p.total)])}
           />
         </PolicySection>
         <PolicySection heading="When You Get Paid — Payout Timing">
           <AlertBox color={BLUE} bg="#eff6ff">
-            <strong>Payment 2 Payout:</strong> Paid on the <strong>20th of Month 3</strong>.<br/><br/>
-            <strong>Payment 4 Payout (Programs D–I only):</strong> Paid on the <strong>20th of Month 5</strong>.
+            The full commission is paid on the <strong>20th of the month after the client's first program payment clears</strong>, once Consumer Shield has paid Funding Tier (by the 15th). On a twice-a-month plan both drafts for the first month must clear.<br/><br/>
+            Track every deal on <a href="/agent-tools/my-pay">My Deals &amp; Pay</a>.
           </AlertBox>
         </PolicySection>
         <PolicySection heading="Chargebacks and Clawbacks">
           <AlertBox color={RED} bg="#fef2f2">
-            <strong>Clawback Rule (Programs D–I):</strong> If a client cancels before Payment 4 clears, the Payment 2 commission is subject to clawback within <strong>60 days of cancellation</strong>.<br/><br/>
-            <strong>Programs A, B, C:</strong> Not subject to clawback. Single $150 payment triggers at Payment 2 only.
+            Once the first program payment has cleared and you have been paid, an ordinary cancellation does not take the commission back.<br/><br/>
+            <strong>NSF / Returned Payments:</strong> A returned payment does not count as cleared.
           </AlertBox>
         </PolicySection>
         <PolicySection heading="Daily Hustle Bonus — CS Deals Only">
@@ -1117,16 +1114,13 @@ function LegacyCapitalTab(){
               borderRadius:10,padding:"9px 16px",border:`1px solid ${LC}33`,marginBottom:16}}>
               <span style={{fontWeight:900,fontSize:15,color:LC}}>{band.label}</span>
               <span style={{fontSize:13,color:"#64748b",fontWeight:600}}>{band.range}</span>
-              {band.p4===0&&<span style={{fontSize:11,fontWeight:800,background:G+"22",color:GD,padding:"2px 8px",borderRadius:99}}>Full payout at P2</span>}
+              <span style={{fontSize:11,fontWeight:800,background:G+"22",color:GD,padding:"2px 8px",borderRadius:99}}>Single payout</span>
             </div>
 
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
               <MetricCard title="Total Commission" value={fmt(band.total)} sub="Full amount for this deal" accent={LC} large/>
-              <MetricCard title="Paid at Payment 2" value={fmt(band.p2)} sub="20th of Month 3" accent={LC}/>
-              <MetricCard title={band.p4>0?"Paid at Payment 4":"Second Payout"}
-                value={band.p4>0?fmt(band.p4):"—"}
-                sub={band.p4>0?"20th of Month 5":"Single payout — no split on this band"}
-                accent={band.p4>0?LC:"#e2e8f0"}/>
+              <MetricCard title="When You're Paid" value="20th of next month" sub="after payment 1 clears & the backend pays Funding Tier" accent={LC}/>
+              <MetricCard title="Final" value="Once paid" sub="no clawback on ordinary cancellation" accent="#e2e8f0"/>
             </div>
 
             <PayoutTimeline band={band} color={LC}/>
@@ -1141,7 +1135,7 @@ function LegacyCapitalTab(){
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:14}}>
             <thead>
               <tr style={{background:DARK}}>
-                {["Band","Debt Range","At Payment 2","At Payment 4","Total Commission"].map(h=>(
+                {["Band","Debt Range","Commission","When It's Paid"].map(h=>(
                   <th key={h} style={{padding:"11px 14px",color:"#fff",fontWeight:700,fontSize:13,textAlign:"left",borderRight:"1px solid rgba(255,255,255,0.15)"}}>{h}</th>
                 ))}
               </tr>
@@ -1156,16 +1150,15 @@ function LegacyCapitalTab(){
                       {isActive&&<span style={{fontSize:11,background:LC+"22",color:LC,padding:"1px 7px",borderRadius:99,marginLeft:6,fontWeight:700}}>current</span>}
                     </td>
                     <td style={{padding:"10px 14px",color:"#475569",fontWeight:600,borderRight:`1px solid ${BORDER}`}}>{b.range}</td>
-                    <td style={{padding:"10px 14px",fontWeight:800,color:LC,fontSize:14,borderRight:`1px solid ${BORDER}`}}>{fmt(b.p2)}</td>
-                    <td style={{padding:"10px 14px",color:b.p4>0?LC:"#94a3b8",fontWeight:b.p4>0?800:500,borderRight:`1px solid ${BORDER}`}}>{b.p4>0?fmt(b.p4):"—"}</td>
-                    <td style={{padding:"10px 14px",fontWeight:900,fontSize:16,color:GD}}>{fmt(b.total)}</td>
+                    <td style={{padding:"10px 14px",fontWeight:900,fontSize:16,color:GD,borderRight:`1px solid ${BORDER}`}}>{fmt(b.total)}</td>
+                    <td style={{padding:"10px 14px",color:"#475569",fontWeight:600}}>20th of the month after payment 1 clears</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        <div style={{fontSize:13,color:"#64748b",marginTop:10,fontWeight:600}}>* Band L1 ($6,000–$9,999): $150 flat, paid in full at Payment 2. No split.</div>
+        <div style={{fontSize:13,color:"#64748b",marginTop:10,fontWeight:600}}>* Every band pays in one payment, the 20th of the month after the client's first program payment clears.</div>
       </Card>
 
       {/* Revenue Model Simulator */}
@@ -1236,26 +1229,24 @@ function LegacyCapitalTab(){
         </PolicySection>
 
         <PolicySection heading="Commission Structure — Flat Rates by Band">
-          Legacy Capital Services commissions are <strong>flat dollar amounts</strong> based on the client's total enrolled debt band. For Band L1, the full commission is paid at Payment 2. For Bands L2–L7, commissions are split across two payment milestones.
+          Legacy Capital Services commissions are <strong>flat dollar amounts</strong> based on the client's total enrolled debt band. Every band is paid in one payment after the client's first program payment clears.
           <PolicyTable
-            headers={["Band","Debt Range","Paid at Payment 2","Paid at Payment 4","Your Total"]}
-            rows={LC_BANDS.map(b=>[b.label,b.range,fmt(b.p2),b.p4>0?fmt(b.p4):"—",fmt(b.total)])}
+            headers={["Band","Debt Range","Your Commission"]}
+            rows={LC_BANDS.map(b=>[b.label,b.range,fmt(b.total)])}
           />
-          <div style={{fontSize:13,color:"#64748b",marginTop:8,fontWeight:600}}>* Band L1 ($6,000–$9,999): $150 flat, paid in full at Payment 2. No second payout.</div>
         </PolicySection>
 
         <PolicySection heading="When You Get Paid — Payout Timing">
           <AlertBox color={LC} bg="#ecfeff">
-            <strong>Payment 2 Payout:</strong> Paid on the <strong>20th of Month 3</strong> after the client's 2nd successful monthly payment clears.<br/><br/>
-            <strong>Payment 4 Payout (Bands L2–L7 only):</strong> Paid on the <strong>20th of Month 5</strong> after the client's 4th successful monthly payment clears.<br/><br/>
-            <strong>Example (Band L4 — $22,000 deal):</strong> Enrolled January 1. Payment 2 clears March 1 → <strong>$250 paid March 20</strong>. Payment 4 clears May 1 → <strong>$100 paid May 20</strong>. Total: $350.
+            The full commission is paid on the <strong>20th of the month after the client's first program payment clears</strong>, once Legacy Capital Services has paid Funding Tier on that week's cleared cohort. On a twice-a-month plan both drafts for the first month must clear.<br/><br/>
+            <strong>Example (Band L4 — $22,000 deal):</strong> Enrolled January 1. First payment clears January 7 → <strong>$350 paid February 20</strong>.<br/><br/>
+            Track every deal on <a href="/agent-tools/my-pay">My Deals &amp; Pay</a>.
           </AlertBox>
         </PolicySection>
 
         <PolicySection heading="Chargebacks and Clawbacks">
           <AlertBox color={RED} bg="#fef2f2">
-            <strong>Band L1:</strong> Single payout at Payment 2. If Payment 2 never clears, no commission is issued. No clawback.<br/><br/>
-            <strong>Bands L2–L7:</strong> If a client cancels before Payment 4 clears and you have already received the Payment 2 payout, that commission is subject to clawback.<br/><br/>
+            Once the first program payment has cleared and you have been paid, an ordinary cancellation does not take the commission back.<br/><br/>
             <strong>NSF / Returned Payments:</strong> A returned payment does not count as cleared. Commission milestones are not met until valid, cleared payments are confirmed.
           </AlertBox>
         </PolicySection>
