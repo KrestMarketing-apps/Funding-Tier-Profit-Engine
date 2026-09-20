@@ -137,18 +137,20 @@ export async function fetchAgents(cfg: GhlConfig): Promise<Agent[]> {
 
 // ── Conversations → calls + message activity ─────────────────────────────────
 
-interface Walked<T> { items: T[]; pages: number; }
+interface Walked<T> { items: T[]; pages: number; trace: string[]; sampleKeys: string[]; }
 
 /**
  * Conversations touched inside the window. GHL's search returns the most
- * recently updated first, so the walk stops as soon as a page falls entirely
- * before `since`.
+ * recently messaged first, so the walk stops once a page ends before `since`.
+ * A page whose last conversation has no readable date does NOT stop the walk
+ * (the first live sync stopped after one page that way).
  */
-async function walkConversations(cfg: GhlConfig, since: Date, maxPages = 40): Promise<Walked<any>> {
+async function walkConversations(cfg: GhlConfig, since: Date, maxPages = 60): Promise<Walked<any>> {
   const items: any[] = [];
+  const trace: string[] = [];
+  let sampleKeys: string[] = [];
   let page = 0;
   let startAfterDate: number | undefined;
-  let startAfterId: string | undefined;
 
   while (page < maxPages) {
     const data = await ghlFetch<any>(cfg, '/conversations/search', {
@@ -158,22 +160,28 @@ async function walkConversations(cfg: GhlConfig, since: Date, maxPages = 40): Pr
         sortBy: 'last_message_date',
         sort: 'desc',
         startAfterDate,
-        startAfterId,
       },
     });
     const batch: any[] = data?.conversations ?? data?.data ?? [];
+    if (page === 0 && batch[0]) sampleKeys = Object.keys(batch[0]).slice(0, 40);
     if (batch.length === 0) break;
     items.push(...batch);
     page += 1;
 
-    const last = batch[batch.length - 1];
-    const lastAt = new Date(toIso(pick(last, 'lastMessageDate', 'dateUpdated', 'dateAdded')) ?? 0);
-    if (lastAt.getTime() < since.getTime()) break;
-    startAfterDate = lastAt.getTime();
-    startAfterId = String(pick(last, 'id', '_id') ?? '');
-    if (!startAfterId) break;
+    const dateOf = (c: any) => {
+      const v = pick(c, 'lastMessageDate', 'last_message_date', 'lastManualMessageDate', 'dateUpdated', 'updatedAt', 'dateAdded');
+      const iso = toIso(typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v);
+      return iso ? new Date(iso).getTime() : null;
+    };
+    const first = dateOf(batch[0]);
+    const lastAt = dateOf(batch[batch.length - 1]);
+    if (trace.length < 8) trace.push(`p${page}: ${batch.length} convs, ${first ? new Date(first).toISOString() : '?'} → ${lastAt ? new Date(lastAt).toISOString() : '?'}${data?.total != null ? `, total ${data.total}` : ''}`);
+    if (batch.length < 100) break;
+    if (lastAt === null) break;             // cannot page without a date cursor
+    if (lastAt < since.getTime()) break;
+    startAfterDate = lastAt;
   }
-  return { items, pages: page };
+  return { items, pages: page, trace, sampleKeys };
 }
 
 const CALL_TYPES = new Set(['TYPE_CALL', 'CALL', 'TYPE_PHONE', 'VOICEMAIL', 'TYPE_VOICEMAIL']);
@@ -205,12 +213,12 @@ function normaliseCall(cfg: GhlConfig, m: any, conversation: any): CallRecord | 
 
 export async function fetchCallsAndActivity(cfg: GhlConfig, since: Date): Promise<{
   calls: CallRecord[]; events: ActivityEvent[]; conversations: number;
-  diag: { conversations: number; messagesRead: number; messageErrors: string[]; types: Record<string, number> };
+  diag: { conversations: number; messagesRead: number; messageErrors: string[]; types: Record<string, number>; newestMessage: string | null; pages: string[]; conversationKeys: string[] };
 }> {
-  const { items: conversations } = await walkConversations(cfg, since);
+  const { items: conversations, trace, sampleKeys } = await walkConversations(cfg, since);
   const calls: CallRecord[] = [];
   const events: ActivityEvent[] = [];
-  const diag = { conversations: conversations.length, messagesRead: 0, messageErrors: [] as string[], types: {} as Record<string, number> };
+  const diag = { conversations: conversations.length, messagesRead: 0, messageErrors: [] as string[], types: {} as Record<string, number>, newestMessage: null as string | null, pages: trace, conversationKeys: sampleKeys };
 
   for (const c of conversations) {
     const convId = String(pick(c, 'id', '_id') ?? '');
@@ -230,6 +238,7 @@ export async function fetchCallsAndActivity(cfg: GhlConfig, since: Date): Promis
 
     for (const m of messages) {
       const at = toIso(pick(m, 'dateAdded', 'dateUpdated', 'createdAt'));
+      if (at && (!diag.newestMessage || at > diag.newestMessage)) diag.newestMessage = at;
       if (!at || new Date(at) < since) continue;
       const type = String(pick(m, 'messageType', 'type') ?? '').toUpperCase();
       diag.types[type || '(none)'] = (diag.types[type || '(none)'] ?? 0) + 1;
