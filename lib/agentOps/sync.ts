@@ -90,7 +90,7 @@ export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCou
       allEnrollments.push(...enrollments);
       allEvents.push(...oppEvents);
     } catch (e: any) {
-      errors.push(`${cfg.locationId}: ${e?.message ?? String(e)}`);
+      errors.push(`${cfg.locationId}: ${e?.message ?? String(e)}${e?.body ? ` — ${String(e.body).slice(0, 300)}` : ''}`);
     }
   }
 
