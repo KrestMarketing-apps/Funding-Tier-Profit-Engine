@@ -31,8 +31,10 @@ const EDITABLE: Record<string, { table: string; idColumn: string; fields: Record
     table: 'ao_enrollments',
     idColumn: 'id',
     fields: {
+      closer_agent_id: 'text',
       agent_id: 'text',
       backend: 'text',
+      backend_file_ref: 'text',
       status: 'text',
       enrolled_debt: 'number',
       client_phone: 'text',
@@ -90,6 +92,12 @@ export async function applyOverride(input: OverrideInput): Promise<OverrideRecor
       ? [input.entityId, input.newValue, input.day]
       : [input.entityId, input.newValue],
   );
+
+  // A hand-set closer must survive every later sync — mark it as an override
+  // so the sync's credit-freezing rule leaves it alone.
+  if (input.entity === 'enrollment' && input.field === 'closer_agent_id') {
+    await query(`update ao_enrollments set closer_source = 'override' where id = $1`, [input.entityId]);
+  }
 
   const rows = await query<any>(
     `insert into ao_overrides (entity, entity_id, field, old_value, new_value, reason, admin_email)

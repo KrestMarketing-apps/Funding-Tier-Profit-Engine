@@ -1,4 +1,5 @@
-import type { BackendFile, Enrollment, MatchStatus, ReconMatch } from './types';
+import type { Agent, BackendFile, Enrollment, MatchStatus, ReconMatch } from './types';
+import { BACKEND_LABEL } from './types';
 
 /**
  * Reconciliation — the rep's claim against the backend's record.
@@ -10,11 +11,13 @@ import type { BackendFile, Enrollment, MatchStatus, ReconMatch } from './types';
  *   matched              both agree
  *   amount_mismatch      matched, but enrolled debt differs beyond tolerance
  *   status_mismatch      backend says cancelled / refunded; GHL still says won
+ *   rep_mismatch         the backend's rep column names a different agent
  *   missing_at_backend   the rep is credited with a deal the backend never got
  *   unclaimed_at_backend the backend paid on a file no rep is credited with
  *
- * Matching is deliberately conservative: a phone number is a strong key, a
- * name is not. Anything below the confidence floor is left unmatched and
+ * Matching is deliberately conservative: the backend file id (when entered on
+ * the deal) and the phone number are strong keys; a name is not, and only
+ * counts alongside a second agreeing fact. Anything below the confidence floor is left unmatched and
  * surfaces for a human rather than being quietly paired.
  */
 
@@ -25,6 +28,7 @@ const CANCELLED = /cancel|refund|chargeback|void|nsf|withdraw/i;
 const WON = /won|enrolled|active|funded/i;
 
 const digits = (v: string | null | undefined) => (v ?? '').replace(/\D/g, '').slice(-10) || '';
+
 
 /** "Robert J. Smith Jr." → "robert smith" — enough to compare, not to trust alone. */
 function nameKey(v: string | null | undefined): string {
@@ -42,6 +46,8 @@ function nameKey(v: string | null | undefined): string {
 export interface ReconInput {
   enrollments: Enrollment[];
   files: BackendFile[];
+  /** Used to read a backend's rep column back to one of our agents. */
+  agents?: Agent[];
 }
 
 export interface ReconRow extends Omit<ReconMatch, 'id'> {
@@ -51,38 +57,90 @@ export interface ReconRow extends Omit<ReconMatch, 'id'> {
   explanation: string;
 }
 
-export function reconcile({ enrollments, files }: ReconInput): ReconRow[] {
+/** The rep who gets credit: the frozen closer, else the current owner. */
+export const creditedAgent = (e: Enrollment | null | undefined): string | null =>
+  (e ? e.closerId ?? e.agentId : null);
+
+/** Enrolled date proximity allowed for a name-only match, in days. */
+const NAME_DATE_WINDOW_DAYS = Number(process.env.AO_NAME_DATE_WINDOW_DAYS || 45);
+
+const dayGap = (a: string | null, b: string | null): number | null => {
+  if (!a || !b) return null;
+  const d = Math.abs(new Date(a).getTime() - new Date(b).getTime()) / 86400_000;
+  return Number.isFinite(d) ? d : null;
+};
+
+/**
+ * A backend's rep column only counts if it names one of our agents. Backends
+ * put the file owner or a desk label there ("Forth Team", "Unassigned",
+ * "Member Servces", "agent 104") far more often than the closer, and a label
+ * that names nobody is not evidence of anything.
+ */
+function repToAgent(repName: string | null, agents: Agent[]): Agent | null {
+  if (!repName) return null;
+  // Vendor desks tag their reps: "Alexia Mcallister-Foggy", "Michael Germino-foggy1".
+  const variants = [repName, repName.replace(/\s*[-–]\s*[A-Za-z]+\d*\s*$/, '')];
+  for (const v of variants) {
+    const key = nameKey(v);
+    if (!key || !key.includes(' ')) continue;
+    const hit = agents.find((a) => nameKey(a.name) === key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+export function reconcile({ enrollments: all, files, agents = [] }: ReconInput): ReconRow[] {
   const rows: ReconRow[] = [];
   const usedFiles = new Set<number>();
+  // Only deals that reached an enrolled stage are reconciled. Pitched and
+  // in-progress opportunities have no backend file yet by definition.
+  const enrollments = all.filter((e) => e.isEnrolled);
 
   const byPhone = new Map<string, BackendFile[]>();
   const byName = new Map<string, BackendFile[]>();
-  const byExternal = new Map<string, BackendFile>();
+  const byExternal = new Map<string, BackendFile[]>();
+  const push = (m: Map<string, BackendFile[]>, k: string, f: BackendFile) =>
+    (m.get(k) ?? m.set(k, []).get(k)!).push(f);
 
   for (const f of files) {
     const p = digits(f.clientPhone);
-    if (p) (byPhone.get(p) ?? byPhone.set(p, []).get(p)!).push(f);
+    if (p) push(byPhone, p, f);
     const n = nameKey(f.clientName);
-    if (n) (byName.get(n) ?? byName.set(n, []).get(n)!).push(f);
-    if (f.externalId) byExternal.set(f.externalId, f);
+    if (n) push(byName, n, f);
+    if (f.externalId) push(byExternal, f.externalId.trim().toLowerCase(), f);
   }
+
+  const sameBackend = (e: Enrollment) => (f: BackendFile) => f.backend === e.backend || e.backend === 'UNKNOWN';
+  const matchedBy = new Map<string, { enrollment: Enrollment; phone: string; name: string }>();
 
   for (const e of enrollments) {
     const candidates: Array<{ file: BackendFile; method: ReconMatch['method']; confidence: number }> = [];
+    const fits = sameBackend(e);
 
+    // 1. The backend's own file id, entered on the deal in GHL. Definitive.
+    if (e.backendFileRef) {
+      (byExternal.get(e.backendFileRef.trim().toLowerCase()) ?? []).filter(fits)
+        .forEach((f) => candidates.push({ file: f, method: 'file_ref', confidence: 0.99 }));
+    }
+
+    // 2. Phone number.
     const p = digits(e.clientPhone);
-    if (p) (byPhone.get(p) ?? []).filter((f) => f.backend === e.backend || e.backend === 'UNKNOWN')
-      .forEach((f) => candidates.push({ file: f, method: 'phone', confidence: 0.95 }));
+    if (candidates.length === 0 && p) {
+      (byPhone.get(p) ?? []).filter(fits)
+        .forEach((f) => candidates.push({ file: f, method: 'phone', confidence: 0.95 }));
+    }
 
+    // 3. Name, only with a second fact agreeing — the enrolled debt, or the
+    //    enrollment date. A name alone is never enough to pay someone on.
     if (candidates.length === 0) {
       const n = nameKey(e.clientName);
-      const sameName = (byName.get(n) ?? []).filter((f) => f.backend === e.backend || e.backend === 'UNKNOWN');
-      for (const f of sameName) {
-        const last4 = (f.clientLast4 ?? '').slice(-4);
-        const phoneLast4 = p.slice(-4);
-        if (last4 && phoneLast4 && last4 === phoneLast4) {
-          candidates.push({ file: f, method: 'last4_name', confidence: 0.85 });
-        } else if (e.enrolledDebt && f.enrolledDebt && withinTolerance(e.enrolledDebt, f.enrolledDebt)) {
+      for (const f of (byName.get(n) ?? []).filter(fits)) {
+        if (e.enrolledDebt && f.enrolledDebt && withinTolerance(e.enrolledDebt, f.enrolledDebt)) {
+          candidates.push({ file: f, method: 'name_debt', confidence: 0.8 });
+          continue;
+        }
+        const gap = dayGap(e.firstEnrolledAt ?? e.enrolledAt, f.enrolledAt ?? f.firstPaymentAt);
+        if (gap !== null && gap <= NAME_DATE_WINDOW_DAYS) {
           candidates.push({ file: f, method: 'name_debt', confidence: 0.7 });
         }
       }
@@ -96,35 +154,37 @@ export function reconcile({ enrollments, files }: ReconInput): ReconRow[] {
         enrollmentId: e.id, backendFileId: null, status: 'missing_at_backend',
         method: null, confidence: 0, deltaAmount: null,
         enrollment: e, file: null,
-        explanation: `Credited to the rep in GoHighLevel, but no ${e.backend === 'UNKNOWN' ? 'backend' : e.backend} file matches this client.`,
+        explanation: `Credited to the rep in GoHighLevel, but no ${e.backend === 'UNKNOWN' ? 'backend' : BACKEND_LABEL[e.backend]} file matches this client.`
+          + (e.backend === 'UNKNOWN' ? ' The deal has no backend set, so every backend was searched.' : ''),
       });
       continue;
     }
 
     usedFiles.add(best.file.id);
-    const delta = e.enrolledDebt != null && best.file.enrolledDebt != null
-      ? Number((best.file.enrolledDebt - e.enrolledDebt).toFixed(2))
-      : null;
-
-    let status: MatchStatus = 'matched';
-    let explanation = 'GoHighLevel and the backend agree on this file.';
-
-    if (CANCELLED.test(best.file.fileStatus ?? '') && WON.test(e.status ?? e.stage ?? '')) {
-      status = 'status_mismatch';
-      explanation = `Backend reports "${best.file.fileStatus}" while GoHighLevel still shows ${e.status ?? e.stage}.`;
-    } else if (delta != null && !withinTolerance(e.enrolledDebt!, best.file.enrolledDebt!)) {
-      status = 'amount_mismatch';
-      explanation = `Enrolled debt differs by ${delta >= 0 ? '+' : ''}${delta.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}.`;
-    }
-
-    rows.push({
-      enrollmentId: e.id, backendFileId: best.file.id, status,
-      method: best.method, confidence: best.confidence, deltaAmount: delta,
-      enrollment: e, file: best.file, explanation,
-    });
+    matchedBy.set(String(best.file.id), { enrollment: e, phone: p ?? '', name: nameKey(e.clientName) });
+    rows.push(judge(e, best.file, best.method, best.confidence, agents));
   }
 
-  // Files the backend paid on that nobody is credited with. These are the
+  // Extra files for a client who is already matched. ELP cancels and
+  // re-enrolls after an NSF, and Shield has been seen to duplicate a member,
+  // so one GHL deal can legitimately own several backend files. They are
+  // attached to the same deal, never shown as "nobody credited".
+  const matchedList = Array.from(matchedBy.values());
+  for (const f of files) {
+    if (usedFiles.has(f.id)) continue;
+    const fp = digits(f.clientPhone);
+    const fn = nameKey(f.clientName);
+    const owner = matchedList.find((m) => sameBackend(m.enrollment)(f)
+      && ((fp && m.phone && fp === m.phone) || (fn && m.name && fn === m.name
+        && (m.enrollment.backend === 'LEGACY' || f.backend === 'LEGACY'))));
+    if (!owner) continue;
+    usedFiles.add(f.id);
+    const row = judge(owner.enrollment, f, 'reenrollment', 0.9, agents);
+    row.explanation = `Additional ${BACKEND_LABEL[f.backend]} file for the same client (re-enrollment). ${row.explanation}`;
+    rows.push(row);
+  }
+
+  // Files the backend has that nobody is credited with. These are the
   // expensive ones: revenue with no rep attached, or a rep who never logged it.
   for (const f of files) {
     if (usedFiles.has(f.id)) continue;
@@ -132,11 +192,47 @@ export function reconcile({ enrollments, files }: ReconInput): ReconRow[] {
       enrollmentId: null, backendFileId: f.id, status: 'unclaimed_at_backend',
       method: null, confidence: 0, deltaAmount: null,
       enrollment: null, file: f,
-      explanation: 'The backend has this file, but no GoHighLevel enrollment matches it — nobody is credited.',
+      explanation: 'The backend has this file, but no enrolled GoHighLevel deal matches it — nobody is credited.'
+        + (f.repName ? ` The backend lists "${f.repName}" on it.` : ''),
     });
   }
 
   return rows;
+}
+
+function judge(
+  e: Enrollment, file: BackendFile, method: ReconMatch['method'], confidence: number, agents: Agent[],
+): ReconRow {
+  const delta = e.enrolledDebt != null && file.enrolledDebt != null
+    ? Number((file.enrolledDebt - e.enrolledDebt).toFixed(2))
+    : null;
+
+  let status: MatchStatus = 'matched';
+  let explanation = 'GoHighLevel and the backend agree on this file.';
+  const backendRep = repToAgent(file.repName, agents);
+  const credited = creditedAgent(e);
+
+  if (CANCELLED.test(file.fileStatus ?? '') && WON.test(e.status ?? e.stage ?? '')) {
+    status = 'status_mismatch';
+    explanation = `Backend reports "${file.fileStatus}" while GoHighLevel still shows ${e.status ?? e.stage}.`;
+  } else if (backendRep && credited && backendRep.id !== credited) {
+    const creditedName = agents.find((a) => a.id === credited)?.name ?? credited;
+    status = 'rep_mismatch';
+    explanation = `The backend has ${backendRep.name} on this file; GoHighLevel credits ${creditedName}.`;
+  } else if (delta != null && !withinTolerance(e.enrolledDebt!, file.enrolledDebt!)) {
+    status = 'amount_mismatch';
+    explanation = `Enrolled debt differs by ${delta >= 0 ? '+' : ''}${delta.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}.`;
+  }
+  if (method === 'name_debt' && status === 'matched') {
+    explanation = 'Matched on client name plus debt or enrollment date — no phone or file id to confirm it.';
+  }
+  if (e.closerSource === 'backfill') explanation += ' Rep credit is the owner at first sync, not a stamped closer.';
+
+  return {
+    enrollmentId: e.id, backendFileId: file.id, status,
+    method, confidence, deltaAmount: delta,
+    enrollment: e, file, explanation,
+  };
 }
 
 function withinTolerance(a: number, b: number): boolean {
@@ -154,9 +250,10 @@ export function reconSummary(rows: ReconRow[]) {
     matched: count('matched'),
     amountMismatch: count('amount_mismatch'),
     statusMismatch: count('status_mismatch'),
+    repMismatch: count('rep_mismatch'),
     missingAtBackend: count('missing_at_backend'),
     unclaimedAtBackend: count('unclaimed_at_backend'),
-    confirmedPayout: money('matched') + money('amount_mismatch'),
+    confirmedPayout: money('matched') + money('amount_mismatch') + money('rep_mismatch'),
     unclaimedPayout: money('unclaimed_at_backend'),
   };
 }

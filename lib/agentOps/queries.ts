@@ -40,8 +40,12 @@ export async function loadDashboard(period: Period): Promise<DashboardData> {
         [period.from, period.to],
       ),
       query<any>(
-        `select * from ao_enrollments where enrolled_at >= $1 and enrolled_at < ($2::date + 1)
-         order by enrolled_at desc`,
+        // Enrolled deals only, dated by when they entered the enrolled stage.
+        `select * from ao_enrollments
+          where is_enrolled
+            and coalesce(first_enrolled_at, enrolled_at) >= $1
+            and coalesce(first_enrolled_at, enrolled_at) < ($2::date + 1)
+          order by coalesce(first_enrolled_at, enrolled_at) desc`,
         [period.from, period.to],
       ),
       query<any>(
@@ -62,7 +66,7 @@ export async function loadDashboard(period: Period): Promise<DashboardData> {
   const calls = callRows.map(toCall);
   const enrollments = enrollmentRows.map(toEnrollment);
   const files = fileRows.map(toFile);
-  const recon = reconcile({ enrollments, files });
+  const recon = reconcile({ enrollments, files, agents });
 
   const overrideFlags: Record<string, number> = {};
   overrideRows.forEach((r: any) => { overrideFlags[`${r.entity}|${r.entity_id}`] = r.n; });
@@ -136,6 +140,11 @@ function toCall(r: any): CallRecord {
 function toEnrollment(r: any): Enrollment {
   return {
     id: r.id, locationId: r.location_id, agentId: r.agent_id, contactId: r.contact_id,
+    closerId: r.closer_agent_id ?? null,
+    closerSource: r.closer_source ?? null,
+    isEnrolled: r.is_enrolled === true,
+    firstEnrolledAt: r.first_enrolled_at ? new Date(r.first_enrolled_at).toISOString() : null,
+    backendFileRef: r.backend_file_ref ?? null,
     clientName: r.client_name, clientPhone: r.client_phone, clientEmail: r.client_email,
     backend: (r.backend ?? 'UNKNOWN') as BackendKey,
     pipeline: r.pipeline, stage: r.stage, status: r.status,
@@ -149,7 +158,9 @@ function toFile(r: any): BackendFile {
   return {
     id: Number(r.id), backend: (r.backend ?? 'UNKNOWN') as BackendKey, externalId: r.external_id,
     clientName: r.client_name, clientPhone: r.client_phone, clientLast4: r.client_last4,
+    repName: r.rep_name ?? null,
     fileStatus: r.file_status, enrolledDebt: num(r.enrolled_debt),
+    enrolledAt: r.enrolled_at ? String(r.enrolled_at instanceof Date ? r.enrolled_at.toISOString() : r.enrolled_at).slice(0, 10) : null,
     firstPaymentAt: r.first_payment_at ? String(r.first_payment_at).slice(0, 10) : null,
     payoutAmount: num(r.payout_amount),
     payoutAt: r.payout_at ? String(r.payout_at).slice(0, 10) : null,

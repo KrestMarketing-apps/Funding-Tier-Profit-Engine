@@ -97,6 +97,15 @@ const DDL: string[] = [
      raw jsonb
    )`,
   `create index if not exists ao_enrollments_agent on ao_enrollments (agent_id, enrolled_at)`,
+  // Credit and enrollment state. Added after launch, hence ALTER rather than
+  // the CREATE above — both are idempotent. closer_agent_id is written once
+  // and then kept by the sync (see sync.ts), which is the whole point of it.
+  `alter table ao_enrollments add column if not exists closer_agent_id text`,
+  `alter table ao_enrollments add column if not exists closer_source text`,
+  `alter table ao_enrollments add column if not exists is_enrolled boolean not null default false`,
+  `alter table ao_enrollments add column if not exists first_enrolled_at timestamptz`,
+  `alter table ao_enrollments add column if not exists backend_file_ref text`,
+  `create index if not exists ao_enrollments_closer on ao_enrollments (closer_agent_id, first_enrolled_at)`,
 
   `create table if not exists ao_import_batches (
      id bigserial primary key,
@@ -129,6 +138,8 @@ const DDL: string[] = [
      raw jsonb,
      imported_at timestamptz not null default now()
    )`,
+  `alter table ao_backend_files add column if not exists rep_name text`,
+  `alter table ao_backend_files add column if not exists enrolled_at date`,
   `create unique index if not exists ao_backend_files_key
      on ao_backend_files (backend, coalesce(external_id, ''), coalesce(client_phone, ''), coalesce(client_name, ''))`,
 

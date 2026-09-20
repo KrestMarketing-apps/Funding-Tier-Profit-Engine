@@ -119,6 +119,9 @@ export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh
                   {(result.errors ?? []).map((e: string, i: number) => (
                     <Callout key={i} tone="warn">{e}</Callout>
                   ))}
+                  {(result.warnings ?? []).map((w: string, i: number) => (
+                    <div key={`w${i}`} style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>• {w}</div>
+                  ))}
                   {result.sample?.length > 0 && (
                     <pre style={pre}>{JSON.stringify(result.sample, null, 2)}</pre>
                   )}

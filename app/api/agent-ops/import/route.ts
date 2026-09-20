@@ -55,8 +55,8 @@ export async function POST(req: NextRequest) {
     await query(
       `insert into ao_backend_files
         (backend, external_id, client_name, client_phone, client_last4, file_status, enrolled_debt,
-         first_payment_at, payout_amount, payout_at, period, batch_id)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         first_payment_at, payout_amount, payout_at, period, batch_id, rep_name, enrolled_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        on conflict (backend, coalesce(external_id, ''), coalesce(client_phone, ''), coalesce(client_name, ''))
        do update set file_status = excluded.file_status,
                      enrolled_debt = excluded.enrolled_debt,
@@ -64,10 +64,12 @@ export async function POST(req: NextRequest) {
                      payout_amount = excluded.payout_amount,
                      payout_at = excluded.payout_at,
                      period = excluded.period,
+                     rep_name = coalesce(excluded.rep_name, ao_backend_files.rep_name),
+                     enrolled_at = coalesce(excluded.enrolled_at, ao_backend_files.enrolled_at),
                      batch_id = excluded.batch_id,
                      imported_at = now()`,
       [r.backend, r.externalId, r.clientName, r.clientPhone, r.clientLast4, r.fileStatus, r.enrolledDebt,
-        r.firstPaymentAt, r.payoutAmount, r.payoutAt, r.period, batchId],
+        r.firstPaymentAt, r.payoutAmount, r.payoutAt, r.period, batchId, r.repName, r.enrolledAt],
     );
     imported += 1;
   }
@@ -85,6 +87,9 @@ function summary(parsed: ReturnType<typeof parseBackendReport>) {
     ignoredColumns: parsed.unmapped,
     missingColumns: parsed.missing,
     errors: parsed.errors,
+    warnings: parsed.warnings,
+    otherAffiliateRows: parsed.otherAffiliate,
+    collapsedRows: parsed.collapsed,
     sample: parsed.rows.slice(0, 3),
   };
 }
