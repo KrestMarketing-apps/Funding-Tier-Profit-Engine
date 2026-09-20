@@ -57,10 +57,32 @@ export interface CallRecord {
   recordingUrl: string | null;
 }
 
+/**
+ * Where the rep credit on a deal came from, strongest first:
+ *   ghl_field  the Closer field on the opportunity, set explicitly
+ *   stamped    the opportunity owner at the moment the deal was first seen in
+ *              an enrolled stage — frozen from then on, so a later reassignment
+ *              (welcome call, retention) does not move the credit
+ *   backfill   the owner when the deal was already past enrollment on the
+ *              first sync that saw it — a best guess, shown as such
+ *   override   an admin set it, and the edit is in the override log
+ */
+export type CloserSource = 'ghl_field' | 'stamped' | 'backfill' | 'override';
+
 export interface Enrollment {
   id: string;                 // GHL opportunityId
   locationId: string;
+  /** Current opportunity owner. NOT the rep who gets credit — see closerId. */
   agentId: string | null;
+  /** The rep credited with the deal. Falls back to agentId only when unset. */
+  closerId: string | null;
+  closerSource: CloserSource | null;
+  /** True once the deal has ever been in an enrolled (or post-enrollment) stage. */
+  isEnrolled: boolean;
+  /** When the deal entered an enrolled stage, as far as GHL tells us. */
+  firstEnrolledAt: string | null;
+  /** The backend's own file / account id, when someone has entered it in GHL. */
+  backendFileRef: string | null;
   contactId: string | null;
   clientName: string | null;
   clientPhone: string | null;
@@ -82,8 +104,12 @@ export interface BackendFile {
   clientName: string | null;
   clientPhone: string | null;
   clientLast4: string | null;
+  /** The sales rep / agent the backend has on the file, if its report says. */
+  repName: string | null;
   fileStatus: string | null;  // funded | active | pending | cancelled | refunded | chargeback
   enrolledDebt: number | null;
+  /** The backend's enrollment date for the file, when its report carries one. */
+  enrolledAt: string | null;
   firstPaymentAt: string | null;
   payoutAmount: number | null;
   payoutAt: string | null;
@@ -95,6 +121,7 @@ export type MatchStatus =
   | 'matched'                 // GHL enrollment and backend file agree
   | 'amount_mismatch'         // matched, but enrolled debt or payout differs
   | 'status_mismatch'         // backend says cancelled/refunded, GHL says won
+  | 'rep_mismatch'            // matched, but the backend names a different rep
   | 'missing_at_backend'      // rep claims it; the backend has no such file
   | 'unclaimed_at_backend';   // backend paid for a file no rep is credited with
 
@@ -103,7 +130,7 @@ export interface ReconMatch {
   enrollmentId: string | null;
   backendFileId: number | null;
   status: MatchStatus;
-  method: 'phone' | 'last4_name' | 'name_debt' | 'external_id' | 'manual' | null;
+  method: 'file_ref' | 'phone' | 'name_debt' | 'reenrollment' | 'external_id' | 'manual' | null;
   confidence: number;
   deltaAmount: number | null;
 }
@@ -175,6 +202,7 @@ export interface ReconTotals {
   matched: number;
   amountMismatch: number;
   statusMismatch: number;
+  repMismatch: number;
   missingAtBackend: number;
   unclaimedAtBackend: number;
   confirmedPayout: number;

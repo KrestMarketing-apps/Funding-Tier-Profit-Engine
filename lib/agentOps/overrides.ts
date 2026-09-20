@@ -25,14 +25,21 @@ const EDITABLE: Record<string, { table: string; idColumn: string; fields: Record
       first_payment_at: 'date',
       client_name: 'text',
       client_phone: 'text',
+      // Closer pay inputs: when the backend paid Funding Tier (payout_at),
+      // the file's plan type, and when it cancelled.
+      declared_schedule: 'text',
+      cancelled_at: 'date',
     },
   },
   enrollment: {
     table: 'ao_enrollments',
     idColumn: 'id',
     fields: {
+      closer_agent_id: 'text',
       agent_id: 'text',
       backend: 'text',
+      backend_file_ref: 'text',
+      commission_override: 'number',
       status: 'text',
       enrolled_debt: 'number',
       client_phone: 'text',
@@ -49,6 +56,7 @@ const EDITABLE: Record<string, { table: string; idColumn: string; fields: Record
     fields: {
       role: 'text', employment_type: 'text', team: 'text',
       hourly_rate: 'number', scheduled_hours_per_week: 'number', active: 'text',
+      pay_plan: 'text', separated_at: 'date', separation_type: 'text',
     },
   },
 };
@@ -70,6 +78,15 @@ export async function applyOverride(input: OverrideInput): Promise<OverrideRecor
   const kind = spec.fields[input.field];
   if (!kind) throw new Error(`"${input.field}" is not an overridable field on ${input.entity}.`);
   if (!input.reason?.trim()) throw new Error('An override needs a reason — it goes on the record.');
+  const ALLOWED_VALUES: Record<string, string[]> = {
+    declared_schedule: ['standard', 'split'],
+    separation_type: ['for_cause', 'performance'],
+    pay_plan: ['us_commission', 'hourly', 'bpo', 'none'],
+  };
+  if (ALLOWED_VALUES[input.field] && input.newValue != null && input.newValue !== ''
+    && !ALLOWED_VALUES[input.field].includes(input.newValue)) {
+    throw new Error(`${input.field} must be one of: ${ALLOWED_VALUES[input.field].join(', ')}.`);
+  }
 
   const where = input.entity === 'attendance_day'
     ? `${spec.idColumn} = $1 and day = $3`
@@ -90,6 +107,12 @@ export async function applyOverride(input: OverrideInput): Promise<OverrideRecor
       ? [input.entityId, input.newValue, input.day]
       : [input.entityId, input.newValue],
   );
+
+  // A hand-set closer must survive every later sync — mark it as an override
+  // so the sync's credit-freezing rule leaves it alone.
+  if (input.entity === 'enrollment' && input.field === 'closer_agent_id') {
+    await query(`update ao_enrollments set closer_source = 'override' where id = $1`, [input.entityId]);
+  }
 
   const rows = await query<any>(
     `insert into ao_overrides (entity, entity_id, field, old_value, new_value, reason, admin_email)

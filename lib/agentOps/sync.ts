@@ -1,6 +1,7 @@
 import { query } from './db';
 import { fetchAgents, fetchCallsAndActivity, fetchEnrollments, ghlConfigs, type GhlConfig } from './ghl';
 import { buildAttendance, localDay } from './attendance';
+import { recomputeCloserPay } from './closerPayJob';
 import type { ActivityEvent, CallRecord, Enrollment, SyncCounts } from './types';
 
 /**
@@ -29,8 +30,10 @@ async function upsert(
       const placeholders = row.map((v) => { params.push(v); return `$${params.length}`; });
       return `(${placeholders.join(',')})`;
     }).join(',');
+    // An entry containing "=" is a raw assignment (for columns that must not be
+    // blindly overwritten); anything else is copied from the incoming row.
     const setClause = updateColumns.length
-      ? `do update set ${updateColumns.map((c) => `${c} = excluded.${c}`).join(', ')}`
+      ? `do update set ${updateColumns.map((c) => (c.includes('=') ? c : `${c} = excluded.${c}`)).join(', ')}`
       : 'do nothing';
     await query(
       `insert into ${table} (${columns.join(',')}) values ${values} on conflict ${conflict} ${setClause}`,
@@ -117,16 +120,41 @@ export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCou
     counts.enrollments = await upsert(
       'ao_enrollments',
       ['id', 'location_id', 'agent_id', 'contact_id', 'client_name', 'client_phone', 'client_email',
-        'backend', 'pipeline', 'stage', 'status', 'enrolled_debt', 'enrolled_at', 'updated_at'],
+        'backend', 'pipeline', 'stage', 'status', 'enrolled_debt', 'enrolled_at', 'updated_at',
+        'closer_agent_id', 'closer_source', 'is_enrolled', 'first_enrolled_at', 'backend_file_ref'],
       allEnrollments.map((e) => [e.id, e.locationId, e.agentId, e.contactId, e.clientName, e.clientPhone, e.clientEmail,
-        e.backend, e.pipeline, e.stage, e.status, e.enrolledDebt, e.enrolledAt, e.updatedAt]),
+        e.backend, e.pipeline, e.stage, e.status, e.enrolledDebt, e.enrolledAt, e.updatedAt,
+        e.closerId, e.closerSource, e.isEnrolled, e.firstEnrolledAt, e.backendFileRef]),
       '(id)',
-      ['agent_id', 'client_name', 'client_phone', 'client_email', 'backend', 'pipeline', 'stage', 'status',
-        'enrolled_debt', 'updated_at'],
+      [
+        'agent_id', 'client_name', 'client_phone', 'client_email', 'pipeline', 'stage', 'status',
+        'enrolled_debt', 'updated_at',
+        // A later stage with no backend in its name ("FIRST PAYMENT MADE") must
+        // not erase the backend learned from the enrollment stage.
+        `backend = case when excluded.backend <> 'UNKNOWN' then excluded.backend else ao_enrollments.backend end`,
+        // Once enrolled, always enrolled — a cancelled deal was still a deal.
+        'is_enrolled = ao_enrollments.is_enrolled or excluded.is_enrolled',
+        'first_enrolled_at = coalesce(ao_enrollments.first_enrolled_at, excluded.first_enrolled_at)',
+        'backend_file_ref = coalesce(excluded.backend_file_ref, ao_enrollments.backend_file_ref)',
+        // Credit is frozen at the first stamp. Only an explicit Closer field in
+        // GHL can replace it, and nothing replaces an admin override.
+        `closer_agent_id = case
+           when ao_enrollments.closer_source = 'override' then ao_enrollments.closer_agent_id
+           when excluded.closer_source = 'ghl_field' then excluded.closer_agent_id
+           else coalesce(ao_enrollments.closer_agent_id, excluded.closer_agent_id) end`,
+        `closer_source = case
+           when ao_enrollments.closer_source = 'override' then ao_enrollments.closer_source
+           when excluded.closer_source = 'ghl_field' then excluded.closer_source
+           when ao_enrollments.closer_agent_id is not null then ao_enrollments.closer_source
+           else excluded.closer_source end`,
+      ],
     );
   }
 
   counts.attendanceDays = await rebuildAttendance(since);
+
+  // Credit and stage changes feed closer pay — keep it current on every sync.
+  try { await recomputeCloserPay(); } catch (e: any) { errors.push(`closer pay: ${e?.message ?? String(e)}`); }
 
   await query(
     `update ao_sync_runs set finished_at = now(), ok = $2, counts = $3, error = $4 where id = $1`,
@@ -153,7 +181,10 @@ export async function rebuildAttendance(since: Date): Promise<number> {
     [since.toISOString()],
   );
   const enrollments = await query<any>(
-    `select agent_id, enrolled_at from ao_enrollments where enrolled_at >= $1 and agent_id is not null`,
+    `select coalesce(closer_agent_id, agent_id) as agent_id, coalesce(first_enrolled_at, enrolled_at) as enrolled_at
+       from ao_enrollments
+      where is_enrolled and coalesce(first_enrolled_at, enrolled_at) >= $1
+        and coalesce(closer_agent_id, agent_id) is not null`,
     [since.toISOString()],
   );
   const agents = await query<any>(`select id, scheduled_hours_per_week from ao_agents`);

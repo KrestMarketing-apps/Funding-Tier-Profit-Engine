@@ -1,5 +1,6 @@
 import type { Agent, AttendanceDay, CallRecord, Enrollment, Scorecard } from './types';
 import type { ReconRow } from './recon';
+import { creditedAgent } from './recon';
 
 /**
  * One row per agent: hours on, work done, deals claimed, deals the backend
@@ -9,13 +10,19 @@ export function buildScorecards(d: {
   agents: Agent[]; attendance: AttendanceDay[]; calls: CallRecord[];
   enrollments: Enrollment[]; recon: ReconRow[];
 }): Scorecard[] {
+  // A deal can own several backend files (re-enrollments); the first row is
+  // its primary match and is the one that decides confirmed vs disputed.
   const confirmedByEnrollment = new Map<string, ReconRow>();
-  d.recon.forEach((r) => { if (r.enrollmentId) confirmedByEnrollment.set(r.enrollmentId, r); });
+  d.recon.forEach((r) => {
+    if (r.enrollmentId && !confirmedByEnrollment.has(r.enrollmentId)) confirmedByEnrollment.set(r.enrollmentId, r);
+  });
+  const enrolled = d.enrollments.filter((e) => e.isEnrolled);
 
   return d.agents.map((agent) => {
     const days = d.attendance.filter((a) => a.agentId === agent.id);
     const calls = d.calls.filter((c) => c.agentId === agent.id);
-    const enrollments = d.enrollments.filter((e) => e.agentId === agent.id);
+    // Credit goes to the frozen closer, not whoever owns the deal today.
+    const enrollments = enrolled.filter((e) => creditedAgent(e) === agent.id);
 
     const activeHours = days.reduce((s, x) => s + x.activeMinutes, 0) / 60;
     const scheduledHours = days.reduce((s, x) => s + x.scheduledMinutes, 0) / 60;

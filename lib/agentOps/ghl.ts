@@ -110,7 +110,7 @@ export const digits = (v: any): string | null => {
  */
 export function backendFromText(...parts: (string | null | undefined)[]): BackendKey {
   const hay = parts.filter(Boolean).join(' ').toLowerCase();
-  if (/level|settlement|jkb|forth/.test(hay)) return 'LEVEL';
+  if (/level|settlement|jkb|forth|pinnacle/.test(hay)) return 'LEVEL';
   if (/shield|consumer shield|validation/.test(hay)) return 'CS';
   if (/legacy|elite legal|elp|resolution/.test(hay)) return 'LEGACY';
   return 'UNKNOWN';
@@ -249,11 +249,107 @@ export async function fetchCallsAndActivity(cfg: GhlConfig, since: Date): Promis
 
 // ── Opportunities → enrollments ──────────────────────────────────────────────
 
+// ── Enrollment rules ─────────────────────────────────────────────────────────
+
+/**
+ * Stages that mean "this client enrolled". A deal is credited, and only
+ * reconciled against the backends, once it has been in one of these — every
+ * pitched or in-progress opportunity stays out of the cross-check, where it
+ * would only show up as "not at backend" and bury the real problems.
+ *
+ * Post-enrollment stages (first payment, welcome call, NSF, retention,
+ * cancelled) count too: a deal that has reached them was enrolled first.
+ * Override with AO_ENROLLED_STAGES (comma-separated, exact names, any case).
+ */
+const DEFAULT_ENROLLED_STAGES = [
+  'ENROLLED',
+  'ENROLLED - LEVEL / SETTLEMENT',
+  'ENROLLED - ELP - DEBT WAIVER',
+  'ENROLLED - CONSUMER SHIELD - DEBT VALIDATION',
+  'APPOINTMENT (Enrolled) - WELCOME CALL TRANSFER',
+  'FIRST PAYMENT MADE',
+  'ENROLLED - NSF',
+  'RE-ENROLLMENT NEEDED (DOCS ISSUE)',
+  'ACCOUNT ON HOLD - RETENTION',
+  'CANCELLED',
+  'CANCELLED / CHARGEBACK',
+];
+/** Stage-name patterns that also mean post-enrollment (the WELCOME CALL COMPLETED variants). */
+const ENROLLED_PATTERNS = [/welcome call completed/i];
+
+/** How recent a stage change must be for the current owner to count as the closer. */
+const STAMP_FRESH_MS = Number(process.env.AO_STAMP_FRESH_HOURS || 72) * 3600_000;
+
+const normStage = (v: string | null | undefined) => (v ?? '').toUpperCase().replace(/\s+/g, ' ').trim();
+
+export function enrolledStageSet(): Set<string> {
+  const fromEnv = (process.env.AO_ENROLLED_STAGES ?? '').split(',').map(normStage).filter(Boolean);
+  return new Set(fromEnv.length ? fromEnv : DEFAULT_ENROLLED_STAGES.map(normStage));
+}
+
+export function isEnrolledStage(stage: string | null | undefined, status: string | null | undefined,
+  stages: Set<string> = enrolledStageSet()): boolean {
+  if (String(status ?? '').toLowerCase() === 'won') return true;
+  const n = normStage(stage);
+  if (!n) return false;
+  if (stages.has(n)) return true;
+  // Env list replaces the defaults entirely, patterns included.
+  if ((process.env.AO_ENROLLED_STAGES ?? '').trim()) return false;
+  return ENROLLED_PATTERNS.some((re) => re.test(n));
+}
+
+/** The stage a closer moves a deal into — as opposed to what happens after. */
+export function isInitialEnrollmentStage(stage: string | null | undefined): boolean {
+  const n = normStage(stage);
+  return n === 'ENROLLED' || (n.startsWith('ENROLLED - ') && !/NSF/.test(n));
+}
+
+/**
+ * Optional opportunity custom fields, by GHL field id. The opportunity search
+ * returns custom fields as { id, value } pairs with no names, so the ids are
+ * configured rather than guessed:
+ *   AO_FIELD_CLOSER    a user picker / text field holding the closer's GHL user id
+ *   AO_FIELD_BACKEND   dropdown: Level Debt | Pinnacle | Consumer Shield | ELP
+ *   AO_FIELD_FILE_REF  the backend's file / account id for this client
+ * Any that are unset are simply not used.
+ */
+function customFieldValue(o: any, fieldId: string | undefined): string | null {
+  if (!fieldId) return null;
+  const list: any[] = pick<any[]>(o, 'customFields', 'custom_fields') ?? [];
+  const hit = list.find((f) => String(pick(f, 'id', 'fieldId', 'key') ?? '') === fieldId);
+  if (!hit) return null;
+  const v = pick<any>(hit, 'fieldValueString', 'fieldValue', 'value', 'field_value');
+  if (v === null || v === undefined) return null;
+  const str = Array.isArray(v) ? v.join(',') : String(v);
+  return str.trim() || null;
+}
+
+/** Pipeline and stage ids → names. The search endpoint returns ids only. */
+export async function fetchPipelineNames(cfg: GhlConfig): Promise<{
+  pipelines: Map<string, string>; stages: Map<string, string>;
+}> {
+  const pipelines = new Map<string, string>();
+  const stages = new Map<string, string>();
+  const data = await ghlFetch<any>(cfg, '/opportunities/pipelines', { query: { locationId: cfg.locationId } });
+  const list: any[] = data?.pipelines ?? data?.data ?? [];
+  for (const p of list) {
+    const pid = String(pick(p, 'id', '_id') ?? '');
+    if (pid) pipelines.set(pid, String(pick(p, 'name') ?? pid));
+    for (const st of (pick<any[]>(p, 'stages') ?? [])) {
+      const sid = String(pick(st, 'id', '_id') ?? '');
+      if (sid) stages.set(sid, String(pick(st, 'name') ?? sid));
+    }
+  }
+  return { pipelines, stages };
+}
+
 export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 40): Promise<{
   enrollments: Enrollment[]; events: ActivityEvent[];
 }> {
   const enrollments: Enrollment[] = [];
   const events: ActivityEvent[] = [];
+  const stagesEnrolled = enrolledStageSet();
+  const names = await fetchPipelineNames(cfg).catch(() => ({ pipelines: new Map<string, string>(), stages: new Map<string, string>() }));
   let page = 1;
 
   while (page <= maxPages) {
@@ -272,27 +368,63 @@ export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 4
       const id = String(pick(o, 'id', '_id') ?? '');
       if (!id) continue;
       const contact = pick<any>(o, 'contact') ?? {};
-      const pipeline = pick<string>(o, 'pipelineName', 'pipeline.name', 'pipelineId');
-      const stage = pick<string>(o, 'pipelineStageName', 'stage.name', 'pipelineStageId');
+      const pipelineId = pick<string>(o, 'pipelineId');
+      const stageId = pick<string>(o, 'pipelineStageId');
+      const pipeline = pick<string>(o, 'pipelineName', 'pipeline.name')
+        ?? (pipelineId ? names.pipelines.get(pipelineId) ?? pipelineId : null);
+      const stage = pick<string>(o, 'pipelineStageName', 'stage.name')
+        ?? (stageId ? names.stages.get(stageId) ?? stageId : null);
+      const status = pick<string>(o, 'status');
       const enrolledAt = toIso(pick(o, 'createdAt', 'dateAdded', 'created_at'));
+      const stageChangedAt = toIso(pick(o, 'lastStageChangeAt', 'lastStatusChangeAt'));
+      const updatedAt = toIso(pick(o, 'updatedAt', 'dateUpdated'));
       const agentId = pick<string>(o, 'assignedTo', 'userId', 'assigned_to');
+      const isEnrolled = isEnrolledStage(stage, status, stagesEnrolled);
+
+      // Credit. An explicit Closer field wins. Otherwise the owner is stamped
+      // the first time the deal is seen enrolled, and the database keeps that
+      // first stamp (see sync.ts) — so a later reassignment never moves it.
+      // The stamp is only trustworthy if the deal entered its current stage
+      // recently — otherwise it may have been reassigned since, and the owner
+      // we see now is a guess. That holds for a wide manual backfill too, which
+      // is why this is measured from now and not from the sync window.
+      const closerField = customFieldValue(o, process.env.AO_FIELD_CLOSER);
+      let closerId: string | null = null;
+      let closerSource: Enrollment['closerSource'] = null;
+      if (closerField) { closerId = closerField; closerSource = 'ghl_field'; }
+      else if (isEnrolled && agentId) {
+        closerId = agentId;
+        const enteredAt = stageChangedAt ?? updatedAt;
+        // It must also be an enrollment stage itself. A deal seen for the first
+        // time in FIRST PAYMENT MADE or a welcome-call stage may already sit
+        // with the welcome-call or retention person, not the closer.
+        const fresh = enteredAt && Date.now() - new Date(enteredAt).getTime() <= STAMP_FRESH_MS;
+        closerSource = fresh && isInitialEnrollmentStage(stage) ? 'stamped' : 'backfill';
+      }
+
+      const backendField = customFieldValue(o, process.env.AO_FIELD_BACKEND);
 
       enrollments.push({
         id,
         locationId: cfg.locationId,
         agentId,
+        closerId,
+        closerSource,
+        isEnrolled,
+        firstEnrolledAt: isEnrolled ? (stageChangedAt ?? updatedAt ?? enrolledAt) : null,
+        backendFileRef: customFieldValue(o, process.env.AO_FIELD_FILE_REF),
         contactId: pick<string>(o, 'contactId', 'contact.id'),
         clientName: pick<string>(o, 'contact.name', 'name')
           ?? ([pick(contact, 'firstName'), pick(contact, 'lastName')].filter(Boolean).join(' ') || null),
         clientPhone: digits(pick(o, 'contact.phone', 'phone')),
         clientEmail: pick<string>(o, 'contact.email', 'email'),
-        backend: backendFromText(pipeline, stage, pick<string>(o, 'name')),
+        backend: backendField ? backendFromText(backendField) : backendFromText(pipeline, stage, pick<string>(o, 'name')),
         pipeline,
         stage,
-        status: pick<string>(o, 'status'),
+        status,
         enrolledDebt: toNumber(pick(o, 'monetaryValue', 'monetary_value', 'value')),
         enrolledAt,
-        updatedAt: toIso(pick(o, 'updatedAt', 'dateUpdated')),
+        updatedAt,
       });
 
       if (agentId && enrolledAt) {
@@ -325,6 +457,7 @@ export async function probe(cfg: GhlConfig): Promise<ProbeResult[]> {
   const checks: Array<{ endpoint: string; run: () => Promise<any>; note: string }> = [
     { endpoint: 'GET /users/', note: 'agent directory', run: () => ghlFetch(cfg, '/users/', { query: { locationId: cfg.locationId } }) },
     { endpoint: 'GET /conversations/search', note: 'calls + messages', run: () => ghlFetch(cfg, '/conversations/search', { query: { locationId: cfg.locationId, limit: 1 } }) },
+    { endpoint: 'GET /opportunities/pipelines', note: 'stage names (enrolled-stage filter)', run: () => ghlFetch(cfg, '/opportunities/pipelines', { query: { locationId: cfg.locationId } }) },
     { endpoint: 'GET /opportunities/search', note: 'enrollments', run: () => ghlFetch(cfg, '/opportunities/search', { query: { location_id: cfg.locationId, limit: 1 } }) },
     { endpoint: 'GET /locations/{id}', note: 'token scope check', run: () => ghlFetch(cfg, `/locations/${cfg.locationId}`) },
   ];

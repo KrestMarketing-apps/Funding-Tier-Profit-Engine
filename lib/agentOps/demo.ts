@@ -107,6 +107,11 @@ export function demoDashboard(period: Period): DashboardData {
           id: `opp_${oppSeq}`,
           locationId: 'loc_ft',
           agentId: agent.id,
+          closerId: agent.id,
+          closerSource: 'stamped',
+          isEnrolled: true,
+          firstEnrolledAt: new Date(day.getTime() + (startHour + 2) * 3600_000).toISOString(),
+          backendFileRef: null,
           contactId: `c_opp_${oppSeq}`,
           clientName: name,
           clientPhone: phone,
@@ -159,7 +164,7 @@ export function demoDashboard(period: Period): DashboardData {
     files.push(backendFile(fileSeq, BACKENDS[i % 3], name, String(3105550000 + i), 14000 + i * 900, 'funded', to, rand));
   }
 
-  const recon = reconcile({ enrollments, files });
+  const recon = reconcile({ enrollments, files, agents: AGENTS });
 
   return {
     demo: true,
@@ -190,8 +195,10 @@ function backendFile(
     clientName: name,
     clientPhone: phone,
     clientLast4: phone.slice(-4),
+    repName: null,
     fileStatus: status,
     enrolledDebt: debt,
+    enrolledAt: day.toISOString().slice(0, 10),
     firstPaymentAt: new Date(day.getTime() + 14 * 86400_000).toISOString().slice(0, 10),
     payoutAmount: paid,
     payoutAt: new Date(day.getTime() + 20 * 86400_000).toISOString().slice(0, 10),

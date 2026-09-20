@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import type { DashboardData, MatchStatus } from '../../lib/agentOps/types';
 import { BACKEND_LABEL } from '../../lib/agentOps/types';
+import type { CloserSource } from '../../lib/agentOps/types';
 import { Btn, Callout, Panel, T, fmtMoney, fmtNum, inputStyle, td, tdNum, th } from '../operatingModel/ui';
 import { Empty, OverrideFlag, Pill, Tile, Tiles } from './parts';
 
@@ -17,6 +18,7 @@ const STATUS_META: Record<MatchStatus, { label: string; tone: 'good' | 'warn' | 
   matched: { label: 'Matched', tone: 'good', blurb: 'GoHighLevel and the backend agree.' },
   amount_mismatch: { label: 'Amount differs', tone: 'warn', blurb: 'Matched, but the enrolled debt does not agree.' },
   status_mismatch: { label: 'Status differs', tone: 'warn', blurb: 'The backend cancelled or refunded a file still showing as won.' },
+  rep_mismatch: { label: 'Rep differs', tone: 'warn', blurb: 'The backend names a different one of our agents on this file than GoHighLevel credits.' },
   missing_at_backend: { label: 'Not at backend', tone: 'bad', blurb: 'A rep is credited with a deal the backend has no record of.' },
   unclaimed_at_backend: { label: 'Nobody credited', tone: 'bad', blurb: 'The backend has the file and paid on it, but no rep is credited.' },
 };
@@ -32,6 +34,13 @@ export function ReconPanel({ data, onOverride }: {
   const [busy, setBusy] = useState(false);
   const t = data.reconTotals;
 
+  const creditedId = (e: DashboardData['enrollments'][number] | null | undefined) => (e ? e.closerId ?? e.agentId : null);
+  const SOURCE_NOTE: Record<CloserSource, string> = {
+    ghl_field: 'set in the Closer field',
+    stamped: 'owner when it was enrolled',
+    backfill: 'owner at first sync — a guess',
+    override: 'set by an admin (logged)',
+  };
   const agentName = (id: string | null | undefined) =>
     (id ? data.agents.find((a) => a.id === id)?.name ?? id : '— unassigned —');
 
@@ -39,7 +48,7 @@ export function ReconPanel({ data, onOverride }: {
     if (status && r.status !== status) return false;
     if (backend && (r.file?.backend ?? r.enrollment?.backend) !== backend) return false;
     if (q.trim()) {
-      const hay = `${r.enrollment?.clientName ?? ''} ${r.file?.clientName ?? ''} ${r.file?.externalId ?? ''} ${agentName(r.enrollment?.agentId)}`.toLowerCase();
+      const hay = `${r.enrollment?.clientName ?? ''} ${r.file?.clientName ?? ''} ${r.file?.externalId ?? ''} ${agentName(creditedId(r.enrollment))} ${r.file?.repName ?? ''}`.toLowerCase();
       if (!hay.includes(q.trim().toLowerCase())) return false;
     }
     return true;
@@ -72,15 +81,15 @@ export function ReconPanel({ data, onOverride }: {
           note="claimed, no file found" />
         <Tile label="Nobody credited" value={fmtNum(t.unclaimedAtBackend, 0)} tone={t.unclaimedAtBackend ? 'bad' : 'good'}
           note={`${fmtMoney(t.unclaimedPayout)} paid`} />
-        <Tile label="Disagreements" value={fmtNum(t.amountMismatch + t.statusMismatch, 0)}
-          tone={t.amountMismatch + t.statusMismatch ? 'warn' : 'good'} note="amount or status" />
+        <Tile label="Disagreements" value={fmtNum(t.amountMismatch + t.statusMismatch + t.repMismatch, 0)}
+          tone={t.amountMismatch + t.statusMismatch + t.repMismatch ? 'warn' : 'good'} note="amount, status or rep" />
         <Tile label="Confirmed payout" value={fmtMoney(t.confirmedPayout)} note="on matched files" />
       </Tiles>
 
       <Panel
         title="GoHighLevel ↔ backend reconciliation"
         accent={T.accent}
-        tooltip="Enrollments are matched to backend report rows on phone number first, then on name with a last-four or an enrolled-debt agreement. Anything below the confidence floor is left unmatched and shown rather than quietly paired."
+        tooltip="Only deals that reached an enrolled stage are compared. They are matched to backend rows on the backend file id entered in GHL first, then phone number, then client name with a second agreeing fact (enrolled debt, or enrollment date). Anything weaker is left unmatched and shown rather than quietly paired. Credit goes to the rep who closed the deal, frozen when it was enrolled — not whoever owns it today."
         subtitle="What the rep claims, against what Level Debt, Shield and Legacy actually report."
       >
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -104,13 +113,14 @@ export function ReconPanel({ data, onOverride }: {
 
         {rows.length === 0 ? <Empty>Nothing to reconcile with those filters.</Empty> : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 1080 }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 1200 }}>
               <thead>
                 <tr>
                   <th style={th}>Status</th>
                   <th style={th}>Client</th>
                   <th style={th}>Backend</th>
                   <th style={th}>Rep credited</th>
+                  <th style={th}>Backend's rep</th>
                   <th style={{ ...th, textAlign: 'right' }}>Debt in GHL</th>
                   <th style={{ ...th, textAlign: 'right' }}>Debt at backend</th>
                   <th style={th}>File status</th>
@@ -134,7 +144,15 @@ export function ReconPanel({ data, onOverride }: {
                         )}
                       </td>
                       <td style={{ ...td, fontSize: 11.5 }}>{BACKEND_LABEL[be]}</td>
-                      <td style={{ ...td, fontSize: 11.5 }}>{agentName(r.enrollment?.agentId)}</td>
+                      <td style={{ ...td, fontSize: 11.5 }}>
+                        {r.enrollment ? agentName(creditedId(r.enrollment)) : '—'}
+                        {r.enrollment?.closerSource && (
+                          <div style={{ fontSize: 10, color: r.enrollment.closerSource === 'backfill' ? T.warn : T.faint }}>
+                            {SOURCE_NOTE[r.enrollment.closerSource]}
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...td, fontSize: 11.5, color: T.muted }}>{r.file?.repName ?? '—'}</td>
                       <td style={tdNum}>{r.enrollment?.enrolledDebt != null ? fmtMoney(r.enrollment.enrolledDebt) : '—'}</td>
                       <td style={tdNum}>
                         {r.file?.enrolledDebt != null ? fmtMoney(r.file.enrolledDebt) : '—'}
