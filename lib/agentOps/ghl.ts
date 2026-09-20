@@ -350,19 +350,25 @@ export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 4
   const events: ActivityEvent[] = [];
   const stagesEnrolled = enrolledStageSet();
   const names = await fetchPipelineNames(cfg).catch(() => ({ pipelines: new Map<string, string>(), stages: new Map<string, string>() }));
+  // GHL's `date` filter is on creation date (and wants mm-dd-yyyy, not ISO),
+  // so it would hide older deals that moved to an enrolled stage this week.
+  // Walk the whole book instead, with GHL's cursor (startAfter/startAfterId).
+  void since;
   let page = 1;
+  let cursor: { startAfter?: string | number; startAfterId?: string } = {};
 
   while (page <= maxPages) {
     const data = await ghlFetch<any>(cfg, '/opportunities/search', {
       query: {
         location_id: cfg.locationId,
         limit: 100,
-        page,
-        date: since.toISOString(),
+        ...(cursor.startAfterId ? { startAfter: cursor.startAfter, startAfterId: cursor.startAfterId } : {}),
       },
     });
     const batch: any[] = data?.opportunities ?? data?.data ?? [];
     if (batch.length === 0) break;
+    const meta = data?.meta ?? {};
+    cursor = { startAfter: meta.startAfter, startAfterId: meta.startAfterId };
 
     for (const o of batch) {
       const id = String(pick(o, 'id', '_id') ?? '');
@@ -431,7 +437,7 @@ export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 4
         events.push({ id: `opp:${id}`, locationId: cfg.locationId, agentId, at: enrolledAt, kind: 'opportunity', ref: id });
       }
     }
-    if (batch.length < 100) break;
+    if (batch.length < 100 || !cursor.startAfterId) break;
     page += 1;
   }
   return { enrollments, events };
