@@ -269,6 +269,90 @@ const DDL: string[] = [
   `create index if not exists ao_comp_ledger_agent on ao_comp_ledger (agent_id, occurred_at)`,
   `create index if not exists ao_comp_ledger_deal on ao_comp_ledger (deal_id)`,
 
+  // ── Closer pay ─────────────────────────────────────────────────────────────
+  // Pay plan and separation live on the agent. pay_plan null means a US-based,
+  // fully commissioned closer — every closer today.
+  `alter table ao_agents add column if not exists pay_plan text`,
+  `alter table ao_agents add column if not exists separated_at date`,
+  `alter table ao_agents add column if not exists separation_type text`,
+
+  // Backend-side facts the pay rules depend on.
+  `alter table ao_backend_files add column if not exists declared_schedule text`,
+  `alter table ao_backend_files add column if not exists cancelled_at date`,
+  `alter table ao_enrollments add column if not exists commission_override numeric(12,2)`,
+
+  // Draft history per backend file, straight from the backend's own reports.
+  // file_key is the backend's file/client id, or the client name when a report
+  // has none. draft_key is the draft number, else the draft's date — so the
+  // same cleared payment arriving in two reports is one row, never two.
+  `create table if not exists ao_backend_drafts (
+     id bigserial primary key,
+     backend text not null,
+     file_key text not null,
+     draft_key text not null,
+     draft_number integer,
+     due_at date,
+     cleared_at date,
+     returned_at date,
+     status text not null,
+     amount numeric(12,2),
+     source text not null default 'backend_report',
+     batch_id bigint,
+     imported_at timestamptz not null default now()
+   )`,
+  `create unique index if not exists ao_backend_drafts_key on ao_backend_drafts (backend, file_key, draft_key)`,
+
+  // What each closer is owed on each deal, as of the last recompute. Derived —
+  // rebuilt from the draft history, backend payouts and the pay ledger, never
+  // edited by hand. The Agent Tools "My Deals & Pay" page reads only this.
+  `create table if not exists ao_closer_pay (
+     deal_id text primary key,
+     agent_id text,
+     agent_email text,
+     client_name text,
+     backend text,
+     backend_file_id bigint,
+     enrolled_at date,
+     enrolled_debt numeric(12,2),
+     commission numeric(12,2),
+     commission_basis text,
+     state text not null,
+     schedule text,
+     program_payments integer not null default 0,
+     drafts_cleared integer not null default 0,
+     owed numeric(12,2) not null default 0,
+     paid numeric(12,2) not null default 0,
+     clawback numeric(12,2) not null default 0,
+     next_pay_date date,
+     chargeback_free_at date,
+     backend_paid_at date,
+     reason text,
+     installments jsonb,
+     ghl_pushed_status text,
+     computed_at timestamptz not null default now()
+   )`,
+  `create index if not exists ao_closer_pay_agent on ao_closer_pay (agent_id, next_pay_date)`,
+  `create index if not exists ao_closer_pay_email on ao_closer_pay (lower(agent_email))`,
+
+  // A payment actually made to a closer. The lines are ao_comp_ledger rows
+  // carrying run_id, so "what did we pay, when, on which deals" is one join,
+  // and a run whose lines do not add up to its amount is flagged.
+  `create table if not exists ao_pay_runs (
+     id bigserial primary key,
+     agent_id text not null,
+     pay_date date not null,
+     amount numeric(12,2) not null,
+     method text,
+     reference text,
+     note text,
+     recorded_by text not null,
+     recorded_at timestamptz not null default now(),
+     voided_at timestamptz,
+     voided_by text
+   )`,
+  `create index if not exists ao_pay_runs_agent on ao_pay_runs (agent_id, pay_date)`,
+  `alter table ao_comp_ledger add column if not exists run_id bigint`,
+
   `create table if not exists ao_sync_runs (
      id bigserial primary key,
      started_at timestamptz not null default now(),

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { applyOverride, listOverrides } from '../../../../lib/agentOps/overrides';
 import { requireAdmin } from '../../../../lib/agentOps/guard';
+import { recomputeCloserPay } from '../../../../lib/agentOps/closerPayJob';
 
 /** Admin edits to synced data. Always logged, always attributed, always flagged. */
 export const dynamic = 'force-dynamic';
@@ -28,7 +29,9 @@ export async function POST(req: NextRequest) {
       day: body.day ? String(body.day) : undefined,
       adminEmail: admin.email,
     });
-    return NextResponse.json({ ok: true, override: record });
+    // Any of these edits can move what a closer is owed — recompute now.
+    const pay = await recomputeCloserPay().catch((e) => ({ error: String(e?.message ?? e) }));
+    return NextResponse.json({ ok: true, override: record, pay });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message ?? String(e) }, { status: 400 });
   }

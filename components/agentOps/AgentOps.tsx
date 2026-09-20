@@ -9,6 +9,7 @@ import { AttendancePanel } from './AttendancePanel';
 import { CallsPanel } from './CallsPanel';
 import { ReconPanel } from './ReconPanel';
 import { AdminPanel } from './AdminPanel';
+import { CloserPayPanel } from './CloserPayPanel';
 
 /**
  * Agent Ops — attendance, call detail and the backend cross-check.
@@ -18,13 +19,14 @@ import { AdminPanel } from './AdminPanel';
  * once at the top; each tab is a different cut of it.
  */
 
-type Tab = 'scorecard' | 'attendance' | 'calls' | 'recon' | 'admin';
+type Tab = 'scorecard' | 'attendance' | 'calls' | 'recon' | 'pay' | 'admin';
 
 const TABS: Array<{ key: Tab; label: string; blurb: string }> = [
   { key: 'scorecard', label: 'Scorecard', blurb: 'Value per agent' },
   { key: 'attendance', label: 'Attendance', blurb: 'Who was working' },
   { key: 'calls', label: 'Calls', blurb: 'Every call' },
   { key: 'recon', label: 'Reconciliation', blurb: 'Claims vs. backends' },
+  { key: 'pay', label: 'Closer Pay', blurb: 'Who is owed what, when — and what was paid' },
   { key: 'admin', label: 'Imports & log', blurb: 'Setup, uploads, overrides' },
 ];
 
@@ -108,6 +110,7 @@ export default function AgentOps({ data }: { data: DashboardData }) {
         {tab === 'attendance' && <AttendancePanel data={data} />}
         {tab === 'calls' && <CallsPanel data={data} />}
         {tab === 'recon' && <ReconPanel data={data} onOverride={override} />}
+        {tab === 'pay' && <CloserPayPanel onOverride={override} />}
         {tab === 'admin' && <AdminPanel data={data} onRefresh={() => router.refresh()} />}
       </main>
     </div>

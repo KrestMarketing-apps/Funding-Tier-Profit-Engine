@@ -1,6 +1,7 @@
 import { query } from './db';
 import { fetchAgents, fetchCallsAndActivity, fetchEnrollments, ghlConfigs, type GhlConfig } from './ghl';
 import { buildAttendance, localDay } from './attendance';
+import { recomputeCloserPay } from './closerPayJob';
 import type { ActivityEvent, CallRecord, Enrollment, SyncCounts } from './types';
 
 /**
@@ -151,6 +152,9 @@ export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCou
   }
 
   counts.attendanceDays = await rebuildAttendance(since);
+
+  // Credit and stage changes feed closer pay — keep it current on every sync.
+  try { await recomputeCloserPay(); } catch (e: any) { errors.push(`closer pay: ${e?.message ?? String(e)}`); }
 
   await query(
     `update ao_sync_runs set finished_at = now(), ok = $2, counts = $3, error = $4 where id = $1`,

@@ -36,12 +36,23 @@ export const FIELD_SYNONYMS: Record<string, string[]> = {
   payoutAt: ['payout date', 'commission date', 'remittance date', 'date paid'],
   repName: ['applicant contact owner full name', 'representative name', 'repname', 'rep name', 'sales rep', 'sales agent', 'assigned to', 'contact owner', 'closer', 'rep', 'agent', 'salesperson'],
   affiliate: ['affiliate name', 'affiliate'],
+  // Draft-level fields — present on payment-level exports only.
+  draftNumber: ['draft number', 'draft no', 'draft #', 'payment number'],
+  draftDueAt: ['draft due date', 'due date', 'scheduled date'],
+  draftClearedAt: ['draft cleared date', 'date cleared', 'cleared date'],
+  draftReturnedAt: ['draft returned date', 'returned date'],
+  draftStatus: ['draft status', 'cleared status', 'payment status'],
+  draftAmount: ['draft total amount', 'draft amount', 'cleared amount'],
+  frequency: ['payment frequency', 'declared frequency'],
+  clearedCount: ['applicant total cleared payments', 'total cleared payments'],
+  programLength: ['program length'],
+  paymentCount: ['payment count'],
 };
 
 /** Words that disqualify a header from being the CLIENT name column. */
 const NOT_CLIENT = /\b(owner|rep|agent|affiliate|servicing|plan|product|company|first|last)\b/;
 /** Short synonyms that must match a whole header, never a fragment of one. */
-const EXACT_ONLY = new Set(['rep', 'agent', 'name', 'client', 'status', 'stage', 'phone', 'cell', 'closer', 'reference', 'payout', 'commission']);
+const EXACT_ONLY = new Set(['payment number', 'rep', 'agent', 'name', 'client', 'status', 'stage', 'phone', 'cell', 'closer', 'reference', 'payout', 'commission']);
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -117,6 +128,41 @@ const toDate = (v: string | undefined): string | null => {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 };
 
+/** One client draft, as a backend reported it. */
+export interface ParsedDraft {
+  backend: BackendKey;
+  fileKey: string;
+  draftKey: string;
+  draftNumber: number | null;
+  dueAt: string | null;
+  clearedAt: string | null;
+  returnedAt: string | null;
+  status: 'scheduled' | 'cleared' | 'nsf' | 'returned' | 'skipped' | 'cancelled';
+  amount: number | null;
+  source: 'backend_report' | 'inferred';
+}
+
+export type DeclaredSchedule = 'standard' | 'split' | null;
+
+/** "Monthly" → standard; "Bi-Weekly", "Semi-Monthly", "Split" → split. Anything else: not stated. */
+export function scheduleFromText(v: string | null | undefined): DeclaredSchedule {
+  const t = (v ?? '').toLowerCase();
+  if (!t.trim()) return null;
+  if (/bi-?\s?weekly|semi-?\s?monthly|split|twice|every other/.test(t)) return 'split';
+  if (/month/.test(t)) return 'standard';
+  return null;
+}
+
+function draftStatus(raw: string | undefined, clearedAt: string | null, returnedAt: string | null): ParsedDraft['status'] {
+  const t = (raw ?? '').toLowerCase();
+  if (/nsf|insufficient/.test(t)) return 'nsf';
+  if (/return|reject|fail|declin/.test(t) || returnedAt) return 'returned';
+  if (/cancel|void/.test(t)) return 'cancelled';
+  if (/skip/.test(t)) return 'skipped';
+  if (/clear|paid|processed|success|complete/.test(t) || clearedAt) return 'cleared';
+  return 'scheduled';
+}
+
 export interface ParsedImport {
   backend: BackendKey;
   rows: Array<Omit<BackendFile, 'id' | 'batchId'>>;
@@ -131,6 +177,10 @@ export interface ParsedImport {
   otherAffiliate: number;
   /** Draft/payment rows folded into one file row per client. */
   collapsed: number;
+  /** Individual drafts, when the report is payment-level. */
+  drafts: ParsedDraft[];
+  /** Plan type per file key, where the report states or implies it. */
+  declared: Record<string, DeclaredSchedule>;
 }
 
 /** Which affiliate rows belong to us, in reports that cover every affiliate. */
@@ -147,7 +197,7 @@ const OUR_AFFILIATE = new RegExp(process.env.AO_AFFILIATE_PATTERN || 'funding\\s
  */
 export function parseBackendReport(backend: BackendKey, filename: string, text: string, period?: string): ParsedImport {
   const grid = parseDelimited(text.replace(/^\uFEFF/, ''));
-  const empty = { backend, rows: [], columnMap: {}, unmapped: [], missing: [], warnings: [], parsed: 0, otherAffiliate: 0, collapsed: 0 };
+  const empty = { backend, rows: [], columnMap: {}, unmapped: [], missing: [], warnings: [], parsed: 0, otherAffiliate: 0, collapsed: 0, drafts: [], declared: {} };
   if (grid.length < 2) return { ...empty, errors: ['File has no data rows.'] };
 
   // Some backends prefix the sheet with title and filter rows; the header is
@@ -163,6 +213,9 @@ export function parseBackendReport(backend: BackendKey, filename: string, text: 
   const errors: string[] = [];
   const warnings: string[] = [];
   const byKey = new Map<string, Omit<BackendFile, 'id' | 'batchId'>>();
+  const drafts = new Map<string, ParsedDraft>();
+  const declared: Record<string, DeclaredSchedule> = {};
+  const isDraftLevel = ['draftClearedAt', 'draftDueAt', 'draftNumber', 'draftStatus'].some((f) => f in map);
   let otherAffiliate = 0;
   let dataRows = 0;
   let lastStage: string | null = null;
@@ -205,6 +258,54 @@ export function parseBackendReport(backend: BackendKey, filename: string, text: 
     };
 
     const key = (externalId ?? clientName ?? '').toLowerCase();
+    const fileKey = fileKeyFor(externalId, clientName);
+
+    // Plan type, where stated: a frequency column, or (Salesforce) a payment
+    // count that is the program length or twice it.
+    const freq = scheduleFromText(at('frequency'));
+    if (freq) declared[fileKey] = freq;
+    const len = toNumber(at('programLength'));
+    const cnt = toNumber(at('paymentCount'));
+    if (!declared[fileKey] && len && cnt) {
+      if (cnt === len) declared[fileKey] = 'standard';
+      else if (cnt === len * 2) declared[fileKey] = 'split';
+    }
+
+    if (isDraftLevel) {
+      const clearedAt = toDate(at('draftClearedAt'));
+      const returnedAt = toDate(at('draftReturnedAt'));
+      const dueAt = toDate(at('draftDueAt'));
+      const num = toNumber(at('draftNumber'));
+      const status = draftStatus(at('draftStatus'), clearedAt, returnedAt);
+      // A row with no draft information at all (a client with no plan yet) is not a draft.
+      if (num != null || clearedAt || dueAt || returnedAt) {
+        const draftKey = num != null ? `#${num}` : (clearedAt ?? dueAt ?? returnedAt) as string;
+        const prevDraft = drafts.get(`${fileKey}|${draftKey}`);
+        // The same draft reported twice keeps its most final state.
+        if (!prevDraft || rank(status) > rank(prevDraft.status)) {
+          drafts.set(`${fileKey}|${draftKey}`, {
+            backend, fileKey, draftKey, draftNumber: num, dueAt, clearedAt, returnedAt, status,
+            amount: toNumber(at('draftAmount')), source: 'backend_report',
+          });
+        }
+      }
+    } else {
+      // Count-only reports (Salesforce): N cleared payments and a first payment
+      // date. Reconstruct the cleared drafts and MARK them inferred — only the
+      // first date is real, so only the count and first date are relied on.
+      const cleared = toNumber(at('clearedCount'));
+      const firstAt = toDate(at('firstPaymentAt'));
+      if (cleared && cleared > 0 && firstAt) {
+        const step = declared[fileKey] === 'split' ? 14 : 30;
+        for (let k = 0; k < cleared; k += 1) {
+          const dt = new Date(Date.parse(`${firstAt}T00:00:00Z`) + k * step * 86_400_000).toISOString().slice(0, 10);
+          drafts.set(`${fileKey}|#${k + 1}`, {
+            backend, fileKey, draftKey: `#${k + 1}`, draftNumber: k + 1, dueAt: dt, clearedAt: dt, returnedAt: null,
+            status: 'cleared', amount: null, source: 'inferred',
+          });
+        }
+      }
+    }
     const prev = byKey.get(key);
     if (!prev) { byKey.set(key, row); continue; }
     for (const k of Object.keys(row) as Array<keyof typeof row>) {
@@ -217,6 +318,7 @@ export function parseBackendReport(backend: BackendKey, filename: string, text: 
   const rows = Array.from(byKey.values());
   if (otherAffiliate) warnings.push(`${otherAffiliate} rows belonged to other affiliates and were skipped.`);
   if (dataRows > rows.length) warnings.push(`${dataRows} payment rows folded into ${rows.length} client files.`);
+  if (drafts.size) warnings.push(`${drafts.size} individual drafts recorded for payment tracking.`);
   if (!('repName' in map)) warnings.push('No rep/agent column — the rep cross-check will not run for this file.');
   if (missing.length) errors.push(`Could not find a column for: ${missing.join(', ')}. Check the header row in ${filename}.`);
   if (rows.length && rows.every((x) => !x.clientPhone) && rows.some((x) => !x.externalId)) {
@@ -224,6 +326,16 @@ export function parseBackendReport(backend: BackendKey, filename: string, text: 
   }
   return {
     backend, rows, columnMap: map, unmapped, missing, errors, warnings,
+    drafts: Array.from(drafts.values()), declared,
     parsed: dataRows + otherAffiliate, otherAffiliate, collapsed: dataRows - rows.length,
   };
 }
+
+/** The key a backend file's drafts are stored under: its id, else its name. */
+export function fileKeyFor(externalId: string | null | undefined, clientName: string | null | undefined): string {
+  const id = (externalId ?? '').trim();
+  if (id) return `id:${id.toLowerCase()}`;
+  return `name:${(clientName ?? '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim()}`;
+}
+
+const rank = (s: ParsedDraft['status']) => ({ scheduled: 0, skipped: 1, cleared: 2, cancelled: 2, returned: 3, nsf: 3 }[s]);
