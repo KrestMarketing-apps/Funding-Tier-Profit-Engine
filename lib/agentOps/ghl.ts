@@ -205,10 +205,12 @@ function normaliseCall(cfg: GhlConfig, m: any, conversation: any): CallRecord | 
 
 export async function fetchCallsAndActivity(cfg: GhlConfig, since: Date): Promise<{
   calls: CallRecord[]; events: ActivityEvent[]; conversations: number;
+  diag: { conversations: number; messagesRead: number; messageErrors: string[]; types: Record<string, number> };
 }> {
   const { items: conversations } = await walkConversations(cfg, since);
   const calls: CallRecord[] = [];
   const events: ActivityEvent[] = [];
+  const diag = { conversations: conversations.length, messagesRead: 0, messageErrors: [] as string[], types: {} as Record<string, number> };
 
   for (const c of conversations) {
     const convId = String(pick(c, 'id', '_id') ?? '');
@@ -217,14 +219,20 @@ export async function fetchCallsAndActivity(cfg: GhlConfig, since: Date): Promis
     try {
       const data = await ghlFetch<any>(cfg, `/conversations/${convId}/messages`, { query: { limit: 100 } });
       messages = data?.messages?.messages ?? data?.messages ?? data?.data ?? [];
-    } catch {
-      continue;      // a single unreadable conversation must not fail the sync
+      if (!Array.isArray(messages)) messages = [];
+    } catch (e: any) {
+      // A single unreadable conversation must not fail the sync, but a pattern
+      // of them (a missing scope) has to be visible.
+      if (diag.messageErrors.length < 3) diag.messageErrors.push(`${e?.message ?? e} ${String(e?.body ?? '').slice(0, 150)}`);
+      continue;
     }
+    diag.messagesRead += messages.length;
 
     for (const m of messages) {
       const at = toIso(pick(m, 'dateAdded', 'dateUpdated', 'createdAt'));
       if (!at || new Date(at) < since) continue;
       const type = String(pick(m, 'messageType', 'type') ?? '').toUpperCase();
+      diag.types[type || '(none)'] = (diag.types[type || '(none)'] ?? 0) + 1;
       const agentId = pick<string>(m, 'userId', 'assignedTo') ?? pick<string>(c, 'assignedTo');
 
       if (CALL_TYPES.has(type)) {
@@ -244,7 +252,7 @@ export async function fetchCallsAndActivity(cfg: GhlConfig, since: Date): Promis
       }
     }
   }
-  return { calls, events, conversations: conversations.length };
+  return { calls, events, conversations: conversations.length, diag };
 }
 
 // ── Opportunities → enrollments ──────────────────────────────────────────────
@@ -343,25 +351,37 @@ export async function fetchPipelineNames(cfg: GhlConfig): Promise<{
   return { pipelines, stages };
 }
 
-export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 40): Promise<{
+export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 100): Promise<{
   enrollments: Enrollment[]; events: ActivityEvent[];
 }> {
   const enrollments: Enrollment[] = [];
   const events: ActivityEvent[] = [];
   const stagesEnrolled = enrolledStageSet();
   const names = await fetchPipelineNames(cfg).catch(() => ({ pipelines: new Map<string, string>(), stages: new Map<string, string>() }));
-  // GHL's `date` filter is on creation date (and wants mm-dd-yyyy, not ISO),
-  // so it would hide older deals that moved to an enrolled stage this week.
-  // Walk the whole book instead, with GHL's cursor (startAfter/startAfterId).
+  // Only enrolled deals are needed, so ask GHL for exactly those: one search
+  // per enrolled stage (plus status=won), each walked with GHL's cursor. A
+  // walk of the whole book stopped at the page cap (4,000 of a larger book)
+  // and was slow. If stage names can't be read, fall back to the whole book.
+  // (GHL's `date` filter is on creation date and wants mm-dd-yyyy, so it is
+  // not used: it would hide older deals that reached an enrolled stage today.)
   void since;
+  const enrolledStageIds = [...names.stages]
+    .filter(([, name]) => isEnrolledStage(name, null, stagesEnrolled))
+    .map(([sid]) => sid);
+  const filters: Record<string, string>[] = enrolledStageIds.length
+    ? [...enrolledStageIds.map((sid) => ({ pipeline_stage_id: sid })), { status: 'won' }]
+    : [{}];
+  const seen = new Set<string>();
+
+  for (const filter of filters) {
   let page = 1;
   let cursor: { startAfter?: string | number; startAfterId?: string } = {};
-
   while (page <= maxPages) {
     const data = await ghlFetch<any>(cfg, '/opportunities/search', {
       query: {
         location_id: cfg.locationId,
         limit: 100,
+        ...filter,
         ...(cursor.startAfterId ? { startAfter: cursor.startAfter, startAfterId: cursor.startAfterId } : {}),
       },
     });
@@ -372,7 +392,8 @@ export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 4
 
     for (const o of batch) {
       const id = String(pick(o, 'id', '_id') ?? '');
-      if (!id) continue;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
       const contact = pick<any>(o, 'contact') ?? {};
       const pipelineId = pick<string>(o, 'pipelineId');
       const stageId = pick<string>(o, 'pipelineStageId');
@@ -439,6 +460,7 @@ export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 4
     }
     if (batch.length < 100 || !cursor.startAfterId) break;
     page += 1;
+  }
   }
   return { enrollments, events };
 }

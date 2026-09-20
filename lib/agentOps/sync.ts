@@ -50,7 +50,7 @@ export interface SyncOptions {
   configs?: GhlConfig[];
 }
 
-export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCounts; runId: number | null; errors: string[] }> {
+export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCounts; runId: number | null; errors: string[]; diag: Record<string, unknown> }> {
   const sinceHours = opts.sinceHours ?? Number(process.env.AO_SYNC_WINDOW_HOURS || 48);
   const since = new Date(Date.now() - sinceHours * 3600_000);
   const configs = opts.configs ?? ghlConfigs();
@@ -66,6 +66,7 @@ export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCou
   const allEvents: ActivityEvent[] = [];
   const allCalls: CallRecord[] = [];
   const allEnrollments: Enrollment[] = [];
+  const diag: Record<string, unknown> = {};
 
   for (const cfg of configs) {
     try {
@@ -82,7 +83,8 @@ export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCou
         );
       }
 
-      const { calls, events } = await fetchCallsAndActivity(cfg, since);
+      const { calls, events, diag: callDiag } = await fetchCallsAndActivity(cfg, since);
+      diag[cfg.locationId] = callDiag;
       allCalls.push(...calls);
       allEvents.push(...events);
 
@@ -161,7 +163,7 @@ export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCou
     [runId, errors.length === 0, JSON.stringify(counts), errors.join(' | ') || null],
   );
 
-  return { counts, runId, errors };
+  return { counts, runId, errors, diag };
 }
 
 /**
