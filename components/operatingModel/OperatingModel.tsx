@@ -10,6 +10,7 @@ import { RosterEditor } from './RosterEditor';
 import { ShowTheMath } from './ShowTheMath';
 import { MonthEndReport } from './MonthEndReport';
 import { ShieldBuyout } from './ShieldBuyout';
+import { BackendExplainer } from './BackendExplainer';
 import {
   Btn, Callout, Field, FT_LOGO, G, Icon, Info, NumberInput, Panel, PartnerName, PartnerMark, Row, T,
   fmtMoney, fmtMoney2, fmtNum, fmtPct, inputStyle, td, tdNum, th,
@@ -750,8 +751,17 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       </>)}
 
       {active === 'backends' && (<>
-      {/* ── 4 · Backend terms, compact ─────────────────────────────────────── */}
-      <Panel title="3 · How each backend pays Funding Tier and its reps"
+      {/* ── 3 · Backend terms, explained for an owner / investor ──────────── */}
+      <Panel title="3 · What Funding Tier is paid, by whom, and when"
+        tooltip="Plain-English walkthrough of each partner's payout, built on the same engine as the simulation: what the percentage is taken from, who keeps the rest, when the cash lands, and what one deal is worth.">
+        <BackendExplainer
+          inputs={inputs}
+          levelMonthlyVolume={(results.months[results.months.length - 1]?.dealsByBackend.LEVEL ?? 0) * inputs.volume.avgDebt.LEVEL}
+        />
+      </Panel>
+
+      {/* ── 3a · Backend terms, compact ─────────────────────────────────────── */}
+      <Panel title="3a · Contract terms at a glance"
         tooltip="Contract terms, five across per partner. Level Debt is a one-time settlement payment; Shield Services and Elite Legal Practice are monthly perpetuities.">
         {BACKEND_KEYS.map((k) => {
           const debt = inputs.volume.avgDebt[k];
