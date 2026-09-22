@@ -36,7 +36,7 @@ type Recon = {
 };
 type Payload = {
   deals: Deal[]; payRuns: Run[]; recon: Recon[];
-  agents: Array<{ id: string; name: string; email: string | null; pay_plan: string | null; separated_at: string | null; separation_type: string | null }>;
+  agents: Array<{ id: string; name: string; email: string | null; pay_plan: string | null; separated_at: string | null; separation_type: string | null; is_agent?: boolean }>;
   timing: Record<string, { label: string; timing: string; chargebackFreeAfter: number }>;
 };
 
@@ -309,7 +309,7 @@ export function CloserPayPanel({ onOverride }: {
         tooltip="Pay plan blank = US-based fully commissioned (paid by these rules). Separation: for cause forfeits anything unpaid; performance keeps the first payout on each deal they closed.">
         <table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead><tr>{['Closer', 'Email', 'Pay plan', 'Separated', 'Type', ''].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
-          <tbody>{data.agents.map((a) => (
+          <tbody>{data.agents.filter((a) => a.is_agent !== false).map((a) => (
             <tr key={a.id}>
               <td style={{ ...td, fontWeight: 600 }}>{a.name}</td>
               <td style={{ ...td, fontSize: 11 }}>{a.email ?? '—'}</td>

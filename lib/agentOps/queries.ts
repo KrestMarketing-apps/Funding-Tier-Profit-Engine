@@ -61,8 +61,12 @@ export async function loadDashboard(period: Period): Promise<DashboardData> {
       query<any>(`select * from ao_sync_runs order by started_at desc limit 1`),
     ]);
 
+  // Every GHL user stays in `agents` so names resolve on calls and deals, but
+  // only working agents get attendance rows and scorecards.
   const agents = agentRows.map(toAgent);
-  const attendance = attendanceRows.map(toAttendance);
+  const notAgent = new Set(agents.filter((a) => a.isAgent === false).map((a) => a.id));
+  const workingAgents = agents.filter((a) => !notAgent.has(a.id));
+  const attendance = attendanceRows.map(toAttendance).filter((a) => !notAgent.has(a.agentId));
   const calls = callRows.map(toCall);
   const enrollments = enrollmentRows.map(toEnrollment);
   const files = fileRows.map(toFile);
@@ -84,7 +88,7 @@ export async function loadDashboard(period: Period): Promise<DashboardData> {
     files,
     recon,
     reconTotals: reconSummary(recon),
-    scorecards: buildScorecards({ agents, attendance, calls, enrollments, recon }),
+    scorecards: buildScorecards({ agents: workingAgents, attendance, calls, enrollments, recon }),
     overrideFlags,
     lastSync: sync
       ? {
@@ -104,7 +108,7 @@ function toAgent(r: any): Agent {
     id: r.id, locationId: r.location_id, name: r.name ?? '(unnamed)', email: r.email,
     role: r.role, employmentType: r.employment_type,
     hourlyRate: num(r.hourly_rate), scheduledHoursPerWeek: num(r.scheduled_hours_per_week),
-    team: r.team, active: r.active !== false,
+    team: r.team, active: r.active !== false, isAgent: r.is_agent !== false,
   };
 }
 

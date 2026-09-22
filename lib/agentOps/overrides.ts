@@ -57,6 +57,7 @@ const EDITABLE: Record<string, { table: string; idColumn: string; fields: Record
       role: 'text', employment_type: 'text', team: 'text',
       hourly_rate: 'number', scheduled_hours_per_week: 'number', active: 'text',
       pay_plan: 'text', separated_at: 'date', separation_type: 'text',
+      is_agent: 'text',
     },
   },
 };
@@ -82,6 +83,7 @@ export async function applyOverride(input: OverrideInput): Promise<OverrideRecor
     declared_schedule: ['standard', 'split'],
     separation_type: ['for_cause', 'performance'],
     pay_plan: ['us_commission', 'hourly', 'bpo', 'none'],
+    is_agent: ['true', 'false'],
   };
   if (ALLOWED_VALUES[input.field] && input.newValue != null && input.newValue !== ''
     && !ALLOWED_VALUES[input.field].includes(input.newValue)) {

@@ -275,6 +275,10 @@ const DDL: string[] = [
   `alter table ao_agents add column if not exists pay_plan text`,
   `alter table ao_agents add column if not exists separated_at date`,
   `alter table ao_agents add column if not exists separation_type text`,
+  // Some GHL users are not working agents (owners, admins, vendors, bots).
+  // Set in the app, never by the sync: false keeps them out of scorecards,
+  // attendance and closer pay, while their calls and deals stay on record.
+  `alter table ao_agents add column if not exists is_agent boolean not null default true`,
 
   // Backend-side facts the pay rules depend on.
   `alter table ao_backend_files add column if not exists declared_schedule text`,

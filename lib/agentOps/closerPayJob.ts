@@ -282,7 +282,7 @@ export async function payPayload() {
     query<any>(`select * from ao_pay_runs order by pay_date desc, id desc limit 500`),
     query<any>(`select l.*, p.client_name from ao_comp_ledger l left join ao_closer_pay p on p.deal_id = l.deal_id
                  where l.run_id is not null order by l.id`),
-    query<any>(`select id, name, email, pay_plan, separated_at, separation_type, active from ao_agents order by name`),
+    query<any>(`select id, name, email, pay_plan, separated_at, separation_type, active, is_agent from ao_agents order by name`),
   ]);
 
   const linesByRun = new Map<number, any[]>();

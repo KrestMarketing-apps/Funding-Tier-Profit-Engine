@@ -81,7 +81,7 @@ export function CallsPanel({ data }: { data: DashboardData }) {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <select value={agent} onChange={(e) => setAgent(e.target.value)} style={{ ...inputStyle, fontFamily: T.sans, fontSize: 12, width: 190 }}>
             <option value="">All agents</option>
-            {data.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {data.agents.filter((a) => a.isAgent !== false).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <select value={direction} onChange={(e) => setDirection(e.target.value)} style={{ ...inputStyle, fontFamily: T.sans, fontSize: 12, width: 130 }}>
             <option value="">Both ways</option>

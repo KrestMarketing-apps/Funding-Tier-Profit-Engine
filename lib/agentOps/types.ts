@@ -28,6 +28,8 @@ export interface Agent {
   scheduledHoursPerWeek: number | null;
   team: string | null;
   active: boolean;
+  /** false = a GHL user who is not a working agent (owner, admin, vendor, bot). Set in the app. */
+  isAgent?: boolean;
 }
 
 /** Any timestamped thing an agent did. The raw material for attendance. */

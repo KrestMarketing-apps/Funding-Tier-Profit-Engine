@@ -19,6 +19,34 @@ export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh
   const [overrides, setOverrides] = useState<OverrideRecord[] | null>(null);
   const [probeResult, setProbeResult] = useState<any>(null);
 
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const workingAgents = data.agents.filter((a) => a.isAgent !== false);
+  const nonAgents = data.agents.filter((a) => a.isAgent === false);
+
+  // Marking someone as not an agent is an override like any other: logged,
+  // attributed and reasoned. The sync never touches this flag.
+  const setAgentFlag = async (id: string, name: string, isAgent: boolean) => {
+    const reason = prompt(isAgent
+      ? `Why should ${name} count as a working agent again?`
+      : `Why is ${name} not a working agent? (e.g. owner / admin login, vendor, AI bot)`);
+    if (!reason?.trim()) return;
+    setBusy(`agent:${id}`);
+    setAgentError(null);
+    try {
+      const res = await fetch(p('/api/agent-ops/override'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity: 'agent', entityId: id, field: 'is_agent', newValue: String(isAgent), reason }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.ok === false) throw new Error(json.error ?? `HTTP ${res.status}`);
+      onRefresh();
+    } catch (e: any) {
+      setAgentError(e?.message ?? String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const upload = async () => {
     if (!file) return;
     setBusy('upload');
@@ -201,10 +229,11 @@ export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh
 
       <Panel title="Agents on file" accent={T.accent}
         subtitle="Rate and scheduled hours drive cost per deal. Set them once per person."
-        tooltip="Names come from GoHighLevel and refresh on every sync. Rate, role, team and scheduled hours are set here and are never overwritten by a sync.">
+        tooltip="Names come from GoHighLevel and refresh on every sync. Rate, role, team and scheduled hours are set here and are never overwritten by a sync. A GHL user who is not a working agent (owner, admin, vendor, bot) can be marked 'Not an agent' — they drop out of scorecards, attendance and closer pay, but their calls and deals stay on record.">
         {data.agents.length === 0 ? <Empty>No agents synced yet.</Empty> : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 720 }}>
+            {agentError && <Callout tone="bad">{agentError}</Callout>}
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 820 }}>
               <thead>
                 <tr>
                   <th style={th}>Agent</th>
@@ -214,10 +243,11 @@ export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh
                   <th style={th}>Team</th>
                   <th style={{ ...th, textAlign: 'right' }}>Rate</th>
                   <th style={{ ...th, textAlign: 'right' }}>Hrs / wk</th>
+                  <th style={th} />
                 </tr>
               </thead>
               <tbody>
-                {data.agents.map((a) => (
+                {workingAgents.map((a) => (
                   <tr key={a.id}>
                     <td style={{ ...td, fontWeight: 600 }}>{a.name}</td>
                     <td style={{ ...td, fontSize: 11, color: T.muted }}>{a.email ?? '—'}</td>
@@ -226,6 +256,12 @@ export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh
                     <td style={{ ...td, fontSize: 11.5 }}>{a.team ?? '—'}</td>
                     <td style={tdNum}>{a.hourlyRate != null ? `$${a.hourlyRate.toFixed(2)}` : <span style={{ color: T.bad }}>not set</span>}</td>
                     <td style={tdNum}>{a.scheduledHoursPerWeek != null ? fmtNum(a.scheduledHoursPerWeek, 0) : '—'}</td>
+                    <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <Btn size="sm" title="GHL user, but not a working agent — remove from scorecards, attendance and closer pay"
+                        onClick={() => setAgentFlag(a.id, a.name, false)}>
+                        {busy === `agent:${a.id}` ? 'Saving…' : 'Not an agent'}
+                      </Btn>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -234,6 +270,28 @@ export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh
               Until a rate and weekly hours are set for a person, their cost columns read as zero — the activity is
               still counted, but there is nothing to divide by.
             </Callout>
+            {nonAgents.length > 0 && (
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 700, color: T.muted }}>
+                  GHL users who are not agents ({nonAgents.length}) — excluded from scorecards, attendance and closer pay
+                </summary>
+                <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 6 }}>
+                  <tbody>
+                    {nonAgents.map((a) => (
+                      <tr key={a.id}>
+                        <td style={{ ...td, fontWeight: 600, color: T.muted }}>{a.name}</td>
+                        <td style={{ ...td, fontSize: 11, color: T.muted }}>{a.email ?? '—'}</td>
+                        <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <Btn size="sm" onClick={() => setAgentFlag(a.id, a.name, true)}>
+                            {busy === `agent:${a.id}` ? 'Saving…' : 'Is an agent'}
+                          </Btn>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+            )}
           </div>
         )}
       </Panel>
