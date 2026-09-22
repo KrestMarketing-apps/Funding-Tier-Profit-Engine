@@ -1,7 +1,7 @@
 'use client';
 import React, { useState } from 'react';
-import type { DashboardData, MatchStatus } from '../../lib/agentOps/types';
-import { BACKEND_LABEL } from '../../lib/agentOps/types';
+import type { CsPayout, DashboardData, MatchStatus } from '../../lib/agentOps/types';
+import { BACKEND_LABEL, CS_PAYOUT_LABEL } from '../../lib/agentOps/types';
 import type { CloserSource } from '../../lib/agentOps/types';
 import { Btn, Callout, Panel, T, fmtMoney, fmtNum, inputStyle, td, tdNum, th } from '../operatingModel/ui';
 import { Empty, OverrideFlag, Pill, Tile, Tiles } from './parts';
@@ -18,6 +18,7 @@ const STATUS_META: Record<MatchStatus, { label: string; tone: 'good' | 'warn' | 
   matched: { label: 'Matched', tone: 'good', blurb: 'GoHighLevel and the backend agree.' },
   amount_mismatch: { label: 'Amount differs', tone: 'warn', blurb: 'Matched, but the enrolled debt does not agree.' },
   status_mismatch: { label: 'Status differs', tone: 'warn', blurb: 'The backend cancelled or refunded a file still showing as won.' },
+  payout_mismatch: { label: 'Payout option differs', tone: 'warn', blurb: 'Shield file marked buyout in one system and perpetual in the other — it pays differently depending on which is right.' },
   rep_mismatch: { label: 'Rep differs', tone: 'warn', blurb: 'The backend names a different one of our agents on this file than GoHighLevel credits.' },
   missing_at_backend: { label: 'Not at backend', tone: 'bad', blurb: 'A rep is credited with a deal the backend has no record of.' },
   unclaimed_at_backend: { label: 'Nobody credited', tone: 'bad', blurb: 'The backend has the file and paid on it, but no rep is credited.' },
@@ -33,6 +34,12 @@ export function ReconPanel({ data, onOverride }: {
   const [editing, setEditing] = useState<{ fileId: number; field: string; value: string; reason: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const t = data.reconTotals;
+  // One count per Shield deal: the backend's login wins when there is a file.
+  const shieldSplit = data.recon.reduce((acc, r) => {
+    if ((r.file?.backend ?? r.enrollment?.backend) !== 'CS') return acc;
+    acc[(r.file?.csPayout ?? r.enrollment?.csPayout ?? 'perpetual') as CsPayout] += 1;
+    return acc;
+  }, { perpetual: 0, buyout: 0 } as Record<CsPayout, number>);
 
   const creditedId = (e: DashboardData['enrollments'][number] | null | undefined) => (e ? e.closerId ?? e.agentId : null);
   const SOURCE_NOTE: Record<CloserSource, string> = {
@@ -46,7 +53,10 @@ export function ReconPanel({ data, onOverride }: {
 
   const rows = data.recon.filter((r) => {
     if (status && r.status !== status) return false;
-    if (backend && (r.file?.backend ?? r.enrollment?.backend) !== backend) return false;
+    const rowBackend = r.file?.backend ?? r.enrollment?.backend;
+    const [bFilter, payoutFilter] = backend.split(':');
+    if (bFilter && rowBackend !== bFilter) return false;
+    if (payoutFilter && (r.file?.csPayout ?? r.enrollment?.csPayout ?? 'perpetual') !== payoutFilter) return false;
     if (q.trim()) {
       const hay = `${r.enrollment?.clientName ?? ''} ${r.file?.clientName ?? ''} ${r.file?.externalId ?? ''} ${agentName(creditedId(r.enrollment))} ${r.file?.repName ?? ''}`.toLowerCase();
       if (!hay.includes(q.trim().toLowerCase())) return false;
@@ -81,8 +91,10 @@ export function ReconPanel({ data, onOverride }: {
           note="claimed, no file found" />
         <Tile label="Nobody credited" value={fmtNum(t.unclaimedAtBackend, 0)} tone={t.unclaimedAtBackend ? 'bad' : 'good'}
           note={`${fmtMoney(t.unclaimedPayout)} paid`} />
-        <Tile label="Disagreements" value={fmtNum(t.amountMismatch + t.statusMismatch + t.repMismatch, 0)}
-          tone={t.amountMismatch + t.statusMismatch + t.repMismatch ? 'warn' : 'good'} note="amount, status or rep" />
+        <Tile label="Disagreements" value={fmtNum(t.amountMismatch + t.statusMismatch + t.repMismatch + (t.payoutMismatch ?? 0), 0)}
+          tone={t.amountMismatch + t.statusMismatch + t.repMismatch + (t.payoutMismatch ?? 0) ? 'warn' : 'good'} note="amount, status, rep or Shield payout" />
+        <Tile label="Shield files by payout" value={`${fmtNum(shieldSplit.perpetual, 0)} / ${fmtNum(shieldSplit.buyout, 0)}`}
+          note="perpetual / file buyout" />
         <Tile label="Confirmed payout" value={fmtMoney(t.confirmedPayout)} note="on matched files" />
       </Tiles>
 
@@ -106,6 +118,8 @@ export function ReconPanel({ data, onOverride }: {
             {(['LEVEL', 'CS', 'LEGACY'] as const).map((b) => (
               <option key={b} value={b}>{BACKEND_LABEL[b]}</option>
             ))}
+            <option value="CS:perpetual">{BACKEND_LABEL.CS} · Perpetual</option>
+            <option value="CS:buyout">{BACKEND_LABEL.CS} · File buyout</option>
           </select>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Client, file id, rep…"
             style={{ ...inputStyle, fontFamily: T.sans, fontSize: 12, width: 240 }} />
@@ -143,7 +157,14 @@ export function ReconPanel({ data, onOverride }: {
                           <div style={{ fontSize: 10, color: T.faint, fontWeight: 400, fontFamily: T.mono }}>{r.file.externalId}</div>
                         )}
                       </td>
-                      <td style={{ ...td, fontSize: 11.5 }}>{BACKEND_LABEL[be]}</td>
+                      <td style={{ ...td, fontSize: 11.5 }}>
+                        {BACKEND_LABEL[be]}
+                        {be === 'CS' && (
+                          <div style={{ fontSize: 10, color: (r.file?.csPayout ?? r.enrollment?.csPayout) === 'buyout' ? T.accent : T.faint, fontWeight: 700 }}>
+                            {CS_PAYOUT_LABEL[(r.file?.csPayout ?? r.enrollment?.csPayout ?? 'perpetual') as CsPayout]}
+                          </div>
+                        )}
+                      </td>
                       <td style={{ ...td, fontSize: 11.5 }}>
                         {r.enrollment ? agentName(creditedId(r.enrollment)) : '—'}
                         {r.enrollment?.closerSource && (
@@ -199,6 +220,7 @@ export function ReconPanel({ data, onOverride }: {
                 <option value="file_status">File status</option>
                 <option value="payout_at">Payout date</option>
                 <option value="first_payment_at">First payment date</option>
+                <option value="cs_payout">Shield payout (perpetual / buyout)</option>
               </select>
             </label>
             <label style={{ display: 'grid', gap: 4 }}>

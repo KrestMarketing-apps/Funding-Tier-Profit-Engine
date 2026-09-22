@@ -29,6 +29,8 @@ const EDITABLE: Record<string, { table: string; idColumn: string; fields: Record
       // the file's plan type, and when it cancelled.
       declared_schedule: 'text',
       cancelled_at: 'date',
+      // Shield: which Consumer Shield login the file actually sits under.
+      cs_payout: 'text',
     },
   },
   enrollment: {
@@ -43,6 +45,7 @@ const EDITABLE: Record<string, { table: string; idColumn: string; fields: Record
       status: 'text',
       enrolled_debt: 'number',
       client_phone: 'text',
+      cs_payout: 'text',
     },
   },
   attendance_day: {
@@ -81,6 +84,7 @@ export async function applyOverride(input: OverrideInput): Promise<OverrideRecor
   if (!input.reason?.trim()) throw new Error('An override needs a reason — it goes on the record.');
   const ALLOWED_VALUES: Record<string, string[]> = {
     declared_schedule: ['standard', 'split'],
+    cs_payout: ['perpetual', 'buyout'],
     separation_type: ['for_cause', 'performance'],
     pay_plan: ['us_commission', 'hourly', 'bpo', 'none'],
     is_agent: ['true', 'false'],

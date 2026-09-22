@@ -193,6 +193,17 @@ export function buildTrace(inputs: ModelInputs, results: ModelResults, monthInde
         result: `${money((p?.payment ?? 0) - inputs.consumerShield.servicingDeductionPerPayment)} front / ${money(((p?.payment ?? 0) - inputs.consumerShield.servicingDeductionPerPayment) * inputs.consumerShield.backendCaptureRate)} back`,
         note: `Monthly perpetuity across the full ${p?.term ?? '?'}-month program.`,
       });
+      const t = inputs.consumerShield;
+      const share = t.buyoutSharePct ?? 0;
+      revRows.push({
+        step: brand.name, what: `Enrollment File Buyout (program ${p?.code ?? '?'})`,
+        formula: '(client payment − servicing deduction) × buyout rate × months — paid once the first payment clears',
+        substitution: `(${money(p?.payment ?? 0)} − ${money(t.servicingDeductionPerPayment)}) × ${pct(shield.buyoutRate(debt, t) * 100)} × ${t.buyout.months}${shield.isHighDebtBuyout(debt, t) ? ' ($20k+ rate)' : ' (standard rate)'}`,
+        result: money(shield.buyoutPayout(debt, t)),
+        note: share <= 0
+          ? 'Not elected — every Shield file stays on the perpetuity.'
+          : `${pct(share)} of Shield files are modelled as bought out; each blended deal earns ${pct(share)} × buyout + ${pct(100 - share)} × perpetuity. Remitted at deal-month ${t.buyout.triggerDealMonth + lag}. Nothing recurs on a bought-out file.`,
+      });
     } else {
       const L = inputs.legacy;
       const term = legacy.getMaxTerm(debt, L);

@@ -52,20 +52,92 @@ export const levelDebt = {
 };
 
 // ── Shield Services (Consumer Shield) ────────────────────────────────────────
-// Perpetuity product. Funding Tier captures a share of EVERY monthly client
-// payment for the life of the program — 100% of (payment - servicing deduction)
-// during the front months, then the backend capture rate thereafter.
+// Two payout options on the same file:
+//  • Perpetuity — Funding Tier captures a share of EVERY monthly client payment
+//    for the life of the program: 100% of (payment - servicing deduction) during
+//    the front months, then the backend capture rate thereafter.
+//  • Enrollment File Buyout — once the first month's payment (or both halves of
+//    a split first month) fully clears, Consumer Shield buys the file out with a
+//    single advance: (payment - $40) x 65% x 6, or x 100% x 6 on $20k+ deals.
+//    Nothing recurs after that.
 export const shield = {
   getProgram(avgDebt: number, terms: ShieldTerms): ShieldProgram | undefined {
     return terms.programs.find((p) => avgDebt >= p.min && avgDebt <= p.max);
   },
-  revenueForDealMonth(avgDebt: number, dealMonth: number, terms: ShieldTerms): number {
+  /** Monthly perpetuity — the original contract. */
+  perpetualRevenueForDealMonth(avgDebt: number, dealMonth: number, terms: ShieldTerms): number {
     const program = shield.getProgram(avgDebt, terms);
     if (!program || dealMonth > program.term || dealMonth < 1) return 0;
     const net = program.payment - terms.servicingDeductionPerPayment;
     return dealMonth <= terms.frontMonths
       ? net * terms.frontCaptureRate
       : net * terms.backendCaptureRate;
+  },
+  /** True when the file is paid at the $20k+ buyout rate. */
+  isHighDebtBuyout(avgDebt: number, terms: ShieldTerms): boolean {
+    return avgDebt >= terms.buyout.highDebtMinDebt;
+  },
+  buyoutRate(avgDebt: number, terms: ShieldTerms): number {
+    return shield.isHighDebtBuyout(avgDebt, terms) ? terms.buyout.highDebtRate : terms.buyout.standardRate;
+  },
+  /**
+   * Enrollment File Buyout — one advance fee, sized on six months of net
+   * payment, paid once the first payment (or both split halves) clears.
+   * It replaces every perpetuity payment on that file.
+   */
+  buyoutPayout(avgDebt: number, terms: ShieldTerms): number {
+    const program = shield.getProgram(avgDebt, terms);
+    if (!program) return 0;
+    const net = program.payment - terms.servicingDeductionPerPayment;
+    return net * shield.buyoutRate(avgDebt, terms) * terms.buyout.months;
+  },
+  buyoutRevenueForDealMonth(avgDebt: number, dealMonth: number, terms: ShieldTerms): number {
+    return dealMonth === terms.buyout.triggerDealMonth ? shield.buyoutPayout(avgDebt, terms) : 0;
+  },
+  /**
+   * Blended per-deal revenue: buyoutSharePct of files take the advance, the
+   * rest stay on the perpetuity. The survival curve is applied by the caller,
+   * so the buyout lands only on files whose first payment actually cleared.
+   */
+  revenueForDealMonth(avgDebt: number, dealMonth: number, terms: ShieldTerms): number {
+    const share = Math.min(1, Math.max(0, (terms.buyoutSharePct ?? 0) / 100));
+    const perp = share < 1 ? shield.perpetualRevenueForDealMonth(avgDebt, dealMonth, terms) : 0;
+    const buy = share > 0 ? shield.buyoutRevenueForDealMonth(avgDebt, dealMonth, terms) : 0;
+    return perp * (1 - share) + buy * share;
+  },
+  /** Perpetuity income per deal if the client never cancels. */
+  perpetualFullTerm(avgDebt: number, terms: ShieldTerms): number {
+    const program = shield.getProgram(avgDebt, terms);
+    if (!program) return 0;
+    let total = 0;
+    for (let m = 1; m <= program.term; m++) total += shield.perpetualRevenueForDealMonth(avgDebt, m, terms);
+    return total;
+  },
+  /**
+   * Expected perpetuity income per deal whose first payment cleared, weighted
+   * by the survival curve (survival[n] / survival[1]).
+   */
+  perpetualExpected(avgDebt: number, terms: ShieldTerms, survival: number[]): number {
+    const program = shield.getProgram(avgDebt, terms);
+    const s1 = survival[1] ?? 0;
+    if (!program || s1 <= 0) return 0;
+    let total = 0;
+    for (let m = 1; m <= program.term; m++) {
+      total += ((survival[m] ?? 0) / s1) * shield.perpetualRevenueForDealMonth(avgDebt, m, terms);
+    }
+    return total;
+  },
+  /** Payments a perpetuity file must make before it out-earns the buyout. null = never. */
+  breakEvenPayments(avgDebt: number, terms: ShieldTerms): number | null {
+    const program = shield.getProgram(avgDebt, terms);
+    const target = shield.buyoutPayout(avgDebt, terms);
+    if (!program) return null;
+    let total = 0;
+    for (let m = 1; m <= program.term; m++) {
+      total += shield.perpetualRevenueForDealMonth(avgDebt, m, terms);
+      if (total >= target) return m;
+    }
+    return null;
   },
   agentCommission(avgDebt: number, terms: ShieldTerms): number {
     return shield.getProgram(avgDebt, terms)?.commission ?? 0;
@@ -208,7 +280,12 @@ export function revenueModelLabel(key: BackendKey, avgDebt: number, inputs: Mode
   if (key === 'CS') {
     const t = inputs.consumerShield;
     const p = shield.getProgram(avgDebt, t);
-    return `Monthly perpetuity for the life of the program (${p?.term ?? '?'} months). Funding Tier keeps ${(t.frontCaptureRate * 100).toFixed(0)}% of each $${p?.payment ?? '?'} payment less the $${t.servicingDeductionPerPayment} servicing deduction for the first ${t.frontMonths} months, then ${(t.backendCaptureRate * 100).toFixed(0)}%.`;
+    const perp = `Monthly perpetuity for the life of the program (${p?.term ?? '?'} months). Funding Tier keeps ${(t.frontCaptureRate * 100).toFixed(0)}% of each $${p?.payment ?? '?'} payment less the $${t.servicingDeductionPerPayment} servicing deduction for the first ${t.frontMonths} months, then ${(t.backendCaptureRate * 100).toFixed(0)}%.`;
+    const buy = `Enrollment File Buyout: one advance of $${shield.buyoutPayout(avgDebt, t).toFixed(0)} ((${p?.payment ?? '?'} − ${t.servicingDeductionPerPayment}) × ${(shield.buyoutRate(avgDebt, t) * 100).toFixed(0)}% × ${t.buyout.months}), paid once the first payment clears. Nothing recurs.`;
+    const share = t.buyoutSharePct ?? 0;
+    if (share <= 0) return perp;
+    if (share >= 100) return buy;
+    return `${share.toFixed(0)}% of files bought out, ${(100 - share).toFixed(0)}% kept on the perpetuity. ${buy} ${perp}`;
   }
   const t = inputs.legacy;
   const term = legacy.getMaxTerm(avgDebt, t);
@@ -218,6 +295,8 @@ export function revenueModelLabel(key: BackendKey, avgDebt: number, inputs: Mode
   return `Monthly perpetuity across a ${term}-month term. Client draft $${pay.toFixed(0)} = service fee + $${t.maintenanceFee} maintenance + $${draftFee} processing (${schedule}). Months 1-2 pass through less the $${draftFee} draft fee; from month 3 the maintenance fee also comes off and Funding Tier keeps ${(t.tier1Rate * 100).toFixed(0)}% of what is left.`;
 }
 
-export function isPerpetuity(key: BackendKey): boolean {
-  return key !== 'LEVEL';
+export function isPerpetuity(key: BackendKey, inputs?: ModelInputs): boolean {
+  if (key === 'LEVEL') return false;
+  if (key === 'CS' && inputs && (inputs.consumerShield.buyoutSharePct ?? 0) >= 100) return false;
+  return true;
 }

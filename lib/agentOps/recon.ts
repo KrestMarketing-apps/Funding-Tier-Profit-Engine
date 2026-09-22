@@ -12,6 +12,8 @@ import { BACKEND_LABEL } from './types';
  *   amount_mismatch      matched, but enrolled debt differs beyond tolerance
  *   status_mismatch      backend says cancelled / refunded; GHL still says won
  *   rep_mismatch         the backend's rep column names a different agent
+ *   payout_mismatch      Shield: the deal is marked buyout / perpetual in GHL but the
+ *                        file came in under the other Consumer Shield login
  *   missing_at_backend   the rep is credited with a deal the backend never got
  *   unclaimed_at_backend the backend paid on a file no rep is credited with
  *
@@ -219,6 +221,10 @@ function judge(
     const creditedName = agents.find((a) => a.id === credited)?.name ?? credited;
     status = 'rep_mismatch';
     explanation = `The backend has ${backendRep.name} on this file; GoHighLevel credits ${creditedName}.`;
+  } else if (file.backend === 'CS' && e.csPayout && file.csPayout && e.csPayout !== file.csPayout) {
+    status = 'payout_mismatch';
+    const lbl = (x: string) => (x === 'buyout' ? 'File Buyout' : 'Perpetual');
+    explanation = `GoHighLevel has this Shield deal as ${lbl(e.csPayout)}, but Consumer Shield reported it under the ${lbl(file.csPayout)} login. It pays ${file.csPayout === 'buyout' ? 'one advance, not a monthly share' : 'monthly, not an advance'} — fix whichever is wrong.`;
   } else if (delta != null && !withinTolerance(e.enrolledDebt!, file.enrolledDebt!)) {
     status = 'amount_mismatch';
     explanation = `Enrolled debt differs by ${delta >= 0 ? '+' : ''}${delta.toLocaleString('en-US', { style: 'currency', currency: 'USD' })}.`;
@@ -251,9 +257,10 @@ export function reconSummary(rows: ReconRow[]) {
     amountMismatch: count('amount_mismatch'),
     statusMismatch: count('status_mismatch'),
     repMismatch: count('rep_mismatch'),
+    payoutMismatch: count('payout_mismatch'),
     missingAtBackend: count('missing_at_backend'),
     unclaimedAtBackend: count('unclaimed_at_backend'),
-    confirmedPayout: money('matched') + money('amount_mismatch') + money('rep_mismatch'),
+    confirmedPayout: money('matched') + money('amount_mismatch') + money('rep_mismatch') + money('payout_mismatch'),
     unclaimedPayout: money('unclaimed_at_backend'),
   };
 }

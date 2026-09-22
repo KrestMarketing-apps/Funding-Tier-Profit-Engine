@@ -17,6 +17,21 @@ export const BACKEND_LABEL: Record<BackendKey, string> = {
   UNKNOWN: 'Unassigned',
 };
 
+/**
+ * How a Consumer Shield file pays Funding Tier. The Enrollment File Buyout is
+ * elected file by file and submitted through its own Consumer Shield login, so
+ * every Shield deal and every Shield report row carries which one it is.
+ *   perpetual — monthly share of every client payment for the program's life
+ *   buyout    — one advance once the first payment clears: (payment − $40) × 65% × 6,
+ *               or × 100% × 6 at $20k+
+ */
+export type CsPayout = 'perpetual' | 'buyout';
+
+export const CS_PAYOUT_LABEL: Record<CsPayout, string> = {
+  perpetual: 'Perpetual',
+  buyout: 'File buyout',
+};
+
 export interface Agent {
   id: string;                 // GoHighLevel userId
   locationId: string;
@@ -90,6 +105,8 @@ export interface Enrollment {
   clientPhone: string | null;
   clientEmail: string | null;
   backend: BackendKey;
+  /** Shield deals only: which payout the file was submitted under. null for other backends. */
+  csPayout?: CsPayout | null;
   pipeline: string | null;
   stage: string | null;
   status: string | null;      // open | won | lost | abandoned
@@ -102,6 +119,8 @@ export interface Enrollment {
 export interface BackendFile {
   id: number;
   backend: BackendKey;
+  /** Shield files only: which Consumer Shield login / affiliate the report came from. */
+  csPayout?: CsPayout | null;
   externalId: string | null;
   clientName: string | null;
   clientPhone: string | null;
@@ -124,6 +143,7 @@ export type MatchStatus =
   | 'amount_mismatch'         // matched, but enrolled debt or payout differs
   | 'status_mismatch'         // backend says cancelled/refunded, GHL says won
   | 'rep_mismatch'            // matched, but the backend names a different rep
+  | 'payout_mismatch'         // Shield: rep marked it buyout/perpetual, the file came in under the other login
   | 'missing_at_backend'      // rep claims it; the backend has no such file
   | 'unclaimed_at_backend';   // backend paid for a file no rep is credited with
 
@@ -205,6 +225,7 @@ export interface ReconTotals {
   amountMismatch: number;
   statusMismatch: number;
   repMismatch: number;
+  payoutMismatch: number;
   missingAtBackend: number;
   unclaimedAtBackend: number;
   confirmedPayout: number;

@@ -1,4 +1,4 @@
-import type { BackendFile, BackendKey } from './types';
+import type { BackendFile, BackendKey, CsPayout } from './types';
 
 /**
  * Backend report ingestion.
@@ -187,6 +187,12 @@ export interface ParsedImport {
 
 /** Which affiliate rows belong to us, in reports that cover every affiliate. */
 const OUR_AFFILIATE = new RegExp(process.env.AO_AFFILIATE_PATTERN || 'funding\\s*tier', 'i');
+/**
+ * The Consumer Shield login buyout files are submitted through. Its affiliate
+ * name marks a row as a buyout file even when the report mixes both logins,
+ * and it always counts as ours.
+ */
+const CS_BUYOUT_AFFILIATE = new RegExp(process.env.AO_CS_BUYOUT_AFFILIATE_PATTERN || 'buy\\s*-?\\s*out', 'i');
 
 /**
  * Parse one backend report into FILE-level rows.
@@ -197,7 +203,11 @@ const OUR_AFFILIATE = new RegExp(process.env.AO_AFFILIATE_PATTERN || 'funding\\s
  * field, the earliest first-payment date, the latest status. The draft rows
  * themselves are the vesting engine's input, not this one's.
  */
-export function parseBackendReport(backend: BackendKey, filename: string, text: string, period?: string): ParsedImport {
+export function parseBackendReport(
+  backend: BackendKey, filename: string, text: string, period?: string,
+  /** Shield only: which Consumer Shield login the report was pulled from. */
+  csPayout?: CsPayout,
+): ParsedImport {
   const grid = parseDelimited(text.replace(/^\uFEFF/, ''));
   const empty = { backend, rows: [], columnMap: {}, unmapped: [], missing: [], warnings: [], parsed: 0, otherAffiliate: 0, collapsed: 0, drafts: [], declared: {} };
   if (grid.length < 2) return { ...empty, errors: ['File has no data rows.'] };
@@ -234,7 +244,8 @@ export function parseBackendReport(backend: BackendKey, filename: string, text: 
     if (stageRaw) lastStage = stageRaw;
 
     const affiliate = at('affiliate');
-    if (affiliate && !OUR_AFFILIATE.test(affiliate)) { otherAffiliate += 1; continue; }
+    const buyoutAffiliate = !!affiliate && CS_BUYOUT_AFFILIATE.test(affiliate);
+    if (affiliate && !buyoutAffiliate && !OUR_AFFILIATE.test(affiliate)) { otherAffiliate += 1; continue; }
 
     const joined = [at('firstName'), at('lastName')].filter(Boolean).join(' ').trim();
     const clientName = at('clientName') ?? (joined || null);
@@ -245,6 +256,7 @@ export function parseBackendReport(backend: BackendKey, filename: string, text: 
 
     const row: Omit<BackendFile, 'id' | 'batchId'> = {
       backend,
+      csPayout: backend === 'CS' ? (buyoutAffiliate ? 'buyout' : csPayout ?? 'perpetual') : null,
       externalId,
       clientName,
       clientPhone: (at('clientPhone') ?? '').replace(/\D/g, '').slice(-10) || null,

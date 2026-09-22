@@ -1,4 +1,4 @@
-import type { ActivityEvent, Agent, BackendKey, CallRecord, Enrollment } from './types';
+import type { ActivityEvent, Agent, BackendKey, CallRecord, CsPayout, Enrollment } from './types';
 
 /**
  * GoHighLevel (LeadConnector V2) client.
@@ -114,6 +114,18 @@ export function backendFromText(...parts: (string | null | undefined)[]): Backen
   if (/shield|consumer shield|validation/.test(hay)) return 'CS';
   if (/legacy|elite legal|elp|resolution/.test(hay)) return 'LEGACY';
   return 'UNKNOWN';
+}
+
+/**
+ * Shield payout option, read from the AO_FIELD_CS_PAYOUT custom field when it
+ * is configured, else from the pipeline / stage / opportunity name / tags.
+ * Anything mentioning "buyout" is a buyout file; every other Shield deal is on
+ * the perpetuity, which is the default contract.
+ */
+export function csPayoutFromText(backend: BackendKey, ...parts: (string | null | undefined)[]): CsPayout | null {
+  if (backend !== 'CS') return null;
+  const hay = parts.filter(Boolean).join(' ').toLowerCase();
+  return /buy\s*-?\s*out|advance fee/.test(hay) ? 'buyout' : 'perpetual';
 }
 
 // ── Users ────────────────────────────────────────────────────────────────────
@@ -328,6 +340,8 @@ export function isInitialEnrollmentStage(stage: string | null | undefined): bool
  *   AO_FIELD_CLOSER    a user picker / text field holding the closer's GHL user id
  *   AO_FIELD_BACKEND   dropdown: Level Debt | Pinnacle | Consumer Shield | ELP
  *   AO_FIELD_FILE_REF  the backend's file / account id for this client
+ *   AO_FIELD_CS_PAYOUT dropdown on Shield deals: Perpetual | File Buyout (anything
+ *                      containing "buyout" is a buyout file; blank = perpetual)
  * Any that are unset are simply not used.
  */
 function customFieldValue(o: any, fieldId: string | undefined): string | null {
@@ -439,6 +453,11 @@ export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 1
       }
 
       const backendField = customFieldValue(o, process.env.AO_FIELD_BACKEND);
+      const backend = backendField ? backendFromText(backendField) : backendFromText(pipeline, stage, pick<string>(o, 'name'));
+      const tags = (pick<any[]>(o, 'tags', 'contact.tags') ?? []).map(String).join(' ');
+      const csPayout = csPayoutFromText(
+        backend, customFieldValue(o, process.env.AO_FIELD_CS_PAYOUT), backendField, pipeline, stage, pick<string>(o, 'name'), tags,
+      );
 
       enrollments.push({
         id,
@@ -454,7 +473,8 @@ export async function fetchEnrollments(cfg: GhlConfig, since: Date, maxPages = 1
           ?? ([pick(contact, 'firstName'), pick(contact, 'lastName')].filter(Boolean).join(' ') || null),
         clientPhone: digits(pick(o, 'contact.phone', 'phone')),
         clientEmail: pick<string>(o, 'contact.email', 'email'),
-        backend: backendField ? backendFromText(backendField) : backendFromText(pipeline, stage, pick<string>(o, 'name')),
+        backend,
+        csPayout,
         pipeline,
         stage,
         status,

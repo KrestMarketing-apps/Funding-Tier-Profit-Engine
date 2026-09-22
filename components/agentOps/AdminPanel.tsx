@@ -11,6 +11,9 @@ import { Empty, Pill } from './parts';
  */
 export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh: () => void }) {
   const [backend, setBackend] = useState('LEVEL');
+  // Shield only: buyout files are submitted through their own Consumer Shield
+  // login, so every Shield report is tagged with the login it was pulled from.
+  const [csPayout, setCsPayout] = useState<'perpetual' | 'buyout'>('perpetual');
   const [period, setPeriod] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [dryRun, setDryRun] = useState(true);
@@ -54,6 +57,7 @@ export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh
     try {
       const body = new FormData();
       body.set('backend', backend);
+      if (backend === 'CS') body.set('csPayout', csPayout);
       body.set('file', file);
       if (period) body.set('period', period);
       body.set('dryRun', String(dryRun));
@@ -106,6 +110,17 @@ export function AdminPanel({ data, onRefresh }: { data: DashboardData; onRefresh
               <option value="LEGACY">Elite Legal Practice</option>
             </select>
           </label>
+          {backend === 'CS' && (
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span style={lbl}>Consumer Shield login</span>
+              <select value={csPayout} onChange={(e) => setCsPayout(e.target.value as 'perpetual' | 'buyout')}
+                style={{ ...inputStyle, fontSize: 12 }}
+                title="Which login the report was pulled from. Buyout files are submitted through their own login and pay one advance instead of a monthly share.">
+                <option value="perpetual">Perpetual (main login)</option>
+                <option value="buyout">File buyout login</option>
+              </select>
+            </label>
+          )}
           <label style={{ display: 'grid', gap: 4 }}>
             <span style={lbl}>Period label</span>
             <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="2026-09"

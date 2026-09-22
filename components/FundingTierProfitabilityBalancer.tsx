@@ -17,6 +17,19 @@ import {
   LD_FIRST_SETTLEMENT_MILESTONE_MONTH, LD_TERM_MIN, LD_TERM_MAX,
   LD_SETTLEMENT_PCT_DEFAULT, LD_LEGAL_FEE_MONTHLY, type LdProgram,
 } from "./levelDebtEngine";
+import { CONSUMER_SHIELD, DEFAULT_ASSUMPTIONS } from "./fundingTierEngine";
+
+/** Consumer Shield payout election, file by file: monthly perpetuity or the Enrollment File Buyout. */
+export type CsPayoutOption = "perpetual" | "buyout";
+
+const CS_BUYOUT = DEFAULT_ASSUMPTIONS.consumerShield.buyout;
+/** Enrollment File Buyout advance — (payment − $40) × 65% × 6, or × 100% × 6 at $20k+. */
+function csBuyoutPayout(debt: number) {
+  return debt >= 4000 ? CONSUMER_SHIELD.buyoutPayout(debt, DEFAULT_ASSUMPTIONS) : 0;
+}
+function csBuyoutRate(debt: number) {
+  return debt >= CS_BUYOUT.highDebtMinDebt ? CS_BUYOUT.highDebtRate : CS_BUYOUT.standardRate;
+}
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -271,12 +284,14 @@ export type DealAnalysisArgs = {
   adjustedUrgency: number;
   levelRepPct: number;
   csRepUpfront: number; csRepAfter4: number;
+  /** Which Consumer Shield payout the file is submitted under. */
+  csPayout: CsPayoutOption;
 };
 
 export type DealAnalysis = {
   debtAmount: number;
   ld: BackendResult & { grossRevenue: number; program: LdProgram };
-  cs: BackendResult & { program: ConsumerShieldProgram | null; payment: number; netPayment: number; frontRevenue: number; tailMonthly: number; revAfter2: number; revAfter4: number; revAtHalf: number; breakEvenRefMonth: number; breakEvenRefRevenue: number };
+  cs: BackendResult & { payoutOption: CsPayoutOption; buyoutPayout: number; buyoutRate: number; perpetualExpected: number; perpetualNet: number; buyoutNet: number; perpetualFull: number; perpetualBreakEven: number | null; perpetualLiabilityClear: number | null; program: ConsumerShieldProgram | null; payment: number; netPayment: number; frontRevenue: number; tailMonthly: number; revAfter2: number; revAfter4: number; revAtHalf: number; breakEvenRefMonth: number; breakEvenRefRevenue: number };
   elp: BackendResult & { schedule: ElpSchedule; revAfter2: number; revAfter4: number; revAtHalf: number; bandLabel: string; breakEvenRefMonth: number; breakEvenRefRevenue: number };
   ranked: BackendResult[];
   recommended: BackendKey | null;
@@ -337,9 +352,17 @@ function analyzeDeal(a: DealAnalysisArgs): DealAnalysis {
   const csExpected  = prog ? calcExpectedRevenue(csEff, csRev2, csRev4, csRevBE, csFull) : 0;
   const csRep       = prog ? round2(a.csRepUpfront + a.csRepAfter4 * (csEff.p4 / 100)) : 0;
   const csScoreRaw  = csExpected * (0.5 + (a.csLeadQuality / 100) * 0.7) * (1 - urgencyBias * 0.35);
+  // Enrollment File Buyout — one advance once the first payment clears. Priced
+  // on the same basis as Level Debt's 8%: a file whose first payment cleared.
+  const csBuy       = prog ? round2(csBuyoutPayout(debt)) : 0;
+  const csIsBuy     = a.csPayout === "buyout";
+  const csBuyScore  = csBuy * (1 + urgencyBias * 0.6);
 
   const cs = {
-    key: "CS" as const, name: BACKEND_META.CS.name,
+    key: "CS" as const, name: csIsBuy ? `${BACKEND_META.CS.name} (Buyout)` : BACKEND_META.CS.name,
+    payoutOption: a.csPayout, buyoutPayout: csBuy, buyoutRate: csBuyoutRate(debt),
+    perpetualExpected: csExpected, perpetualNet: round2(csExpected - csRep), buyoutNet: round2(csBuy - csRep),
+    perpetualFull: csFull, perpetualBreakEven: csBE, perpetualLiabilityClear: csBE !== null ? csBE + 4 : null,
     eligible: !!prog,
     ineligibleReason: prog ? "" : "Consumer Shield requires at least $4,000 in enrolled debt.",
     program: prog, payment: prog?.payment ?? 0, netPayment: csNet,
@@ -347,15 +370,15 @@ function analyzeDeal(a: DealAnalysisArgs): DealAnalysis {
     revAfter2: csRev2, revAfter4: csRev4,
     revAtHalf: prog ? csRevenueAt(Math.max(1, Math.floor(csTerm * 0.5)), csNet, csTerm) : 0,
     breakEvenRefMonth: csBERef, breakEvenRefRevenue: csRevBE,
-    expectedRevenue: csExpected, fullRevenue: csFull,
-    adjustedScore: prog ? csScoreRaw : -1,
-    breakEvenMonth: csBE,
-    liabilityClearMonth: csBE !== null ? csBE + 4 : null,
+    expectedRevenue: csIsBuy ? csBuy : csExpected, fullRevenue: csIsBuy ? csBuy : csFull,
+    adjustedScore: prog ? (csIsBuy ? csBuyScore : csScoreRaw) : -1,
+    breakEvenMonth: csIsBuy ? (prog && csBuy >= ldRev ? 1 : null) : csBE,
+    liabilityClearMonth: csIsBuy ? (prog ? 1 : null) : (csBE !== null ? csBE + 4 : null),
     term: csTerm,
     timeline: csTimeline,
     effective: csEff,
     repCost: csRep,
-    netRevenue: round2(csExpected - csRep),
+    netRevenue: round2((csIsBuy ? csBuy : csExpected) - csRep),
   };
 
   // ── Elite Legal Practice / Legacy Capital ─────────────────
@@ -764,14 +787,17 @@ function BackendComparison({ analysis }: { analysis: DealAnalysis }) {
   const rows: { label: string; tip: string; vals: (b: BackendResult) => string; highlight?: (b: BackendResult) => boolean }[] = [
     { label:"Revenue model", tip:"How Funding Tier is paid on this backend.",
       vals: b => b.key==="LD" ? "One-time 8% of enrolled debt"
-             : b.key==="CS" ? "100% of net payment Mo 1–4, then 35%"
+             : b.key==="CS" ? (cs.payoutOption==="buyout"
+                 ? `File buyout: net payment × ${Math.round(cs.buyoutRate*100)}% × 6, once Payment 1 clears`
+                 : "100% of net payment Mo 1–4, then 35%")
              : `100% pass-through Mo 1–2, then ${Math.round(elp.schedule.tierRate*100)}% of service fee` },
     { label:"Minimum enrolled debt", tip:"Hard floor the servicer will accept.",
       vals: b => money.format(BACKEND_META[b.key].minDebt) },
     { label:"Eligible at this deal", tip:"Whether this backend can take the deal at the current enrolled debt.",
       vals: b => b.eligible ? "Yes" : "No" },
     { label:"Program term", tip:"Months the client pays. Level Debt recognizes once and stops.",
-      vals: b => !b.eligible ? "—" : b.key==="LD" ? "Recognized at Month 2" : `${b.term} months` },
+      vals: b => !b.eligible ? "—" : b.key==="LD" ? "Recognized at Month 2"
+             : b.key==="CS" && cs.payoutOption==="buyout" ? `Bought out after Payment 1 (${cs.program?.term ?? "—"}-mo program)` : `${b.term} months` },
     { label:"Expected revenue / deal", tip:"Survival-weighted revenue after the lead-quality adjustment. This is the number to compare.",
       vals: b => b.eligible ? money.format(b.expectedRevenue) : "—",
       highlight: b => b.eligible && b.expectedRevenue === bestExpected },
@@ -786,9 +812,15 @@ function BackendComparison({ analysis }: { analysis: DealAnalysis }) {
     { label:"Break-even vs Level Debt", tip:"First month cumulative revenue catches the Level Debt 8%.",
       vals: fmtBE },
     { label:"Liability clear", tip:"Break-even month plus the 4-month chargeback buffer Funding Tier models per payment.",
-      vals: b => !b.eligible ? "—" : b.key==="LD" ? "After Payment 2" : b.liabilityClearMonth ? `Month ${b.liabilityClearMonth}` : "—" },
+      vals: b => !b.eligible ? "—" : b.key==="LD" ? "After Payment 2"
+             : b.key==="CS" && cs.payoutOption==="buyout" ? "Clawback terms not stated in payout schedule"
+             : b.liabilityClearMonth ? `Month ${b.liabilityClearMonth}` : "—" },
     { label:"Cash speed", tip:"How quickly the money is actually in the bank.",
-      vals: b => b.key==="LD" ? "Fastest — 20th of Month 3" : b.key==="CS" ? "Monthly, ~1 month behind each payment" : "Monthly, ~1 month behind each draft" },
+      vals: b => b.key==="LD" ? "Fastest — 20th of Month 3"
+             : b.key==="CS" ? (cs.payoutOption==="buyout" ? "One advance, ~1 month after Payment 1 clears" : "Monthly, ~1 month behind each payment")
+             : "Monthly, ~1 month behind each draft" },
+    { label:"% of enrolled debt", tip:"Expected revenue as a share of enrolled debt — the basis a settlement deal is paid on (8%).",
+      vals: b => b.eligible && analysis.debtAmount > 0 ? `${(b.expectedRevenue / analysis.debtAmount * 100).toFixed(2)}%` : "—" },
   ];
 
   return (
@@ -1486,7 +1518,7 @@ function KnowledgeBase({ open, onClose }: { open:boolean; onClose:()=>void }) {
       </div>
       <div style={{ overflowY:"auto", padding:"13px 16px 20px", display:"grid", gap:13 }}>
         {[
-          ["Three Backends, One Deal", `Level Debt — settlement. One-time 8% of enrolled debt, recognized after 2 cleared payments, then nothing recurs.\n\nConsumer Shield — debt validation. 100% of (payment − $40 servicing) for months 1–4, then 35% for the rest of the term.\n\nElite Legal Practice / Legacy Capital Services — attorney model. Months 1–2 pass through in full (service fee + maintenance, less the draft fee); from month 3 Funding Tier keeps the tier rate of the service fee portion only.`],
+          ["Three Backends, One Deal", `Level Debt — settlement. One-time 8% of enrolled debt, recognized after 2 cleared payments, then nothing recurs.\n\nConsumer Shield — debt validation. 100% of (payment − $40 servicing) for months 1–4, then 35% for the rest of the term. Or, file by file, the Enrollment File Buyout: once the first month's payment (or both split payments) clears, Consumer Shield buys the file with one advance of (payment − $40) × 65% × 6 — × 100% × 6 on $20k+ deals — and nothing recurs. Switch it with Consumer Shield Payout at the top.\n\nElite Legal Practice / Legacy Capital Services — attorney model. Months 1–2 pass through in full (service fee + maintenance, less the draft fee); from month 3 Funding Tier keeps the tier rate of the service fee portion only.`],
           ["Survival Funnels", `Each backend has its own set of sliders = % of ALL that backend's deals reaching that milestone (cumulative, cascading).\n\nIf 25% complete, those same 25% also cleared break-even, P4, and P2.\n\nExpected Revenue = (P2−P4)% × rev2 + (P4−BE)% × rev4 + (BE−Comp)% × revBE + Comp% × fullRev`],
           ["Lead Quality", `Scales that backend's effective survival rates.\nFormula: effectiveRate = setRate × (0.35 + 0.65 × quality/100)\n\nAt 100%: unchanged. At 50%: ×0.68. At 0%: ×0.35 floor.\n\nCS and ELP carry separate quality sliders — an attorney-model book and a validation book rarely churn the same way.`],
           ["Cash Urgency + Stability Adjustment", `Cash urgency sets Level Debt's share:\n  LD% = 20 + (adjustedUrgency × 0.65)\n\nThe remainder splits between CS and ELP in proportion to their adjusted expected value, so the stronger perpetuity backend takes the larger tail share.\n\nThe stability penalty is computed on the unweighted mean of the CS and ELP effective funnels — deliberately independent of your portfolio sliders so the recommendation never chases itself:\n• Low blended completion (<50%) → up to +25pt\n• Low blended P2 rate (<50%) → up to +15pt\n• High funnel drop-off → up to +10pt`],
@@ -1863,6 +1895,7 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
   const [mixElpPct,        setMixElpPct]        = useState(24);
   const [kbOpen,           setKbOpen]           = useState(false);
   const [openProgram,      setOpenProgram]      = useState<string>("CS Program A");
+  const [csPayout,         setCsPayout]         = useState<CsPayoutOption>("perpetual");
   const [active,           setActive]           = useState<SectionId>("compare");
   const mainRef = useRef<HTMLDivElement>(null);
   const navIndex = Math.max(0, NAV.findIndex(n => n.id === active));
@@ -1926,9 +1959,9 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
   const analysisArgs = useMemo(() => ({
     csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel, ldSplitPayments,
     ldTerm, ldSettlementPct, ldLegalFee,
-    adjustedUrgency: stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4,
+    adjustedUrgency: stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4, csPayout,
   }), [csFunnel, csLeadQuality, elpFunnel, elpLeadQuality, ldAttorneyModel, ldSplitPayments,
-      ldTerm, ldSettlementPct, ldLegalFee, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4]);
+      ldTerm, ldSettlementPct, ldLegalFee, stability.adjusted, levelRepPct, csRepUpfront, csRepAfter4, csPayout]);
 
   const deal = useMemo(
     () => analyzeDeal({ debtAmount, elpTerms: elpTermsFor(debtAmount), ...analysisArgs }),
@@ -2066,13 +2099,37 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
             </span>
           </div>
         </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:6, minWidth:190 }}>
+          <label style={{ fontSize:10, fontWeight:800, letterSpacing:"0.04em", color:"rgba(245,248,247,0.68)" }}>
+            CONSUMER SHIELD PAYOUT
+          </label>
+          <div style={{ display:"flex", gap:6 }}>
+            {(["perpetual", "buyout"] as const).map(o => (
+              <button key={o} type="button" onClick={() => setCsPayout(o)}
+                title={o === "buyout"
+                  ? "Enrollment File Buyout — one advance once Payment 1 clears: (payment − $40) × 65% × 6, or × 100% × 6 at $20k+"
+                  : "Monthly perpetuity — 100% of net payment months 1–4, then 35% for the rest of the term"}
+                style={{ padding:"6px 10px", borderRadius:7, fontSize:11.5, fontWeight:800, cursor:"pointer",
+                  border:`1px solid ${csPayout === o ? "#2dd4bf" : "rgba(255,255,255,0.22)"}`,
+                  background: csPayout === o ? "rgba(45,212,191,0.16)" : "transparent",
+                  color: csPayout === o ? "#2dd4bf" : "rgba(245,248,247,0.8)" }}>
+                {o === "buyout" ? "File buyout" : "Perpetual"}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize:10, color:"rgba(245,248,247,0.55)", fontWeight:600 }}>
+            {deal.cs.eligible
+              ? `Buyout ${money.format(deal.cs.buyoutPayout)} · perpetual ${money.format(deal.cs.perpetualExpected)} exp.`
+              : "Under $4k — not eligible"}
+          </div>
+        </div>
       </ControlRow>
       <MetricsGrid>
         <Metric label="LEVEL DEBT — SETTLEMENT"
           value={deal.ld.eligible ? money.format(deal.ld.expectedRevenue) : "Not eligible"} />
         <Metric label="ELITE LEGAL — RESOLUTION" accent
           value={deal.elp.eligible ? money.format(deal.elp.expectedRevenue) : "Not eligible"} />
-        <Metric label="CONSUMER SHIELD — VALIDATION"
+        <Metric label={csPayout === "buyout" ? "CONSUMER SHIELD — FILE BUYOUT" : "CONSUMER SHIELD — VALIDATION"}
           value={deal.cs.eligible ? money.format(deal.cs.expectedRevenue) : "Not eligible"} />
         <Metric label="BREAK-EVEN VS LD"
           value={deal.ld.eligible
@@ -2254,7 +2311,15 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
                 tooltip={`${money.format(deal.cs.netPayment)} per month for the first four payments — 100% of the net payment.`} />
               <MetricCard title="Tail End – Revenue" highlight={deal.cs.eligible}
                 value={deal.cs.eligible ? money.format(deal.cs.tailMonthly) : "N/A"}
-                inlineTag={deal.cs.term ? `Months 5–${deal.cs.term}, per month` : undefined} />
+                inlineTag={deal.cs.program ? `Months 5–${deal.cs.program.term}, per month` : undefined} />
+              <MetricCard title="File Buyout" highlight={deal.cs.eligible && csPayout === "buyout"}
+                value={deal.cs.eligible ? money.format(deal.cs.buyoutPayout) : "N/A"}
+                inlineTag={deal.cs.eligible && deal.debtAmount > 0 ? `${(deal.cs.buyoutPayout / deal.debtAmount * 100).toFixed(2)}% of debt` : undefined}
+                tooltip={`Enrollment File Buyout: ${money.format(deal.cs.netPayment)} net × ${Math.round(deal.cs.buyoutRate * 100)}% × 6 = ${money.format(deal.cs.buyoutPayout)}, paid once the first month's payment (or both split payments) clears. Replaces every perpetuity payment on the file.`} />
+              <MetricCard title="Perpetual — Expected"
+                value={deal.cs.eligible ? money.format(deal.cs.perpetualExpected) : "N/A"}
+                inlineTag={deal.cs.eligible && deal.debtAmount > 0 ? `${(deal.cs.perpetualExpected / deal.debtAmount * 100).toFixed(2)}% of debt` : undefined}
+                tooltip={`Survival-weighted perpetuity from the CS funnel. Level Debt at 8% on the same deal: ${money.format(deal.debtAmount * 0.08)}.`} />
             </div>
           </div>
         </div>
@@ -2264,10 +2329,10 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
         {active === "csfunnel" && (<div style={{ display:"grid", gap:18 }}>
         {/* Funnel explainers */}
         <Accordion title="Consumer Shield — Expected Revenue Funnel" defaultOpen={true} accent={FT_BLUE}
-          badge={money.format(deal.cs.expectedRevenue)+" / deal"}>
+          badge={money.format(deal.cs.perpetualExpected)+" / deal (perpetual)"}>
           <FunnelExplainer prefix="CS" accent={FT_BLUE} eff={csEff}
             rev2={deal.cs.revAfter2} rev4={deal.cs.revAfter4} revBE={csRevBE}
-            fullRev={deal.cs.fullRevenue} ldRev={deal.ld.expectedRevenue} expected={deal.cs.expectedRevenue} />
+            fullRev={deal.cs.perpetualFull} ldRev={deal.ld.expectedRevenue} expected={deal.cs.perpetualExpected} />
         </Accordion>
 
         </div>)}
@@ -2285,8 +2350,14 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
         {active === "csmilestones" && (<div style={{ display:"grid", gap:18 }}>
         {/* Milestone timelines */}
         <Accordion title="Consumer Shield Revenue Milestones" defaultOpen={true} accent={FT_BLUE} badge="Hover dots for detail">
+          {csPayout === "buyout" && (
+            <div style={{ fontSize:12.5, color:"#1552a8", background:"#dbeafe", border:"1px solid #bfdbfe", borderRadius:8, padding:"8px 11px", marginBottom:12 }}>
+              File buyout selected — this file would be bought out for <strong>{money.format(deal.cs.buyoutPayout)}</strong> once Payment 1 clears.
+              The curve below is the perpetuity it replaces.
+            </div>
+          )}
           <MilestonesTimeline timeline={deal.cs.timeline}
-            breakEvenMonth={deal.cs.breakEvenMonth} liabilityClearMonth={deal.cs.liabilityClearMonth}
+            breakEvenMonth={deal.cs.perpetualBreakEven} liabilityClearMonth={deal.cs.perpetualLiabilityClear}
             levelDebtRevenue={deal.ld.expectedRevenue} debtAmount={deal.debtAmount}
             accent={FT_BLUE} accentDark="#1552a8"
             frontPhase="Front" frontEndsMonth={4}
@@ -2295,7 +2366,7 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
             <MetricCard title="After CS Payment 2" value={money.format(deal.cs.revAfter2)} subtitle="Early quality signal" />
             <MetricCard title="After CS Payment 4" value={money.format(deal.cs.revAfter4)} subtitle="Front window closes" />
             <MetricCard title="CS 1/2 Program"     value={money.format(deal.cs.revAtHalf)} subtitle="Mid-term reference" />
-            <MetricCard title="CS Full Program"    value={money.format(deal.cs.fullRevenue)} subtitle="Best-case ceiling" />
+            <MetricCard title="CS Full Program"    value={money.format(deal.cs.perpetualFull)} subtitle="Best-case ceiling" />
           </div>
         </Accordion>
 
@@ -2331,8 +2402,8 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
         {active === "timelines" && (<div style={{ display:"grid", gap:18 }}>
         {/* Monthly revenue timelines */}
         <Accordion title="Consumer Shield Monthly Revenue Timeline" accent={FT_BLUE}>
-          <MonthlyRevenueTable timeline={deal.cs.timeline} breakEvenMonth={deal.cs.breakEvenMonth}
-            liabilityClearMonth={deal.cs.liabilityClearMonth} frontPhase="Front" frontEndsMonth={4}
+          <MonthlyRevenueTable timeline={deal.cs.timeline} breakEvenMonth={deal.cs.perpetualBreakEven}
+            liabilityClearMonth={deal.cs.perpetualLiabilityClear} frontPhase="Front" frontEndsMonth={4}
             accent={FT_BLUE} accentDark="#1552a8" />
         </Accordion>
 

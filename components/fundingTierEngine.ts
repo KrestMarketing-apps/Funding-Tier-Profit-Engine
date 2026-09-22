@@ -65,6 +65,19 @@ export interface TransferCost {
 }
 export type TransferBufferKey = keyof TransferCost;
 
+export interface CSBuyoutTerms {
+  /** Months of net payment the advance is sized on. */
+  months: number;
+  /** Share of net payment for standard deals (under the high-debt threshold). */
+  standardRate: number;
+  /** Share of net payment for high-debt deals. */
+  highDebtRate: number;
+  /** Enrolled debt at or above which the high-debt rate applies. */
+  highDebtMinDebt: number;
+  /** Deal-month whose cleared payment triggers the buyout. */
+  triggerDealMonth: number;
+}
+
 export interface Assumptions {
   levelDebt: {
     minDebt: number;
@@ -81,6 +94,15 @@ export interface Assumptions {
     backendCaptureRate: number;
     agentPayoutMonth: number;
     programs: CSProgram[];
+    /**
+     * Enrollment File Buyout (Consumer Shield "Deal Payout Schedule").
+     * Once the first month's payment — or both halves of a split first month —
+     * has fully cleared, Consumer Shield buys the file out with a one-time
+     * advance fee instead of paying the monthly perpetuity:
+     *   standard deals : (payment − servicing deduction) × 65%  × 6 months
+     *   $20,000+ deals : (payment − servicing deduction) × 100% × 6 months
+     */
+    buyout: CSBuyoutTerms;
   };
   legacy: {
     minDebt: number;
@@ -192,6 +214,8 @@ export const DEFAULT_ASSUMPTIONS: Assumptions = {
       { code: "H", min: 30000, max: 49999.99, payment: 520, term: 36, commission: 500 },
       { code: "I", min: 50000, max: Infinity, payment: 620, term: 36, commission: 600 },
     ],
+    // Deal Payout Schedule — 6-Month Payout Calculations (Consumer Shield).
+    buyout: { months: 6, standardRate: 0.65, highDebtRate: 1.0, highDebtMinDebt: 20000, triggerDealMonth: 1 },
   },
   legacy: {
     minDebt: ELP_MIN_DEBT,
@@ -350,6 +374,14 @@ export const CONSUMER_SHIELD = {
     return prog ? prog.commission : 0;
   },
   agentPayoutMonth(a: Assumptions): number { return a.consumerShield.agentPayoutMonth; },
+  /** One-time Enrollment File Buyout advance, paid once the first payment clears. */
+  buyoutPayout(debt: number, a: Assumptions): number {
+    const prog = this.getProgram(debt, a);
+    if (!prog) return 0;
+    const b = a.consumerShield.buyout;
+    const rate = debt >= b.highDebtMinDebt ? b.highDebtRate : b.standardRate;
+    return (prog.payment - a.consumerShield.servicingDeductionPerPayment) * rate * b.months;
+  },
   clawbackRule: "No clawback for ordinary cancellation. Chargeback only on a formal payment dispute.",
 };
 

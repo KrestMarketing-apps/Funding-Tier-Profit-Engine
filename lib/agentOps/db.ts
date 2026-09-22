@@ -284,6 +284,11 @@ const DDL: string[] = [
   `alter table ao_backend_files add column if not exists declared_schedule text`,
   `alter table ao_backend_files add column if not exists cancelled_at date`,
   `alter table ao_enrollments add column if not exists commission_override numeric(12,2)`,
+  // Consumer Shield payout option — perpetual vs Enrollment File Buyout. Buyout
+  // files go in through their own Consumer Shield login, so both the GHL claim
+  // and the backend's report carry it. null on every non-Shield row.
+  `alter table ao_enrollments add column if not exists cs_payout text`,
+  `alter table ao_backend_files add column if not exists cs_payout text`,
 
   // Draft history per backend file, straight from the backend's own reports.
   // file_key is the backend's file/client id, or the client name when a report

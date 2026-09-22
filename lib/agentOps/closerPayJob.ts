@@ -97,7 +97,7 @@ export async function recomputeCloserPay(opts: { asOf?: string; pushToGhl?: bool
     id: r.id, locationId: r.location_id, agentId: r.agent_id, closerId: r.closer_agent_id, closerSource: r.closer_source,
     isEnrolled: true, firstEnrolledAt: r.first_enrolled_at ? new Date(r.first_enrolled_at).toISOString() : null,
     backendFileRef: r.backend_file_ref, contactId: r.contact_id, clientName: r.client_name, clientPhone: r.client_phone,
-    clientEmail: r.client_email, backend: r.backend, pipeline: r.pipeline, stage: r.stage, status: r.status,
+    clientEmail: r.client_email, backend: r.backend, csPayout: r.cs_payout ?? null, pipeline: r.pipeline, stage: r.stage, status: r.status,
     enrolledDebt: r.enrolled_debt == null ? null : Number(r.enrolled_debt),
     enrolledAt: r.enrolled_at ? new Date(r.enrolled_at).toISOString() : null,
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
@@ -107,7 +107,7 @@ export async function recomputeCloserPay(opts: { asOf?: string; pushToGhl?: bool
 
   const d10 = (v: any) => (v ? (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10) : null);
   const files: (BackendFile & { declared: PaymentSchedule | null; cancelledAt: string | null })[] = fileRows.map((r) => ({
-    id: Number(r.id), backend: r.backend, externalId: r.external_id, clientName: r.client_name, clientPhone: r.client_phone,
+    id: Number(r.id), backend: r.backend, csPayout: r.cs_payout ?? null, externalId: r.external_id, clientName: r.client_name, clientPhone: r.client_phone,
     clientLast4: r.client_last4, repName: r.rep_name, fileStatus: r.file_status,
     enrolledDebt: r.enrolled_debt == null ? null : Number(r.enrolled_debt), enrolledAt: d10(r.enrolled_at),
     firstPaymentAt: d10(r.first_payment_at), payoutAmount: r.payout_amount == null ? null : Number(r.payout_amount),

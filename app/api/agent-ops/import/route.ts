@@ -3,7 +3,7 @@ import { fileKeyFor, parseBackendReport } from '../../../../lib/agentOps/imports
 import { query } from '../../../../lib/agentOps/db';
 import { requireAdmin } from '../../../../lib/agentOps/guard';
 import { recomputeCloserPay } from '../../../../lib/agentOps/closerPayJob';
-import type { BackendKey } from '../../../../lib/agentOps/types';
+import type { BackendKey, CsPayout } from '../../../../lib/agentOps/types';
 
 /**
  * Backend report upload. The parse result is always returned — which columns
@@ -38,7 +38,13 @@ export async function POST(req: NextRequest) {
   const period = String(form.get('period') ?? '') || undefined;
   const dryRun = String(form.get('dryRun') ?? '') === 'true';
   const text = await file.text();
-  const parsed = parseBackendReport(backend, file.name, text, period);
+  // Shield only: which Consumer Shield login the report came from. Buyout files
+  // are submitted through their own login, so the uploader says which one.
+  const csPayoutRaw = String(form.get('csPayout') ?? '');
+  const csPayout: CsPayout | undefined = backend === 'CS'
+    ? (csPayoutRaw === 'buyout' ? 'buyout' : 'perpetual')
+    : undefined;
+  const parsed = parseBackendReport(backend, file.name, text, period, csPayout);
 
   if (dryRun || parsed.rows.length === 0) {
     return NextResponse.json({ ok: parsed.errors.length === 0, dryRun: true, ...summary(parsed) });
@@ -56,8 +62,8 @@ export async function POST(req: NextRequest) {
     await query(
       `insert into ao_backend_files
         (backend, external_id, client_name, client_phone, client_last4, file_status, enrolled_debt,
-         first_payment_at, payout_amount, payout_at, period, batch_id, rep_name, enrolled_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         first_payment_at, payout_amount, payout_at, period, batch_id, rep_name, enrolled_at, cs_payout)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        on conflict (backend, coalesce(external_id, ''), coalesce(client_phone, ''), coalesce(client_name, ''))
        do update set file_status = excluded.file_status,
                      enrolled_debt = excluded.enrolled_debt,
@@ -67,10 +73,11 @@ export async function POST(req: NextRequest) {
                      period = excluded.period,
                      rep_name = coalesce(excluded.rep_name, ao_backend_files.rep_name),
                      enrolled_at = coalesce(excluded.enrolled_at, ao_backend_files.enrolled_at),
+                     cs_payout = coalesce(excluded.cs_payout, ao_backend_files.cs_payout),
                      batch_id = excluded.batch_id,
                      imported_at = now()`,
       [r.backend, r.externalId, r.clientName, r.clientPhone, r.clientLast4, r.fileStatus, r.enrolledDebt,
-        r.firstPaymentAt, r.payoutAmount, r.payoutAt, r.period, batchId, r.repName, r.enrolledAt],
+        r.firstPaymentAt, r.payoutAmount, r.payoutAt, r.period, batchId, r.repName, r.enrolledAt, r.csPayout ?? null],
     );
     imported += 1;
   }

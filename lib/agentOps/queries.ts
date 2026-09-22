@@ -3,7 +3,7 @@ import { reconcile, reconSummary } from './recon';
 import { buildScorecards } from './scorecards';
 import { demoDashboard } from './demo';
 import type {
-  Agent, AttendanceDay, BackendFile, BackendKey, CallRecord, DashboardData, Enrollment, Period,
+  Agent, AttendanceDay, BackendFile, BackendKey, CallRecord, CsPayout, DashboardData, Enrollment, Period,
 } from './types';
 
 /**
@@ -151,6 +151,7 @@ function toEnrollment(r: any): Enrollment {
     backendFileRef: r.backend_file_ref ?? null,
     clientName: r.client_name, clientPhone: r.client_phone, clientEmail: r.client_email,
     backend: (r.backend ?? 'UNKNOWN') as BackendKey,
+    csPayout: (r.cs_payout ?? null) as CsPayout | null,
     pipeline: r.pipeline, stage: r.stage, status: r.status,
     enrolledDebt: num(r.enrolled_debt),
     enrolledAt: r.enrolled_at ? new Date(r.enrolled_at).toISOString() : null,
@@ -161,6 +162,7 @@ function toEnrollment(r: any): Enrollment {
 function toFile(r: any): BackendFile {
   return {
     id: Number(r.id), backend: (r.backend ?? 'UNKNOWN') as BackendKey, externalId: r.external_id,
+    csPayout: (r.cs_payout ?? null) as CsPayout | null,
     clientName: r.client_name, clientPhone: r.client_phone, clientLast4: r.client_last4,
     repName: r.rep_name ?? null,
     fileStatus: r.file_status, enrolledDebt: num(r.enrolled_debt),

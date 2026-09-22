@@ -123,10 +123,10 @@ export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCou
       'ao_enrollments',
       ['id', 'location_id', 'agent_id', 'contact_id', 'client_name', 'client_phone', 'client_email',
         'backend', 'pipeline', 'stage', 'status', 'enrolled_debt', 'enrolled_at', 'updated_at',
-        'closer_agent_id', 'closer_source', 'is_enrolled', 'first_enrolled_at', 'backend_file_ref'],
+        'closer_agent_id', 'closer_source', 'is_enrolled', 'first_enrolled_at', 'backend_file_ref', 'cs_payout'],
       allEnrollments.map((e) => [e.id, e.locationId, e.agentId, e.contactId, e.clientName, e.clientPhone, e.clientEmail,
         e.backend, e.pipeline, e.stage, e.status, e.enrolledDebt, e.enrolledAt, e.updatedAt,
-        e.closerId, e.closerSource, e.isEnrolled, e.firstEnrolledAt, e.backendFileRef]),
+        e.closerId, e.closerSource, e.isEnrolled, e.firstEnrolledAt, e.backendFileRef, e.csPayout ?? null]),
       '(id)',
       [
         'agent_id', 'client_name', 'client_phone', 'client_email', 'pipeline', 'stage', 'status',
@@ -138,6 +138,9 @@ export async function runSync(opts: SyncOptions = {}): Promise<{ counts: SyncCou
         'is_enrolled = ao_enrollments.is_enrolled or excluded.is_enrolled',
         'first_enrolled_at = coalesce(ao_enrollments.first_enrolled_at, excluded.first_enrolled_at)',
         'backend_file_ref = coalesce(excluded.backend_file_ref, ao_enrollments.backend_file_ref)',
+        // Once a Shield deal is marked buyout it stays buyout — a later stage
+        // name without the word must not flip it back to the perpetuity.
+        `cs_payout = case when ao_enrollments.cs_payout = 'buyout' then 'buyout' else coalesce(excluded.cs_payout, ao_enrollments.cs_payout) end`,
         // Credit is frozen at the first stamp. Only an explicit Closer field in
         // GHL can replace it, and nothing replaces an admin override.
         `closer_agent_id = case

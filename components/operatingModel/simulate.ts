@@ -132,7 +132,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
       key: k, dealsSubmitted: 0, avgDebt: inputs.volume.avgDebt[k], enrolledVolume: 0,
       revenue: 0, repCommission: 0, netRevenue: 0,
       revenueModel: revenueModelLabel(k, inputs.volume.avgDebt[k], inputs),
-      perpetuity: isPerpetuity(k),
+      perpetuity: isPerpetuity(k, inputs),
     };
   });
 

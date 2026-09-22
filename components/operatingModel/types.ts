@@ -297,6 +297,22 @@ export interface ShieldTerms {
   backendCaptureRate: number;
   agentPayoutMonth: number;
   programs: ShieldProgram[];
+  /** Enrollment File Buyout contract terms (Consumer Shield Deal Payout Schedule). */
+  buyout: ShieldBuyoutTerms;
+  /**
+   * Share of Consumer Shield files Funding Tier elects to sell back through the
+   * buyout, 0-100. 0 = every file stays on the monthly perpetuity (the original
+   * contract), 100 = every file is bought out after its first payment clears.
+   */
+  buyoutSharePct: number;
+}
+
+export interface ShieldBuyoutTerms {
+  months: number;
+  standardRate: number;
+  highDebtRate: number;
+  highDebtMinDebt: number;
+  triggerDealMonth: number;
 }
 
 export interface LegacyBand { code: string; min: number; max: number; total: number }

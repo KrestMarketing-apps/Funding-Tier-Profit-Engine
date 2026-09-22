@@ -9,6 +9,7 @@ import { legacy, shield } from './backends';
 import { RosterEditor } from './RosterEditor';
 import { ShowTheMath } from './ShowTheMath';
 import { MonthEndReport } from './MonthEndReport';
+import { ShieldBuyout } from './ShieldBuyout';
 import {
   Btn, Callout, Field, FT_LOGO, G, Icon, Info, NumberInput, Panel, PartnerName, PartnerMark, Row, T,
   fmtMoney, fmtMoney2, fmtNum, fmtPct, inputStyle, td, tdNum, th,
@@ -30,7 +31,7 @@ import ToolShell from '../ToolShell';
 // ─────────────────────────────────────────────────────────────────────────────
 
 type SectionId =
-  | 'results' | 'volume' | 'roster' | 'operations' | 'backends' | 'reppay'
+  | 'results' | 'volume' | 'roster' | 'operations' | 'backends' | 'buyout' | 'reppay'
   | 'costs' | 'incentives' | 'risk' | 'statement' | 'monthend' | 'partnermo'
   | 'forecast' | 'monthly';
 
@@ -56,6 +57,7 @@ const NAV: NavItem[] = [
   { id: 'roster',     label: 'Staffing & Labor',   hint: 'Who is on the clock',     icon: 'users',     math: ['labor', 'capacity'] },
   { id: 'operations', label: 'Operations',         hint: '2 · Calls into deals',    icon: 'phone',     math: ['capacity'] },
   { id: 'backends',   label: 'Backend Terms',      hint: '3 · How partners pay',    icon: 'briefcase', math: ['revenue'] },
+  { id: 'buyout',     label: 'Shield Buyout',      hint: '3b · Buyout vs perpetual', icon: 'card',     math: ['revenue'] },
   { id: 'reppay',     label: 'Rep Pay Model',      hint: '4 · Contract vs draw',    icon: 'wallet',    math: ['commission'] },
   { id: 'costs',      label: 'Cost Stack',         hint: '5 · Rates & multipliers', icon: 'receipt',   math: ['costs'] },
   { id: 'incentives', label: 'Overrides & Bonuses',hint: 'Pay on top of commission',icon: 'award',     math: ['commission'] },
@@ -768,7 +770,8 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                 { label: 'Servicing deduction', value: `${fmtMoney(inputs.consumerShield.servicingDeductionPerPayment)}/pmt`, help: 'Taken off every client payment before Funding Tier’s share is calculated.' },
                 { label: 'Front capture', value: `${fmtPct(inputs.consumerShield.frontCaptureRate * 100, 0)} × ${inputs.consumerShield.frontMonths} mo`, help: `Funding Tier keeps ${fmtPct(inputs.consumerShield.frontCaptureRate * 100, 0)} of ${fmtMoney(net)} for the first ${inputs.consumerShield.frontMonths} months.` },
                 { label: 'Backend capture', value: fmtPct(inputs.consumerShield.backendCaptureRate * 100, 0), help: `From month ${inputs.consumerShield.frontMonths + 1} to the end of the program, Funding Tier keeps ${fmtPct(inputs.consumerShield.backendCaptureRate * 100, 0)} of ${fmtMoney(net)} = ${fmtMoney(net * inputs.consumerShield.backendCaptureRate)} per payment.` },
-                { label: 'Rep payout', value: `${fmtMoney(p?.commission ?? 0)} · mo ${inputs.consumerShield.agentPayoutMonth}`, help: 'Flat commission per enrolled deal, released by the 15th of the following month.' },
+                { label: 'Rep payout', value: `${fmtMoney(p?.commission ?? 0)} · mo ${inputs.consumerShield.agentPayoutMonth}`, help: 'Flat commission per enrolled deal, released by the 15th of the following month. Unchanged by the payout option.' },
+                { label: 'File buyout', value: `${fmtMoney(shield.buyoutPayout(debt, inputs.consumerShield))} · ${fmtPct(inputs.consumerShield.buyoutSharePct ?? 0, 0)} of files`, help: `Enrollment File Buyout: (${fmtMoney(p?.payment ?? 0)} − ${fmtMoney(inputs.consumerShield.servicingDeductionPerPayment)}) × ${fmtPct(shield.buyoutRate(debt, inputs.consumerShield) * 100, 0)} × ${inputs.consumerShield.buyout.months}, paid once the first payment clears. Set the share of files sold through the buyout in Shield Buyout.` },
               ];
             })() : (() => {
               const L = inputs.legacy;
@@ -807,7 +810,10 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                   border: `1px solid ${k === 'LEVEL' ? T.warnLine : '#bbf7d0'}`,
                   padding: '2px 7px', borderRadius: 20,
                 }}>
-                  {k === 'LEVEL' ? 'One-time payment' : 'Monthly perpetuity'}
+                  {k === 'LEVEL' ? 'One-time payment'
+                    : k === 'CS' && (inputs.consumerShield.buyoutSharePct ?? 0) >= 100 ? 'File buyout · one-time'
+                    : k === 'CS' && (inputs.consumerShield.buyoutSharePct ?? 0) > 0 ? `Perpetuity + ${fmtPct(inputs.consumerShield.buyoutSharePct, 0)} buyout`
+                    : 'Monthly perpetuity'}
                 </span>
               </div>
               <Row cols={5} gap={10}>
@@ -831,10 +837,16 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
           {' '}{BRANDS.LEVEL.name} pays <strong>once</strong>, after the first client payment clears, and the deal is free of
           chargeback liability after the second completed payment. Comparing the three on a single cumulative revenue line
           flatters the perpetuities and understates how quickly Level Debt de-risks.
+          {' '}{BRANDS.CS.name} files can instead be sold through the <strong>Enrollment File Buyout</strong> — one advance once the first
+          payment clears — compared head to head in <a href="#" onClick={(e) => { e.preventDefault(); goTo('buyout'); }}>Shield Buyout</a>.
         </Callout>
       </Panel>
 
       </>)}
+
+      {active === 'buyout' && (
+        <ShieldBuyout inputs={inputs} patch={patch} />
+      )}
 
       {active === 'reppay' && (<>
       {/* ── 4b · Rep Pay Model — draw + tiered settlement scale scenario ────── */}

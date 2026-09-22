@@ -29,6 +29,10 @@ export const sharedLevelDebt = (chargebackClearMonths: number): LevelDebtTerms =
 export const sharedShield = (): ShieldTerms => ({
   ...A.consumerShield,
   programs: A.consumerShield.programs.map((p) => ({ ...p })),
+  buyout: { ...A.consumerShield.buyout },
+  // Default stays on the perpetuity so every existing figure is unchanged
+  // until the buyout is switched on in Shield Buyout.
+  buyoutSharePct: 0,
 });
 
 export const sharedLegacy = (): LegacyTerms => ({
