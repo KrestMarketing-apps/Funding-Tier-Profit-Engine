@@ -910,10 +910,10 @@ function PayoutCatchUp({ analysis }: { analysis: DealAnalysis }) {
       clear: "Clawback terms not stated in payout schedule", tl: [] },
     { id: "CSP", name: "Consumer Shield", tag: "Perpetuity", color: FT_BLUE, eligible: cs.eligible, oneTime: false,
       total: cs.perpetualFull, paidAs: `100% of net Mo 1–4, then 35% · ${cs.term} mo`, cash: "Monthly, ~1 month behind each payment",
-      clear: cs.perpetualLiabilityClear ? `Month ${cs.perpetualLiabilityClear}` : "—", tl: cs.timeline },
+      clear: cs.perpetualLiabilityClear ? `Month ${cs.perpetualLiabilityClear} (break-even + 4-mo safety buffer)` : "—", tl: cs.timeline },
     { id: "ELP", name: "Elite Legal Practice", tag: "Perpetuity", color: FT_CYAN, eligible: elp.eligible, oneTime: false,
       total: elp.fullRevenue, paidAs: `Pass-through Mo 1–2, then ${Math.round(elp.schedule.tierRate * 100)}% · ${elp.term} mo`, cash: "Monthly, ~1 month behind each draft",
-      clear: elp.liabilityClearMonth ? `Month ${elp.liabilityClearMonth}` : "—", tl: elp.timeline },
+      clear: elp.liabilityClearMonth ? `Month ${elp.liabilityClearMonth} (break-even + 4-mo safety buffer)` : "—", tl: elp.timeline },
   ];
   const lumps = opts.filter(o => o.oneTime && o.eligible && o.total > 0);
   const perps = opts.filter(o => !o.oneTime && o.eligible);
@@ -1679,7 +1679,7 @@ function KnowledgeBase({ open, onClose }: { open:boolean; onClose:()=>void }) {
           ["Eligibility Floors", `Level Debt: $7,000 minimum enrolled debt.\nElite Legal Practice: $6,000 minimum, plus $250/mo payment capacity.\nConsumer Shield: $4,000 minimum.\n\nEnforced everywhere in this tool — including the portfolio routing sliders.`],
           ["ELP Term and the $250 Floor", `The term is set by what the client can afford to draft each month, not by the floor. $250/mo is only a minimum, and it caps how long the fee can be spread:\n\n  headroom = $250 − maintenance − draft fee\n  max term = floor(debt × fee% / headroom), capped at 60\n\nThe tool defaults to a ${ELP_DEFAULT_TARGET_TERM}-month program. Enter the client's draft to change it, or drag the slider to pick a term directly.`],
           ["Why Shorter Terms Earn More", `Months 1–2 pass through in full — service fee plus maintenance. Everything after is the tier rate on the service fee alone.\n\nA longer term shrinks the monthly service fee, so less of the total lands inside that 100% window:\n\n  revenue = fee × tier + fee × 2(1 − tier) / term + 2 × maintenance\n\nSo a longer term earns LESS in total and earns it LATER. Assuming the longest permitted term is the pessimistic corner on both axes, which is why it is no longer the default.`],
-          ["ELP Tier Rate", `Funding Tier keeps 60% of the post-fee service amount from Payment 3 on, stepping to 65% once the book clears 100 billable files per month. The Portfolio Forecast deal count drives which tier this tool applies.`],
+          ["ELP Tier Rate", `Funding Tier keeps 60% of the post-fee service amount from Payment 3 on, stepping to 65% once the book clears 100 billable files per month. The ELP share of the Portfolio Forecast deal count (deals × ELP mix %) drives which tier this tool applies.`],
           ["ELP State Restrictions", `Legacy Capital Services cannot be sold in ${ELP_BLOCKED_STATES.join(", ")}. This tool models national economics — check state eligibility in the Router before routing a live deal.`],
           ["Break-Even Cohort With No Level Debt Benchmark", `Below $7,000 Level Debt cannot take the deal, so there is no 8% benchmark and no break-even month to show.\n\nThe break-even cohort still has to be worth something — those clients paid for half a program. This tool prices that cohort at the mid-program month instead of $0, which is the only sub-$7k range where Consumer Shield and Elite Legal Practice compete head to head.`],
           ["Break-Even + Liability Clear (Hyper Green)", "First month where the backend has both (a) broken even vs Level Debt AND (b) the chargeback window on the break-even payment has closed. The true zero-risk inflection point."],
@@ -2076,10 +2076,20 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
     });
   };
 
+  // The ELP tier is set by ELP enrollments a month (60% at 1–99, 65% at 100+),
+  // not by the whole book. Portfolio deals × the ELP share of the mix is the
+  // ELP file count; the old version fed total deals in, which put a 100-deal
+  // book on the 65% tier even when only ~24 of those files were ELP.
+  const elpFiles = useMemo(() => {
+    if (portfolioAvgDebt < BACKEND_META.ELP.minDebt) return 0;
+    const ld = portfolioAvgDebt >= BACKEND_META.LD.minDebt ? clamp(mixLdPct, 0, 100) : 0;
+    return Math.round(portfolioDeals * clamp(mixElpPct, 0, 100 - ld) / 100);
+  }, [portfolioDeals, portfolioAvgDebt, mixLdPct, mixElpPct]);
+
   const elpBaseTerms: ElpTerms = useMemo(() => ({
     feeRatePct: elpFeeRate, maintFee: elpMaintFee, split: elpSplit,
-    tierRate: elpTierRateForFiles(portfolioDeals),
-  }), [elpFeeRate, elpMaintFee, elpSplit, portfolioDeals]);
+    tierRate: elpTierRateForFiles(elpFiles),
+  }), [elpFeeRate, elpMaintFee, elpSplit, elpFiles]);
 
   /**
    * Term is per-deal: the same client draft buys a shorter program on a
@@ -2371,7 +2381,7 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
 
         {active === "elpterms" && (<div style={{ display:"grid", gap:18 }}>
         {/* ELP program terms */}
-        <ElpTermsPanel terms={elpTerms} sched={deal.elp.schedule} debtAmount={debtAmount} files={portfolioDeals}
+        <ElpTermsPanel terms={elpTerms} sched={deal.elp.schedule} debtAmount={debtAmount} files={elpFiles}
           targetDraft={elpTargetDraft} onDraftChange={setElpTargetDraft}
           csPayment={deal.cs.payment} csTerm={deal.cs.term} ldRevenue={deal.ld.expectedRevenue}
           onChange={t => { setElpFeeRate(t.feeRatePct); setElpMaintFee(t.maintFee); setElpSplit(t.split); }} />
@@ -2713,8 +2723,8 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
                 min={1} step={1} style={{ width:"100%", padding:"10px 12px", borderRadius:10,
                   border:"1px solid #cbd5e1", fontSize:15, color:"#0f172a", background:"#fff", boxSizing:"border-box" }} />
               <div style={{ fontSize:11, color:"#94a3b8", marginTop:4 }}>
-                Also sets the ELP tier rate — {Math.round(elpTerms.tierRate*100)}% at {portfolioDeals} billable files/mo
-                {portfolioDeals < ELP_TIER_RATE_FILE_THRESHOLD ? ` (65% at ${ELP_TIER_RATE_FILE_THRESHOLD}+)` : ""}
+                Also sets the ELP tier rate — {elpFiles} ELP files/mo ({Math.round(effElpPct)}% of deals) → {Math.round(elpTerms.tierRate*100)}%
+                {elpFiles < ELP_TIER_RATE_FILE_THRESHOLD ? ` (65% at ${ELP_TIER_RATE_FILE_THRESHOLD}+ ELP files)` : ""}
               </div>
             </div>
             <div>
