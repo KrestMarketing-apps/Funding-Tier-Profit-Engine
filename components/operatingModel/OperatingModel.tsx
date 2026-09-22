@@ -752,8 +752,8 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
 
       {active === 'backends' && (<>
       {/* ── 3 · Backend terms, explained for an owner / investor ──────────── */}
-      <Panel title="3 · What Funding Tier is paid, by whom, and when"
-        tooltip="Plain-English walkthrough of each partner's payout, built on the same engine as the simulation: what the percentage is taken from, who keeps the rest, when the cash lands, and what one deal is worth.">
+      <Panel title="3 · One payout vs. perpetuity — the same client at each partner"
+        tooltip="Funding Tier revenue, when it lands, when liability ends, and how long a monthly perpetuity takes to earn what a one-time payout pays up front. Built on the same engine as the simulation.">
         <BackendExplainer
           inputs={inputs}
           levelMonthlyVolume={(results.months[results.months.length - 1]?.dealsByBackend.LEVEL ?? 0) * inputs.volume.avgDebt.LEVEL}
