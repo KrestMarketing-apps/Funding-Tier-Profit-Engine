@@ -752,8 +752,8 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
 
       {active === 'backends' && (<>
       {/* ── 3 · Backend terms, explained for an owner / investor ──────────── */}
-      <Panel title="3 · One payout vs. perpetuity — the same client at each partner"
-        tooltip="Funding Tier revenue, when it lands, when liability ends, and how long a monthly perpetuity takes to earn what a one-time payout pays up front. Built on the same engine as the simulation.">
+      <Panel title="3 · How each partner pays — the same client, side by side"
+        tooltip="Funding Tier revenue on one deal at the same enrolled debt: how it is paid, how much (and as a share of the debt), and when the cash lands. Break-even against the 8% settlement and the file buyout is in the Profit Engine.">
         <BackendExplainer
           inputs={inputs}
           levelMonthlyVolume={(results.months[results.months.length - 1]?.dealsByBackend.LEVEL ?? 0) * inputs.volume.avgDebt.LEVEL}

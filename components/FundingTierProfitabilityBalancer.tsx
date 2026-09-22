@@ -877,6 +877,160 @@ function BackendComparison({ analysis }: { analysis: DealAnalysis }) {
 }
 
 // ─────────────────────────────────────────────
+// ONE PAYOUT vs PERPETUITY — catch-up to 8% and to the file buyout
+// ─────────────────────────────────────────────
+//
+// Level Debt pays 8% of enrolled debt once; the Consumer Shield file buyout
+// pays one advance that works out to a fixed % of enrolled debt. The two
+// perpetuities pay monthly. Everything here is expressed as a % of the SAME
+// enrolled debt so the three shapes compare on one axis: how many program
+// months until a perpetuity has earned what a one-time payout pays up front.
+
+function firstMonthAtLeast(tl: TimelineRow[], target: number): number | null {
+  if (target <= 0) return null;
+  for (const r of tl) if (r.cumulativeRevenue >= target - 0.005) return r.month;
+  return null;
+}
+
+function PayoutCatchUp({ analysis }: { analysis: DealAnalysis }) {
+  const { ld, cs, elp, debtAmount: debt } = analysis;
+  const pct = (v: number) => (debt > 0 ? (v / debt) * 100 : 0);
+  const fmtP = (v: number) => `${v.toFixed(2)}%`;
+  const ldPct = pct(ld.fullRevenue);
+  const buyPct = pct(cs.buyoutPayout);
+
+  type Opt = { id: string; name: string; tag: string; color: string; eligible: boolean; oneTime: boolean;
+    total: number; paidAs: string; cash: string; clear: string; tl: TimelineRow[] };
+  const opts: Opt[] = [
+    { id: "LD", name: "Level Debt", tag: "Settlement", color: FT_GREEN, eligible: ld.eligible, oneTime: true,
+      total: ld.fullRevenue, paidAs: "8% of enrolled debt, once", cash: "Once — 20th of Month 3",
+      clear: "After Payment 2", tl: [] },
+    { id: "CSB", name: "Consumer Shield", tag: "File buyout", color: FT_BLUE, eligible: cs.eligible, oneTime: true,
+      total: cs.buyoutPayout, paidAs: `Net payment × ${Math.round(cs.buyoutRate * 100)}% × 6, once`, cash: "Once — ~1 month after Payment 1 clears",
+      clear: "Clawback terms not stated in payout schedule", tl: [] },
+    { id: "CSP", name: "Consumer Shield", tag: "Perpetuity", color: FT_BLUE, eligible: cs.eligible, oneTime: false,
+      total: cs.perpetualFull, paidAs: `100% of net Mo 1–4, then 35% · ${cs.term} mo`, cash: "Monthly, ~1 month behind each payment",
+      clear: cs.perpetualLiabilityClear ? `Month ${cs.perpetualLiabilityClear}` : "—", tl: cs.timeline },
+    { id: "ELP", name: "Elite Legal Practice", tag: "Perpetuity", color: FT_CYAN, eligible: elp.eligible, oneTime: false,
+      total: elp.fullRevenue, paidAs: `Pass-through Mo 1–2, then ${Math.round(elp.schedule.tierRate * 100)}% · ${elp.term} mo`, cash: "Monthly, ~1 month behind each draft",
+      clear: elp.liabilityClearMonth ? `Month ${elp.liabilityClearMonth}` : "—", tl: elp.timeline },
+  ];
+  const lumps = opts.filter(o => o.oneTime && o.eligible && o.total > 0);
+  const perps = opts.filter(o => !o.oneTime && o.eligible);
+
+  const reach = (o: Opt, target: number, isSelf: boolean) => {
+    if (!o.eligible) return "—";
+    if (o.oneTime) return isSelf ? "Paid in full up front" : "—";
+    const m = firstMonthAtLeast(o.tl, target);
+    return m == null ? "Never within term" : `Month ${m}`;
+  };
+
+  // chart — cumulative % of enrolled debt by program month
+  const crosses = perps.flatMap(p => lumps.map(l => firstMonthAtLeast(p.tl, l.total) ?? 0));
+  const horizon = Math.max(12, Math.min(48, Math.max(0, ...crosses) + 4));
+  const cumPct = (tl: TimelineRow[], m: number) => pct(tl[Math.min(m, tl.length) - 1]?.cumulativeRevenue ?? 0);
+  const yMax = Math.max(ldPct, buyPct, ...perps.map(p => cumPct(p.tl, horizon)), 1) * 1.1;
+  const W = 760, H = 240, padL = 46, padR = 170, padT = 10, padB = 26;
+  const x = (m: number) => padL + ((m - 1) / (horizon - 1)) * (W - padL - padR);
+  const y = (v: number) => padT + (H - padT - padB) * (1 - v / yMax);
+  const ticks = Array.from({ length: horizon }, (_, i) => i + 1).filter(m => m === 1 || m % (horizon > 24 ? 6 : 3) === 0);
+  const labels = [
+    ...lumps.map(l => ({ id: l.id, color: l.color, text: `${l.tag} ${fmtP(pct(l.total))}`, y: y(pct(l.total)) + 3 })),
+    ...perps.map(p => ({ id: p.id, color: p.color, text: `${p.name} ${fmtP(cumPct(p.tl, horizon))}`, y: y(cumPct(p.tl, horizon)) + 3 })),
+  ].sort((a, b) => a.y - b.y);
+  for (let i = 1; i < labels.length; i++) if (labels[i].y - labels[i - 1].y < 13) labels[i].y = labels[i - 1].y + 13;
+
+  const csBE8 = cs.eligible ? firstMonthAtLeast(cs.timeline, ld.fullRevenue) : null;
+  const csBEB = cs.eligible ? firstMonthAtLeast(cs.timeline, cs.buyoutPayout) : null;
+  const elBE8 = elp.eligible ? firstMonthAtLeast(elp.timeline, ld.fullRevenue) : null;
+
+  return (
+    <div style={card}>
+      <h2 style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
+        One Payout vs. Perpetuity — {money.format(debt)} Enrolled Debt
+      </h2>
+      <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.6, marginBottom: 14 }}>
+        Level Debt pays <strong>{fmtP(ldPct)}</strong> of enrolled debt once. The Consumer Shield file buyout pays{" "}
+        <strong>{cs.eligible ? fmtP(buyPct) : "—"}</strong> of enrolled debt once. The perpetuities pay monthly — this shows how many
+        program months they take to earn the same share, if the client keeps paying.
+      </div>
+
+      <div style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 13 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr style={{ background: "#f1f5f9" }}>
+            <th style={TH}>Option</th>
+            <th style={TH}>Paid as</th>
+            <th style={TH}>% of enrolled debt</th>
+            <th style={TH}>Cash in the bank</th>
+            <th style={TH}>Reaches {fmtP(ldPct)} (settlement)</th>
+            <th style={TH}>Reaches {cs.eligible ? fmtP(buyPct) : "—"} (buyout)</th>
+            <th style={{ ...TH, borderRight: "none" }}>Liability clear</th>
+          </tr></thead>
+          <tbody>
+            {opts.map((o, i) => (
+              <tr key={o.id} style={{ background: i % 2 ? "#f8fafc" : "#fff", color: o.eligible ? undefined : "#94a3b8" }}>
+                <td style={{ ...TD, fontWeight: 800, color: o.eligible ? o.color : "#94a3b8", borderLeft: `3px ${o.id === "CSB" ? "dashed" : "solid"} ${o.color}` }}>
+                  {o.name}<div style={{ fontSize: 11, fontWeight: 700, color: o.oneTime ? "#b45309" : "#15803d" }}>{o.tag} · {o.oneTime ? "one payment" : "monthly"}</div>
+                </td>
+                <td style={TD}>{o.eligible ? o.paidAs : "Not eligible"}</td>
+                <td style={{ ...TD, fontWeight: 800 }}>
+                  {o.eligible ? <>{fmtP(pct(o.total))} <span style={{ fontWeight: 500, color: "#64748b" }}>· {money.format(o.total)}{o.oneTime ? "" : " full term"}</span></> : "—"}
+                </td>
+                <td style={TD}>{o.eligible ? o.cash : "—"}</td>
+                <td style={{ ...TD, fontWeight: o.oneTime ? 400 : 800 }}>{reach(o, ld.fullRevenue, o.id === "LD")}</td>
+                <td style={{ ...TD, fontWeight: o.oneTime ? 400 : 800 }}>{cs.eligible ? reach(o, cs.buyoutPayout, o.id === "CSB") : "—"}</td>
+                <td style={{ ...TD, borderRight: "none" }}>{o.eligible ? o.clear : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ margin: "16px 0 4px", fontSize: 12, fontWeight: 800, color: "#334155" }}>
+        Cumulative revenue as a % of enrolled debt, by program month
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Perpetuity revenue as a share of enrolled debt versus one-time payouts" style={{ display: "block" }}>
+        {[0, 0.25, 0.5, 0.75, 1].map(f => (
+          <g key={f}>
+            <line x1={padL} x2={W - padR} y1={y(yMax * f)} y2={y(yMax * f)} stroke="#f1f5f9" />
+            <text x={padL - 6} y={y(yMax * f) + 3} fontSize={9} textAnchor="end" fill="#94a3b8">{`${(yMax * f).toFixed(1)}%`}</text>
+          </g>
+        ))}
+        {ticks.map(m => <text key={m} x={x(m)} y={H - 8} fontSize={9} textAnchor="middle" fill="#64748b">{`Mo ${m}`}</text>)}
+        {lumps.map(l => (
+          <line key={l.id} x1={padL} x2={W - padR} y1={y(pct(l.total))} y2={y(pct(l.total))} stroke={l.color} strokeDasharray="6 4" strokeWidth={1.6} />
+        ))}
+        {perps.map(p => {
+          let d = "";
+          for (let m = 1; m <= horizon; m++) d += `${m === 1 ? "M" : "L"}${x(m).toFixed(1)},${y(cumPct(p.tl, m)).toFixed(1)}`;
+          return (
+            <g key={p.id}>
+              <path d={d} fill="none" stroke={p.color} strokeWidth={2.4} />
+              {lumps.map(l => {
+                const m = firstMonthAtLeast(p.tl, l.total);
+                return m != null && m <= horizon
+                  ? <circle key={l.id} cx={x(m)} cy={y(cumPct(p.tl, m))} r={4} fill="#fff" stroke={p.color} strokeWidth={2} />
+                  : null;
+              })}
+            </g>
+          );
+        })}
+        {labels.map(lb => <text key={lb.id} x={W - padR + 6} y={lb.y} fontSize={10.5} fontWeight={700} fill={lb.color}>{lb.text}</text>)}
+        <line x1={padL} x2={W - padR} y1={H - padB} y2={H - padB} stroke="#e2e8f0" />
+      </svg>
+
+      <div style={{ fontSize: 13, color: "#334155", lineHeight: 1.6, marginTop: 8, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "10px 12px" }}>
+        {cs.eligible && csBEB != null && <>A Consumer Shield perpetuity file earns the buyout’s {fmtP(buyPct)} by <strong>month {csBEB}</strong>. </>}
+        {cs.eligible && ld.eligible && csBE8 != null && <>It earns the settlement’s {fmtP(ldPct)} by <strong>month {csBE8}</strong>. </>}
+        {elp.eligible && ld.eligible && elBE8 != null && <>Elite Legal earns {fmtP(ldPct)} by <strong>month {elBE8}</strong>. </>}
+        Every month after that is revenue a one-time payout never earns — but only if the client is still paying. The Survival Funnels
+        section sets how many clients get that far.
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // FUNNEL EXPLAINER (per backend)
 // ─────────────────────────────────────────────
 
@@ -2181,6 +2335,7 @@ export default function FundingTierProfitabilityBalancer({ mode = "admin" }: { m
         {active === "compare" && (<div style={{ display:"grid", gap:18 }}>
         {/* Head-to-head */}
         <BackendComparison analysis={deal} />
+        <PayoutCatchUp analysis={deal} />
 
         </div>)}
 
