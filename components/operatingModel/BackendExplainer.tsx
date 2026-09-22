@@ -309,7 +309,7 @@ function StoryCard({ s, showExpected }: { s: DealStory; showExpected: boolean })
     <div style={{ border: `1px solid ${T.line}`, borderLeft: `3px solid ${b.accent}`, borderRadius: 10, padding: '12px 14px', marginBottom: 12, background: '#fff' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <PartnerName k={s.k} size={20} sub />
-        <span style={{ fontSize: 11, color: T.muted }}>Example deal: <strong style={{ color: T.ink }}>{fmtMoney(s.debt)}</strong> enrolled debt (the model’s average for this partner)</span>
+        <span style={{ fontSize: 11, color: T.muted }}>Example deal: <strong style={{ color: T.ink }}>{fmtMoney(s.debt)}</strong> enrolled debt — the same amount at every partner (set above)</span>
       </div>
 
       <Row cols="minmax(0,1fr) minmax(0,1fr)" gap={16} style={{ marginTop: 10 }}>
@@ -354,21 +354,183 @@ function StoryCard({ s, showExpected }: { s: DealStory; showExpected: boolean })
 
 // ── Section ──────────────────────────────────────────────────────────────────
 
+// ── Same-debt comparison ─────────────────────────────────────────────────────
+
+interface AtDebt extends DealStory {
+  eligible: boolean;
+  minDebt: number;
+  clientPays: string;
+  ftPerPayment: string;
+  scaling: string;
+}
+
+/** One partner's deal at a debt amount the viewer picks, without touching the model. */
+function storyAt(k: BackendKey, inputs: ModelInputs, debt: number, levelMonthlyVolume: number): AtDebt {
+  const at: ModelInputs = { ...inputs, volume: { ...inputs.volume, avgDebt: { ...inputs.volume.avgDebt, [k]: debt } } };
+  const s = buildStory(k, at, levelMonthlyVolume);
+  if (k === 'LEVEL') {
+    const t = inputs.levelDebt;
+    return {
+      ...s, eligible: debt >= t.minDebt, minDebt: t.minDebt,
+      clientPays: 'Monthly deposits into Level Debt’s settlement program (not shared with us)',
+      ftPerPayment: `${fmtMoney(s.fullTotal)} once`,
+      scaling: `Straight line — every extra $1,000 enrolled adds ${fmtMoney(1000 * t.revenueSharePct)}.`,
+    };
+  }
+  if (k === 'CS') {
+    const t = inputs.consumerShield;
+    const p = shield.getProgram(debt, t);
+    const net = (p?.payment ?? 0) - t.servicingDeductionPerPayment;
+    return {
+      ...s, eligible: !!p && debt >= t.minDebt, minDebt: t.minDebt,
+      clientPays: p ? `${fmtMoney(p.payment)}/mo × ${p.term} mo · program ${p.code}` : '—',
+      ftPerPayment: p ? `${fmtMoney(net * t.frontCaptureRate)} (mo 1–${t.frontMonths}) → ${fmtMoney(net * t.backendCaptureRate)}` : '—',
+      scaling: p ? `Stair-step — anything from ${fmtMoney(p.min)} to ${p.max === Infinity ? 'up' : fmtMoney(Math.floor(p.max))} pays exactly the same.` : '—',
+    };
+  }
+  const L = inputs.legacy;
+  const ok = debt >= L.minDebt;
+  return {
+    ...s, eligible: ok, minDebt: L.minDebt,
+    clientPays: ok ? `${fmtMoney2(legacy.getScheduledPayment(debt, L))}/mo × ${legacy.getMaxTerm(debt, L)} mo` : '—',
+    ftPerPayment: ok ? `${fmtMoney(legacy.revenueForDealMonth(debt, 1, L))} (mo 1–2) → ${fmtMoney(legacy.revenueForDealMonth(debt, 3, L))}` : '—',
+    scaling: `Mostly straight line — the fee is ${fmtPct(L.feeRate * 100, 0)} of the debt, but a bigger file also runs a longer term.`,
+  };
+}
+
+/** Funding Tier revenue per deal across enrolled debt, all three partners on one axis. */
+function DebtCurve({ inputs, debt, expected, levelMonthlyVolume }: {
+  inputs: ModelInputs; debt: number; expected: boolean; levelMonthlyVolume: number;
+}) {
+  const lo = 4000, hi = 50000, step = 500;
+  const series = useMemo(() => BACKEND_KEYS.map((k) => {
+    const pts: [number, number][] = [];
+    for (let d = lo; d <= hi; d += step) {
+      const s = storyAt(k, inputs, d, levelMonthlyVolume);
+      pts.push([d, s.eligible ? (expected ? s.expectedTotal - s.repExpected : s.fullTotal - s.repComm) : NaN]);
+    }
+    return { k, pts };
+  }), [inputs, expected, levelMonthlyVolume]);
+  const W = 760, H = 210, padL = 52, padR = 110, padT = 12, padB = 26;
+  const max = Math.max(1, ...series.flatMap((s) => s.pts.map((p) => (Number.isFinite(p[1]) ? p[1] : 0))));
+  const x = (d: number) => padL + ((d - lo) / (hi - lo)) * (W - padL - padR);
+  const y = (v: number) => padT + (H - padT - padB) * (1 - v / max);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Funding Tier kept per deal by enrolled debt, three partners" style={{ display: 'block' }}>
+      {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+        <g key={f}>
+          <line x1={padL} x2={W - padR} y1={y(max * f)} y2={y(max * f)} stroke={T.lineSoft} />
+          <text x={padL - 6} y={y(max * f) + 3} fontSize={9} textAnchor="end" fill={T.faint} fontFamily="ui-monospace, monospace">{fmtMoney(max * f)}</text>
+        </g>
+      ))}
+      {[5000, 10000, 15000, 20000, 25000, 30000, 40000, 50000].map((d) => (
+        <text key={d} x={x(d)} y={H - 8} fontSize={9} textAnchor="middle" fill={T.muted}>{`$${d / 1000}k`}</text>
+      ))}
+      {(() => {
+        // End-of-line labels, pushed apart so lines that finish close together stay readable.
+        const ends = series.map(({ k, pts }) => {
+          const p = [...pts].reverse().find((q) => Number.isFinite(q[1]));
+          return p ? { k, x: x(p[0]) + 6, y: y(p[1]) + 3 } : null;
+        }).filter((e): e is { k: BackendKey; x: number; y: number } => !!e).sort((a, b) => a.y - b.y);
+        for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 12) ends[i].y = ends[i - 1].y + 12;
+        return ends.map((e) => <text key={e.k} x={e.x} y={e.y} fontSize={10} fontWeight={700} fill={BRANDS[e.k].accent}>{BRANDS[e.k].name}</text>);
+      })()}
+      {series.map(({ k, pts }) => {
+        let path = ''; let pen = false;
+        pts.forEach(([d, v]) => {
+          if (!Number.isFinite(v)) { pen = false; return; }
+          path += `${pen ? 'L' : 'M'}${x(d).toFixed(1)},${y(v).toFixed(1)}`; pen = true;
+        });
+        return <path key={k} d={path} fill="none" stroke={BRANDS[k].accent} strokeWidth={2} />;
+      })}
+      {debt >= lo && debt <= hi && (
+        <g>
+          <line x1={x(debt)} x2={x(debt)} y1={padT} y2={H - padB} stroke={T.ink} strokeDasharray="3 3" />
+          {series.map(({ k, pts }) => {
+            const s = storyAt(k, inputs, debt, levelMonthlyVolume);
+            if (!s.eligible) return null;
+            const v = expected ? s.expectedTotal - s.repExpected : s.fullTotal - s.repComm;
+            return <circle key={k} cx={x(debt)} cy={y(v)} r={4} fill={BRANDS[k].accent} stroke="#fff" strokeWidth={1.5} />;
+          })}
+        </g>
+      )}
+      <line x1={padL} x2={W - padR} y1={H - padB} y2={H - padB} stroke={T.line} />
+    </svg>
+  );
+}
+
+function ShieldBands({ inputs, debt }: { inputs: ModelInputs; debt: number }) {
+  const t = inputs.consumerShield;
+  const active = shield.getProgram(debt, t)?.code;
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+        <thead>
+          <tr>
+            {['Program', 'Enrolled debt range', 'Client pays', 'Term', 'FT per payment', 'FT if the client finishes', 'File buyout', 'Rep commission'].map((h, i) => (
+              <th key={h} style={{ ...th, textAlign: i < 2 ? 'left' : 'right' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {t.programs.map((p) => {
+            const net = p.payment - t.servicingDeductionPerPayment;
+            const on = p.code === active;
+            const bg = on ? BRANDS.CS.accentSoft : undefined;
+            const cellS = { ...tdNum, fontSize: 11.5, background: bg, fontWeight: on ? 800 : 500 };
+            return (
+              <tr key={p.code}>
+                <td style={{ ...td, fontSize: 11.5, background: bg, fontWeight: 800 }}>{p.code}{on ? ' ◀ your example' : ''}</td>
+                <td style={{ ...td, fontSize: 11.5, background: bg, fontFamily: T.mono }}>{fmtMoney(p.min)} – {p.max === Infinity ? 'and up' : fmtMoney(Math.floor(p.max))}</td>
+                <td style={cellS}>{fmtMoney(p.payment)}/mo</td>
+                <td style={cellS}>{p.term} mo</td>
+                <td style={cellS}>{fmtMoney(net * t.frontCaptureRate)} → {fmtMoney(net * t.backendCaptureRate)}</td>
+                <td style={{ ...cellS, color: T.brandDark }}>{fmtMoney(shield.perpetualFullTerm(p.min, t))}</td>
+                <td style={cellS}>{fmtMoney(shield.buyoutPayout(p.min, t))}</td>
+                <td style={cellS}>{fmtMoney(p.commission)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Section ──────────────────────────────────────────────────────────────────
+
+const DEFAULT_DEBT = 15000;
+const PRESETS = [8000, 15000, 25000, 40000];
+
 export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: ModelInputs; levelMonthlyVolume: number }) {
   const [showExpected, setShowExpected] = useState(true);
   const [focus, setFocus] = useState<BackendKey | 'ALL'>('ALL');
+  const [debt, setDebt] = useState<number>(DEFAULT_DEBT);
+  const [draft, setDraft] = useState<string>(String(DEFAULT_DEBT));
   const stories = useMemo(
-    () => BACKEND_KEYS.map((k) => buildStory(k, inputs, levelMonthlyVolume)),
-    [inputs, levelMonthlyVolume],
+    () => BACKEND_KEYS.map((k) => storyAt(k, inputs, debt, levelMonthlyVolume)),
+    [inputs, debt, levelMonthlyVolume],
   );
-  const shown = focus === 'ALL' ? stories : stories.filter((s) => s.k === focus);
+  const shown = (focus === 'ALL' ? stories : stories.filter((s) => s.k === focus));
+  const commit = (v: number) => {
+    const n = Math.max(0, Math.min(250000, Math.round(v)));
+    setDebt(n); setDraft(String(n));
+  };
 
-  const cell = (s: DealStory, v: React.ReactNode, strong?: boolean) => (
-    <td key={s.k} style={{ ...td, fontSize: 11.5, fontWeight: strong ? 800 : 500, color: T.ink, verticalAlign: 'top' }}>{v}</td>
-  );
-  const money = (s: DealStory, v: number, color?: string) => (
-    <td key={s.k} style={{ ...tdNum, fontSize: 12, fontWeight: 800, color: color ?? T.ink }}>{fmtMoney(v)}</td>
-  );
+  type CmpRow = { label: string; tip?: string; get: (s: AtDebt) => number | string; money?: boolean; best?: boolean; color?: string; total?: boolean };
+  const rows: CmpRow[] = [
+    { label: 'We are paid a portion of', get: (s) => s.k === 'LEVEL' ? `The enrolled debt (${fmtPct(inputs.levelDebt.revenueSharePct * 100, 0)}), once` : s.k === 'CS' ? 'Each monthly program payment' : 'Each monthly fee draft' },
+    { label: 'What the client pays the partner', get: (s) => s.clientPays },
+    { label: 'Funding Tier per payment', get: (s) => s.ftPerPayment },
+    { label: 'How pay changes with debt', get: (s) => s.scaling },
+    { label: 'First cash arrives', get: (s) => `Month ${s.firstCashMonth}` },
+    { label: 'If the client finishes', get: (s) => s.fullTotal, money: true, best: true, color: T.brandDark, tip: 'Everything Funding Tier receives on this one deal if the client never cancels.' },
+    { label: 'Expected, after cancellations', get: (s) => s.expectedTotal, money: true, best: true, color: T.brandDark, tip: 'The same deal weighted by the first-payment and monthly cancellation assumptions in Risk & Attrition.' },
+    { label: 'Rep commission', get: (s) => s.repComm, money: true, color: C.rep, tip: 'Paid only if the deal is still active at payout. Level Debt uses the current company-wide volume tier.' },
+    { label: 'Kept by Funding Tier, expected', get: (s) => s.expectedTotal - s.repExpected, money: true, best: true, total: true, tip: 'Expected revenue less the expected rep commission, before transfer, labor and tool costs.' },
+    { label: 'Kept per $1,000 enrolled', get: (s) => (s.expectedTotal - s.repExpected) / Math.max(debt, 1) * 1000, money: true, best: true, tip: 'The line above divided by enrolled debt — the cleanest way to compare partners.' },
+    { label: 'Main risk', get: (s) => s.k === 'LEVEL' ? `Chargeback if the client cancels before payment ${inputs.levelDebt.chargebackClearMonths}` : 'Client cancels and the monthly share stops' },
+  ];
 
   return (
     <>
@@ -376,8 +538,7 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
       <div style={{ fontSize: 12.5, color: T.body, lineHeight: 1.55, marginBottom: 10 }}>
         <strong style={{ color: T.ink }}>How to read this page.</strong> Funding Tier never bills the client. The client enrolls with a
         servicing partner and pays that partner; the partner pays Funding Tier a contracted cut for delivering the client. Every revenue
-        number in this model is that cut. The three partners take it from different things, on different schedules — which is why a
-        deal is worth a different amount, and pays at a different time, at each one.
+        number in this model is that cut. The three partners take it from different things, on different schedules.
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'stretch' }}>
         <FlowStep n={1} title="Client enrolls" body="Funding Tier’s rep closes the call and the client signs with Level Debt, Consumer Shield or Elite Legal Practice." />
@@ -389,66 +550,136 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
         <FlowStep n={4} title="Funding Tier pays the rep" body="Commission goes out only after the partner has paid — never before." tone="rep" />
       </div>
 
-      {/* 2 · Side by side */}
-      <div style={{ marginTop: 16, overflowX: 'auto' }}>
-        <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: T.muted, marginBottom: 6, display: 'flex', alignItems: 'center' }}>
-          One typical deal at each partner
-          <Info text="Each column uses that partner’s average enrolled debt from Deal Volume, and the contract terms below. Change either and this table follows." />
+      {/* 2 · Same debt, three partners */}
+      <div style={{ marginTop: 18, border: `1px solid ${T.brandLine}`, borderRadius: 12, padding: '12px 14px', background: G.panel }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ marginRight: 'auto' }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>Same client, three partners</div>
+            <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>Enter one enrolled-debt amount and see what the identical deal pays at each partner. This does not change the model.</div>
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: T.body }}>
+            Enrolled debt
+            <span style={{ display: 'inline-flex', alignItems: 'center', border: `1px solid ${T.brand}`, borderRadius: 8, background: '#fff', padding: '0 8px' }}>
+              <span style={{ color: T.muted, fontFamily: T.mono }}>$</span>
+              <input
+                type="number" min={0} step={500} value={draft}
+                onChange={(e) => { setDraft(e.target.value); const n = Number(e.target.value); if (Number.isFinite(n)) setDebt(Math.max(0, n)); }}
+                onBlur={() => commit(Number(draft) || 0)}
+                style={{ width: 90, border: 0, outline: 'none', padding: '7px 4px', fontFamily: T.mono, fontSize: 14, fontWeight: 800, color: T.ink, background: 'transparent' }}
+              />
+            </span>
+          </label>
+          <div style={{ display: 'flex', gap: 5 }}>
+            {PRESETS.map((p) => (
+              <button key={p} onClick={() => commit(p)} style={{
+                padding: '5px 9px', borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: T.mono,
+                border: `1px solid ${debt === p ? T.brand : T.line}`, background: debt === p ? T.brand : '#fff', color: debt === p ? '#fff' : T.body,
+              }}>{`$${p / 1000}k`}</button>
+            ))}
+          </div>
         </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
-          <thead>
-            <tr>
-              <th style={{ ...th, width: '22%' }} />
-              {stories.map((s) => (
-                <th key={s.k} style={{ ...th, textAlign: 'left' }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><PartnerMark k={s.k} size={15} />{BRANDS[s.k].name}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr><td style={{ ...td, color: T.muted, fontSize: 11 }}>Enrolled debt</td>{stories.map((s) => money(s, s.debt))}</tr>
-            <tr><td style={{ ...td, color: T.muted, fontSize: 11 }}>We get a portion of</td>{stories.map((s) => cell(s,
-              s.k === 'LEVEL' ? `The enrolled debt (${fmtPct(inputs.levelDebt.revenueSharePct * 100, 0)})`
-                : s.k === 'CS' ? 'Each monthly program payment'
-                : 'Each monthly fee draft'))}</tr>
-            <tr><td style={{ ...td, color: T.muted, fontSize: 11 }}>Paid as</td>{stories.map((s) => cell(s,
-              s.k === 'LEVEL' ? 'One lump sum' : `Monthly, up to ${s.term} months`))}</tr>
-            <tr><td style={{ ...td, color: T.muted, fontSize: 11 }}>First cash arrives</td>{stories.map((s) => cell(s, `Month ${s.firstCashMonth}`))}</tr>
-            <tr><td style={{ ...td, color: T.muted, fontSize: 11 }}>If the client finishes</td>{stories.map((s) => money(s, s.fullTotal, T.brandDark))}</tr>
-            <tr><td style={{ ...td, color: T.muted, fontSize: 11 }}>Expected, after cancellations</td>{stories.map((s) => money(s, s.expectedTotal, T.brandDark))}</tr>
-            <tr><td style={{ ...td, color: T.muted, fontSize: 11 }}>Rep commission (expected)</td>{stories.map((s) => money(s, -s.repExpected, C.rep))}</tr>
-            <tr>
-              <td style={{ ...td, color: T.ink, fontSize: 11, fontWeight: 800, borderTop: `2px solid ${T.ink}` }}>Kept by Funding Tier, expected</td>
-              {stories.map((s) => (
-                <td key={s.k} style={{ ...tdNum, fontSize: 13, fontWeight: 800, borderTop: `2px solid ${T.ink}` }}>{fmtMoney(s.expectedTotal - s.repExpected)}</td>
-              ))}
-            </tr>
-            <tr><td style={{ ...td, color: T.muted, fontSize: 11 }}>Main risk</td>{stories.map((s) => cell(s,
-              s.k === 'LEVEL' ? 'Chargeback if the client cancels before payment 2' : 'Client cancels and the monthly share stops'))}</tr>
-          </tbody>
-        </table>
-        <div style={{ fontSize: 10.5, color: T.faint, marginTop: 5, lineHeight: 1.5 }}>
-          Before transfer, labor and tool costs — those are in Cost Stack and the statements. “Expected” uses the first-payment and
-          monthly cancellation assumptions in Risk &amp; Attrition, per enrolled deal.
+
+        <div style={{ overflowX: 'auto', marginTop: 12 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700, tableLayout: 'fixed' }}>
+            <thead>
+              <tr>
+                <th style={{ ...th, width: '22%' }} />
+                {stories.map((s) => (
+                  <th key={s.k} style={{ ...th, textAlign: 'left', borderTop: `3px solid ${BRANDS[s.k].accent}` }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><PartnerMark k={s.k} size={15} />{BRANDS[s.k].name}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const vals = stories.map((s) => (s.eligible ? r.get(s) : null));
+                const nums = vals.filter((v): v is number => typeof v === 'number');
+                const top = r.best && nums.length > 1 ? Math.max(...nums) : null;
+                const border = r.total ? { borderTop: `2px solid ${T.ink}` } : {};
+                return (
+                  <tr key={r.label}>
+                    <td style={{ ...td, fontSize: 11, color: r.total ? T.ink : T.muted, fontWeight: r.total ? 800 : 500, ...border }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center' }}>{r.label}{r.tip && <Info text={r.tip} />}</span>
+                    </td>
+                    {stories.map((s, i) => {
+                      const v = vals[i];
+                      if (v == null) {
+                        return <td key={s.k} style={{ ...td, fontSize: 11, color: T.faint, fontStyle: 'italic', whiteSpace: 'normal', ...border }}>
+                          {r === rows[0] ? `Not eligible — minimum ${fmtMoney(s.minDebt)} enrolled` : '—'}
+                        </td>;
+                      }
+                      if (typeof v === 'number') {
+                        const win = top != null && Math.abs(v - top) < 0.5;
+                        return (
+                          <td key={s.k} style={{ ...tdNum, textAlign: 'left', fontSize: r.total ? 14 : 12.5, fontWeight: 800, color: r.color ?? T.ink, background: win ? T.brandSoft : undefined, ...border }}>
+                            {fmtMoney(v)}{win && <span style={{ fontSize: 9, fontWeight: 800, color: T.brandDark, marginLeft: 6, fontFamily: T.sans, letterSpacing: 0.4 }}>HIGHEST</span>}
+                          </td>
+                        );
+                      }
+                      return <td key={s.k} style={{ ...td, fontSize: 11.5, color: T.ink, verticalAlign: 'top', lineHeight: 1.4, whiteSpace: 'normal', wordBreak: 'normal', ...border }}>{v}</td>;
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 4px', flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: T.muted, display: 'flex', alignItems: 'center', marginRight: 'auto' }}>
+            Kept by Funding Tier per deal, from $4k to $50k enrolled
+            <Info text="Each line is what Funding Tier keeps from one deal, after the rep’s commission, at every enrolled-debt amount. The dots are the amount entered above. Consumer Shield moves in steps because it pays by program band; Level Debt and Elite Legal Practice rise with the debt." />
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: T.body, cursor: 'pointer' }}>
+            <input type="checkbox" checked={showExpected} onChange={(e) => setShowExpected(e.target.checked)} />
+            After cancellations (uncheck = client finishes)
+          </label>
+        </div>
+        <DebtCurve inputs={inputs} debt={debt} expected={showExpected} levelMonthlyVolume={levelMonthlyVolume} />
+        <div style={{ fontSize: 10.5, color: T.faint, marginTop: 4, lineHeight: 1.5 }}>
+          Before transfer, labor and tool costs — those are in Cost Stack and the statements.
         </div>
       </div>
 
-      {/* 3 · Follow one deal */}
+      {/* 3 · Consumer Shield bands */}
+      <div style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <PartnerMark k="CS" size={18} />
+          <div style={{ fontSize: 13, fontWeight: 800, color: T.ink }}>How Consumer Shield prices a file: debt ranges, not exact amounts</div>
+        </div>
+        <div style={{ fontSize: 12, color: T.body, lineHeight: 1.55, margin: '6px 0 8px' }}>
+          Consumer Shield does not charge a percentage of the client’s debt. It places the client in a <strong>program band</strong> by
+          enrolled debt, and every client in that band pays the same monthly amount for the same term. Funding Tier’s share is taken from
+          that payment, so <strong>a {fmtMoney(15000)} file and a {fmtMoney(19999)} file pay Funding Tier exactly the same</strong>; crossing
+          into the next band is what raises it. Level Debt and Elite Legal Practice, by contrast, pay more for every dollar enrolled.
+          The highlighted row is the amount entered above.
+        </div>
+        <ShieldBands inputs={inputs} debt={debt} />
+        <div style={{ fontSize: 10.5, color: T.faint, marginTop: 5, lineHeight: 1.5 }}>
+          FT per payment: {fmtPct(inputs.consumerShield.frontCaptureRate * 100, 0)} of (payment − {fmtMoney(inputs.consumerShield.servicingDeductionPerPayment)} servicing) for the first {inputs.consumerShield.frontMonths} months,
+          then {fmtPct(inputs.consumerShield.backendCaptureRate * 100, 0)}. File buyout is the one-time alternative, paid once the first payment clears (see Shield Buyout).
+        </div>
+      </div>
+
+      {/* 4 · Follow one deal */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '18px 0 10px' }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, marginRight: 'auto' }}>Follow one deal through each partner</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, marginRight: 'auto' }}>Follow the {fmtMoney(debt)} deal through each partner</div>
         {(['ALL', ...BACKEND_KEYS] as const).map((k) => (
           <button key={k} onClick={() => setFocus(k)} style={{
             padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: T.sans,
             border: `1px solid ${focus === k ? T.brand : T.line}`, background: focus === k ? T.brand : '#fff', color: focus === k ? '#fff' : T.body,
           }}>{k === 'ALL' ? 'All three' : BRANDS[k].name}</button>
         ))}
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: T.body, cursor: 'pointer', marginLeft: 6 }}>
-          <input type="checkbox" checked={showExpected} onChange={(e) => setShowExpected(e.target.checked)} />
-          Show expected after cancellations
-        </label>
       </div>
-      {shown.map((s) => <StoryCard key={s.k} s={s} showExpected={showExpected} />)}
+      {shown.map((s) => s.eligible
+        ? <StoryCard key={s.k} s={s} showExpected={showExpected} />
+        : (
+          <div key={s.k} style={{ border: `1px dashed ${T.line}`, borderRadius: 10, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <PartnerName k={s.k} size={18} />
+            <span style={{ fontSize: 12, color: T.muted }}>Not eligible at {fmtMoney(debt)} — this partner’s minimum is {fmtMoney(s.minDebt)} enrolled.</span>
+          </div>
+        ))}
     </>
   );
 }
