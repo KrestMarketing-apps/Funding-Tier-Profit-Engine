@@ -24,10 +24,21 @@ const C = {
   rep: '#d97706',       // rep commission
 };
 
+type ColId = BackendKey | 'CSBUY';
+const COLS: ColId[] = ['LEVEL', 'CS', 'CSBUY', 'LEGACY'];
+const colKey = (id: ColId): BackendKey => (id === 'CSBUY' ? 'CS' : id);
+const colName = (id: ColId) => id === 'CSBUY' ? `${BRANDS.CS.name} · buyout` : id === 'CS' ? `${BRANDS.CS.name} · perpetuity` : BRANDS[id].name;
+
 interface MonthPoint { m: number; full: number; expected: number }
 
 interface DealStory {
   k: BackendKey;
+  /** Column id — the partner key, or CSBUY for the Consumer Shield file buyout. */
+  id?: ColId;
+  /** Payout option shown next to the partner name (Perpetuity / File buyout). */
+  variant?: string;
+  /** Paid once rather than monthly. */
+  oneTime?: boolean;
   debt: number;
   /** What the percentage is taken from, in one plain sentence. */
   portionOf: string;
@@ -281,7 +292,7 @@ function Timeline({ s, showExpected }: { s: DealStory; showExpected: boolean }) 
       <rect x={x(s.repMonth) + bw * 0.2} y={H - padB - 5} width={bw * 0.6} height={5} fill={C.rep} />
       {marker(s.repMonth, `Rep paid ${fmtMoney(s.repComm)}`, C.rep, 0)}
       {s.clearMonth != null && marker(s.clearMonth, 'Chargeback risk ends', T.bad, 1)}
-      {s.k !== 'LEVEL' && marker(s.term + s.lag, 'Program ends', T.muted, 1)}
+      {!s.oneTime && marker(s.term + s.lag, 'Program ends', T.muted, 1)}
       <line x1={padL} x2={W - padR} y1={H - padB} y2={H - padB} stroke={T.line} />
       {ticks.map((m) => (
         <text key={m} x={x(m) + bw / 2} y={H - 8} fontSize={9} textAnchor="middle" fill={T.muted}>{`Mo ${m}`}</text>
@@ -309,6 +320,10 @@ function StoryCard({ s, showExpected }: { s: DealStory; showExpected: boolean })
     <div style={{ border: `1px solid ${T.line}`, borderLeft: `3px solid ${b.accent}`, borderRadius: 10, padding: '12px 14px', marginBottom: 12, background: '#fff' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <PartnerName k={s.k} size={20} sub />
+        {s.variant && (
+          <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', padding: '2px 8px', borderRadius: 20,
+            color: s.oneTime ? T.warn : T.good, background: s.oneTime ? T.warnBg : T.goodBg, border: `1px solid ${s.oneTime ? T.warnLine : '#bbf7d0'}` }}>{s.variant}</span>
+        )}
         <span style={{ fontSize: 11, color: T.muted }}>Example deal: <strong style={{ color: T.ink }}>{fmtMoney(s.debt)}</strong> enrolled debt — the same amount at every partner (set above)</span>
       </div>
 
@@ -334,7 +349,7 @@ function StoryCard({ s, showExpected }: { s: DealStory; showExpected: boolean })
 
       <Row cols={4} gap={10} style={{ marginTop: 8 }}>
         <Stat label="If the client finishes" value={fmtMoney(s.fullTotal)} tone="ft"
-          sub={s.k === 'LEVEL' ? 'One payment' : `${paying} monthly payments`}
+          sub={s.oneTime ? 'One payment' : `${paying} monthly payments`}
           tip="Total Funding Tier receives from this one deal if the client never cancels." />
         <Stat label="Expected per enrolled deal" value={fmtMoney(s.expectedTotal)} tone="ft"
           sub={`${fmtPct(s.fullTotal > 0 ? (s.expectedTotal / s.fullTotal) * 100 : 0, 0)} of the full amount`}
@@ -345,7 +360,7 @@ function StoryCard({ s, showExpected }: { s: DealStory; showExpected: boolean })
             ? 'Level Debt commission is a percentage of enrolled debt, set by the company-wide Level Debt volume tier for the month. Paid only if the deal is still active at payout.'
             : 'Flat commission per enrolled deal from the live schedule. Paid only if the deal is still active at payout.'} />
         <Stat label="First cash in" value={`Month ${s.firstCashMonth}`}
-          sub={s.k === 'LEVEL' ? 'All of it, at once' : `Last payment month ${s.term + s.lag}`}
+          sub={s.oneTime ? 'All of it, at once' : `Last payment month ${s.term + s.lag}`}
           tip="The month Funding Tier’s first dollar from this deal reaches the bank, counting the month the deal is signed as month 1." />
       </Row>
     </div>
@@ -362,6 +377,7 @@ interface AtDebt extends DealStory {
   clientPays: string;
   ftPerPayment: string;
   scaling: string;
+  mainRisk: string;
 }
 
 /** One partner's deal at a debt amount the viewer picks, without touching the model. */
@@ -375,6 +391,8 @@ function storyAt(k: BackendKey, inputs: ModelInputs, debt: number, levelMonthlyV
       clientPays: 'Monthly deposits into Level Debt’s settlement program (not shared with us)',
       ftPerPayment: `${fmtMoney(s.fullTotal)} once`,
       scaling: `Straight line — every extra $1,000 enrolled adds ${fmtMoney(1000 * t.revenueSharePct)}.`,
+      mainRisk: `Chargeback if the client cancels before payment ${t.chargebackClearMonths}`,
+      id: 'LEVEL', oneTime: true,
     };
   }
   if (k === 'CS') {
@@ -386,6 +404,8 @@ function storyAt(k: BackendKey, inputs: ModelInputs, debt: number, levelMonthlyV
       clientPays: p ? `${fmtMoney(p.payment)}/mo × ${p.term} mo · program ${p.code}` : '—',
       ftPerPayment: p ? `${fmtMoney(net * t.frontCaptureRate)} (mo 1–${t.frontMonths}) → ${fmtMoney(net * t.backendCaptureRate)}` : '—',
       scaling: p ? `Stair-step — anything from ${fmtMoney(p.min)} to ${p.max === Infinity ? 'up' : fmtMoney(Math.floor(p.max))} pays exactly the same.` : '—',
+      mainRisk: 'Client cancels and the monthly share stops',
+      id: 'CS', variant: 'Perpetuity',
     };
   }
   const L = inputs.legacy;
@@ -395,7 +415,72 @@ function storyAt(k: BackendKey, inputs: ModelInputs, debt: number, levelMonthlyV
     clientPays: ok ? `${fmtMoney2(legacy.getScheduledPayment(debt, L))}/mo × ${legacy.getMaxTerm(debt, L)} mo` : '—',
     ftPerPayment: ok ? `${fmtMoney(legacy.revenueForDealMonth(debt, 1, L))} (mo 1–2) → ${fmtMoney(legacy.revenueForDealMonth(debt, 3, L))}` : '—',
     scaling: `Mostly straight line — the fee is ${fmtPct(L.feeRate * 100, 0)} of the debt, but a bigger file also runs a longer term.`,
+    mainRisk: 'Client cancels and the monthly share stops',
+    id: 'LEGACY',
   };
+}
+
+/**
+ * Consumer Shield Enrollment File Buyout at a chosen debt: the same file, sold
+ * back to Consumer Shield for one advance instead of kept on the perpetuity.
+ */
+function buyoutAt(inputs: ModelInputs, debt: number): AtDebt {
+  const t = inputs.consumerShield;
+  const p = shield.getProgram(debt, t);
+  const lag = inputs.remittanceLag.CS;
+  const trig = t.buyout.triggerDealMonth;
+  const pay = p?.payment ?? 0;
+  const net = pay - t.servicingDeductionPerPayment;
+  const rate = shield.buyoutRate(debt, t);
+  const payout = shield.buyoutPayout(debt, t);
+  const perpFull = shield.perpetualFullTerm(debt, t);
+  const surv = buildSurvivalCurve(inputs.survivalCurves.CS, Math.max(trig, t.agentPayoutMonth) + 2);
+  const months: MonthPoint[] = [];
+  for (let m = 1; m <= trig; m++) {
+    const v = m === trig ? payout : 0;
+    months.push({ m, full: v, expected: v * (surv[m] ?? 0) });
+  }
+  const repComm = shield.agentCommission(debt, t);
+  const be = shield.breakEvenPayments(debt, t);
+  const high = shield.isHighDebtBuyout(debt, t);
+  const sixNet = net * t.buyout.months;
+  return {
+    k: 'CS', id: 'CSBUY', variant: 'File buyout', oneTime: true,
+    debt, lag, term: trig, months, repComm, repMonth: t.agentPayoutMonth,
+    repExpected: repComm * (surv[t.agentPayoutMonth] ?? 0),
+    fullTotal: payout, expectedTotal: months.reduce((a, q) => a + q.expected, 0),
+    firstCashMonth: trig + lag,
+    portionOf: `${t.buyout.months} months of the client’s net program payment, bought up front: (${fmtMoney(pay)} − ${fmtMoney(t.servicingDeductionPerPayment)}) × ${fmtPct(rate * 100, 0)} × ${t.buyout.months} = ${fmtMoney(payout)}. Files of ${fmtMoney(t.buyout.highDebtMinDebt)}+ are bought at ${fmtPct(t.buyout.highDebtRate * 100, 0)} instead of ${fmtPct(t.buyout.standardRate * 100, 0)}.`,
+    howPaid: `One advance once the client’s first month (or both halves of a split first month) clears. It replaces every monthly share on that file — nothing recurs.${be != null ? ` Kept on the perpetuity instead, the same file out-earns the buyout after ${be} payments.` : ''}`,
+    riskEnds: 'The model counts the advance as earned once the first payment clears. Clawback terms on bought-out files are not yet confirmed.',
+    splits: [
+      {
+        title: `${t.buyout.months} months of net payments · ${fmtMoney(net)} × ${t.buyout.months} = ${fmtMoney(sixNet)}`,
+        total: sixNet,
+        parts: [
+          { label: 'Funding Tier’s buyout', amount: payout, color: C.ft, who: `${fmtPct(rate * 100, 0)}${high ? ' — $20k+ rate' : ''}, paid now` },
+          ...(sixNet - payout > 0.005 ? [{ label: 'Discount kept by Consumer Shield', amount: sixNet - payout, color: C.partner, who: `${fmtPct((1 - rate) * 100, 0)} for paying up front` }] : []),
+        ],
+      },
+      {
+        title: `Versus keeping the file on the perpetuity · ${fmtMoney(perpFull)} if the client finishes`,
+        total: Math.max(perpFull, payout),
+        parts: [
+          { label: 'Buyout, paid now', amount: payout, color: C.ft, who: 'Certain once payment 1 clears' },
+          ...(perpFull - payout > 0.005 ? [{ label: 'Perpetuity income given up', amount: perpFull - payout, color: C.partner, who: `Would arrive over ${p?.term ?? '—'} months — only if the client stays` }] : []),
+        ],
+      },
+    ],
+    eligible: !!p && debt >= t.minDebt, minDebt: t.minDebt,
+    clientPays: p ? `${fmtMoney(p.payment)}/mo × ${p.term} mo · program ${p.code}` : '—',
+    ftPerPayment: `${fmtMoney(payout)} once`,
+    scaling: `Stair-step by program band, and jumps to the ${fmtPct(t.buyout.highDebtRate * 100, 0)} rate at ${fmtMoney(t.buyout.highDebtMinDebt)}+.`,
+    mainRisk: 'Clawback terms not yet confirmed; no upside if the client stays',
+  };
+}
+
+function colStory(id: ColId, inputs: ModelInputs, debt: number, levelMonthlyVolume: number): AtDebt {
+  return id === 'CSBUY' ? buyoutAt(inputs, debt) : storyAt(id, inputs, debt, levelMonthlyVolume);
 }
 
 /** Funding Tier revenue per deal across enrolled debt, all three partners on one axis. */
@@ -403,20 +488,20 @@ function DebtCurve({ inputs, debt, expected, levelMonthlyVolume }: {
   inputs: ModelInputs; debt: number; expected: boolean; levelMonthlyVolume: number;
 }) {
   const lo = 4000, hi = 50000, step = 500;
-  const series = useMemo(() => BACKEND_KEYS.map((k) => {
+  const series = useMemo(() => COLS.map((k) => {
     const pts: [number, number][] = [];
     for (let d = lo; d <= hi; d += step) {
-      const s = storyAt(k, inputs, d, levelMonthlyVolume);
+      const s = colStory(k, inputs, d, levelMonthlyVolume);
       pts.push([d, s.eligible ? (expected ? s.expectedTotal - s.repExpected : s.fullTotal - s.repComm) : NaN]);
     }
     return { k, pts };
   }), [inputs, expected, levelMonthlyVolume]);
-  const W = 760, H = 210, padL = 52, padR = 110, padT = 12, padB = 26;
+  const W = 760, H = 220, padL = 52, padR = 150, padT = 12, padB = 26;
   const max = Math.max(1, ...series.flatMap((s) => s.pts.map((p) => (Number.isFinite(p[1]) ? p[1] : 0))));
   const x = (d: number) => padL + ((d - lo) / (hi - lo)) * (W - padL - padR);
   const y = (v: number) => padT + (H - padT - padB) * (1 - v / max);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Funding Tier kept per deal by enrolled debt, three partners" style={{ display: 'block' }}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Funding Tier kept per deal by enrolled debt, each partner and payout option" style={{ display: 'block' }}>
       {[0, 0.25, 0.5, 0.75, 1].map((f) => (
         <g key={f}>
           <line x1={padL} x2={W - padR} y1={y(max * f)} y2={y(max * f)} stroke={T.lineSoft} />
@@ -431,9 +516,9 @@ function DebtCurve({ inputs, debt, expected, levelMonthlyVolume }: {
         const ends = series.map(({ k, pts }) => {
           const p = [...pts].reverse().find((q) => Number.isFinite(q[1]));
           return p ? { k, x: x(p[0]) + 6, y: y(p[1]) + 3 } : null;
-        }).filter((e): e is { k: BackendKey; x: number; y: number } => !!e).sort((a, b) => a.y - b.y);
+        }).filter((e): e is { k: ColId; x: number; y: number } => !!e).sort((a, b) => a.y - b.y);
         for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 12) ends[i].y = ends[i - 1].y + 12;
-        return ends.map((e) => <text key={e.k} x={e.x} y={e.y} fontSize={10} fontWeight={700} fill={BRANDS[e.k].accent}>{BRANDS[e.k].name}</text>);
+        return ends.map((e) => <text key={e.k} x={e.x} y={e.y} fontSize={10} fontWeight={700} fill={BRANDS[colKey(e.k)].accent}>{colName(e.k)}</text>);
       })()}
       {series.map(({ k, pts }) => {
         let path = ''; let pen = false;
@@ -441,16 +526,16 @@ function DebtCurve({ inputs, debt, expected, levelMonthlyVolume }: {
           if (!Number.isFinite(v)) { pen = false; return; }
           path += `${pen ? 'L' : 'M'}${x(d).toFixed(1)},${y(v).toFixed(1)}`; pen = true;
         });
-        return <path key={k} d={path} fill="none" stroke={BRANDS[k].accent} strokeWidth={2} />;
+        return <path key={k} d={path} fill="none" stroke={BRANDS[colKey(k)].accent} strokeWidth={2} strokeDasharray={k === 'CSBUY' ? '5 4' : undefined} />;
       })}
       {debt >= lo && debt <= hi && (
         <g>
           <line x1={x(debt)} x2={x(debt)} y1={padT} y2={H - padB} stroke={T.ink} strokeDasharray="3 3" />
           {series.map(({ k, pts }) => {
-            const s = storyAt(k, inputs, debt, levelMonthlyVolume);
+            const s = colStory(k, inputs, debt, levelMonthlyVolume);
             if (!s.eligible) return null;
             const v = expected ? s.expectedTotal - s.repExpected : s.fullTotal - s.repComm;
-            return <circle key={k} cx={x(debt)} cy={y(v)} r={4} fill={BRANDS[k].accent} stroke="#fff" strokeWidth={1.5} />;
+            return <circle key={k} cx={x(debt)} cy={y(v)} r={4} fill={BRANDS[colKey(k)].accent} stroke="#fff" strokeWidth={1.5} />;
           })}
         </g>
       )}
@@ -504,14 +589,14 @@ const PRESETS = [8000, 15000, 25000, 40000];
 
 export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: ModelInputs; levelMonthlyVolume: number }) {
   const [showExpected, setShowExpected] = useState(true);
-  const [focus, setFocus] = useState<BackendKey | 'ALL'>('ALL');
+  const [focus, setFocus] = useState<ColId | 'ALL'>('ALL');
   const [debt, setDebt] = useState<number>(DEFAULT_DEBT);
   const [draft, setDraft] = useState<string>(String(DEFAULT_DEBT));
   const stories = useMemo(
-    () => BACKEND_KEYS.map((k) => storyAt(k, inputs, debt, levelMonthlyVolume)),
+    () => COLS.map((k) => colStory(k, inputs, debt, levelMonthlyVolume)),
     [inputs, debt, levelMonthlyVolume],
   );
-  const shown = (focus === 'ALL' ? stories : stories.filter((s) => s.k === focus));
+  const shown = (focus === 'ALL' ? stories : stories.filter((s) => s.id === focus));
   const commit = (v: number) => {
     const n = Math.max(0, Math.min(250000, Math.round(v)));
     setDebt(n); setDraft(String(n));
@@ -519,7 +604,7 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
 
   type CmpRow = { label: string; tip?: string; get: (s: AtDebt) => number | string; money?: boolean; best?: boolean; color?: string; total?: boolean };
   const rows: CmpRow[] = [
-    { label: 'We are paid a portion of', get: (s) => s.k === 'LEVEL' ? `The enrolled debt (${fmtPct(inputs.levelDebt.revenueSharePct * 100, 0)}), once` : s.k === 'CS' ? 'Each monthly program payment' : 'Each monthly fee draft' },
+    { label: 'We are paid a portion of', get: (s) => s.id === 'LEVEL' ? `The enrolled debt (${fmtPct(inputs.levelDebt.revenueSharePct * 100, 0)}), once` : s.id === 'CS' ? 'Each monthly program payment' : s.id === 'CSBUY' ? `${inputs.consumerShield.buyout.months} months of net payments, bought up front` : 'Each monthly fee draft' },
     { label: 'What the client pays the partner', get: (s) => s.clientPays },
     { label: 'Funding Tier per payment', get: (s) => s.ftPerPayment },
     { label: 'How pay changes with debt', get: (s) => s.scaling },
@@ -529,7 +614,7 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
     { label: 'Rep commission', get: (s) => s.repComm, money: true, color: C.rep, tip: 'Paid only if the deal is still active at payout. Level Debt uses the current company-wide volume tier.' },
     { label: 'Kept by Funding Tier, expected', get: (s) => s.expectedTotal - s.repExpected, money: true, best: true, total: true, tip: 'Expected revenue less the expected rep commission, before transfer, labor and tool costs.' },
     { label: 'Kept per $1,000 enrolled', get: (s) => (s.expectedTotal - s.repExpected) / Math.max(debt, 1) * 1000, money: true, best: true, tip: 'The line above divided by enrolled debt — the cleanest way to compare partners.' },
-    { label: 'Main risk', get: (s) => s.k === 'LEVEL' ? `Chargeback if the client cancels before payment ${inputs.levelDebt.chargebackClearMonths}` : 'Client cancels and the monthly share stops' },
+    { label: 'Main risk', get: (s) => s.mainRisk },
   ];
 
   return (
@@ -554,8 +639,8 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
       <div style={{ marginTop: 18, border: `1px solid ${T.brandLine}`, borderRadius: 12, padding: '12px 14px', background: G.panel }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ marginRight: 'auto' }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>Same client, three partners</div>
-            <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>Enter one enrolled-debt amount and see what the identical deal pays at each partner. This does not change the model.</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: T.ink }}>Same client, every way we can be paid</div>
+            <div style={{ fontSize: 11.5, color: T.muted, marginTop: 2 }}>Enter one enrolled-debt amount and see what the identical deal pays at each partner — including a Consumer Shield file kept on the monthly perpetuity versus sold through the file buyout. This does not change the model.</div>
           </div>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: T.body }}>
             Enrolled debt
@@ -580,13 +665,14 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
         </div>
 
         <div style={{ overflowX: 'auto', marginTop: 12 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700, tableLayout: 'fixed' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880, tableLayout: 'fixed' }}>
             <thead>
               <tr>
-                <th style={{ ...th, width: '22%' }} />
+                <th style={{ ...th, width: '18%' }} />
                 {stories.map((s) => (
-                  <th key={s.k} style={{ ...th, textAlign: 'left', borderTop: `3px solid ${BRANDS[s.k].accent}` }}>
+                  <th key={s.id} style={{ ...th, textAlign: 'left', borderTop: `3px ${s.id === 'CSBUY' ? 'dashed' : 'solid'} ${BRANDS[s.k].accent}` }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><PartnerMark k={s.k} size={15} />{BRANDS[s.k].name}</span>
+                    {s.variant && <div style={{ fontSize: 9, color: s.oneTime ? T.warn : T.good, marginTop: 2 }}>{s.variant}</div>}
                   </th>
                 ))}
               </tr>
@@ -605,19 +691,19 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
                     {stories.map((s, i) => {
                       const v = vals[i];
                       if (v == null) {
-                        return <td key={s.k} style={{ ...td, fontSize: 11, color: T.faint, fontStyle: 'italic', whiteSpace: 'normal', ...border }}>
+                        return <td key={s.id} style={{ ...td, fontSize: 11, color: T.faint, fontStyle: 'italic', whiteSpace: 'normal', ...border }}>
                           {r === rows[0] ? `Not eligible — minimum ${fmtMoney(s.minDebt)} enrolled` : '—'}
                         </td>;
                       }
                       if (typeof v === 'number') {
                         const win = top != null && Math.abs(v - top) < 0.5;
                         return (
-                          <td key={s.k} style={{ ...tdNum, textAlign: 'left', fontSize: r.total ? 14 : 12.5, fontWeight: 800, color: r.color ?? T.ink, background: win ? T.brandSoft : undefined, ...border }}>
+                          <td key={s.id} style={{ ...tdNum, textAlign: 'left', fontSize: r.total ? 14 : 12.5, fontWeight: 800, color: r.color ?? T.ink, background: win ? T.brandSoft : undefined, ...border }}>
                             {fmtMoney(v)}{win && <span style={{ fontSize: 9, fontWeight: 800, color: T.brandDark, marginLeft: 6, fontFamily: T.sans, letterSpacing: 0.4 }}>HIGHEST</span>}
                           </td>
                         );
                       }
-                      return <td key={s.k} style={{ ...td, fontSize: 11.5, color: T.ink, verticalAlign: 'top', lineHeight: 1.4, whiteSpace: 'normal', wordBreak: 'normal', ...border }}>{v}</td>;
+                      return <td key={s.id} style={{ ...td, fontSize: 11.5, color: T.ink, verticalAlign: 'top', lineHeight: 1.4, whiteSpace: 'normal', wordBreak: 'normal', ...border }}>{v}</td>;
                     })}
                   </tr>
                 );
@@ -629,7 +715,7 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 4px', flexWrap: 'wrap' }}>
           <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: T.muted, display: 'flex', alignItems: 'center', marginRight: 'auto' }}>
             Kept by Funding Tier per deal, from $4k to $50k enrolled
-            <Info text="Each line is what Funding Tier keeps from one deal, after the rep’s commission, at every enrolled-debt amount. The dots are the amount entered above. Consumer Shield moves in steps because it pays by program band; Level Debt and Elite Legal Practice rise with the debt." />
+            <Info text="Each line is what Funding Tier keeps from one deal, after the rep’s commission, at every enrolled-debt amount. The dots are the amount entered above. Consumer Shield moves in steps because it pays by program band — the dashed line is the same file sold through the buyout. Level Debt and Elite Legal Practice rise with the debt." />
           </div>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: T.body, cursor: 'pointer' }}>
             <input type="checkbox" checked={showExpected} onChange={(e) => setShowExpected(e.target.checked)} />
@@ -652,7 +738,7 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
           Consumer Shield does not charge a percentage of the client’s debt. It places the client in a <strong>program band</strong> by
           enrolled debt, and every client in that band pays the same monthly amount for the same term. Funding Tier’s share is taken from
           that payment, so <strong>a {fmtMoney(15000)} file and a {fmtMoney(19999)} file pay Funding Tier exactly the same</strong>; crossing
-          into the next band is what raises it. Level Debt and Elite Legal Practice, by contrast, pay more for every dollar enrolled.
+          into the next band is what raises it. The same band sets the <strong>file buyout</strong>: Consumer Shield pays {inputs.consumerShield.buyout.months} months of the net payment up front at {fmtPct(inputs.consumerShield.buyout.standardRate * 100, 0)}, or {fmtPct(inputs.consumerShield.buyout.highDebtRate * 100, 0)} on files of {fmtMoney(inputs.consumerShield.buyout.highDebtMinDebt)}+. Level Debt and Elite Legal Practice, by contrast, pay more for every dollar enrolled.
           The highlighted row is the amount entered above.
         </div>
         <ShieldBands inputs={inputs} debt={debt} />
@@ -665,17 +751,17 @@ export function BackendExplainer({ inputs, levelMonthlyVolume }: { inputs: Model
       {/* 4 · Follow one deal */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', margin: '18px 0 10px' }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: T.ink, marginRight: 'auto' }}>Follow the {fmtMoney(debt)} deal through each partner</div>
-        {(['ALL', ...BACKEND_KEYS] as const).map((k) => (
+        {(['ALL', ...COLS] as const).map((k) => (
           <button key={k} onClick={() => setFocus(k)} style={{
             padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: T.sans,
             border: `1px solid ${focus === k ? T.brand : T.line}`, background: focus === k ? T.brand : '#fff', color: focus === k ? '#fff' : T.body,
-          }}>{k === 'ALL' ? 'All three' : BRANDS[k].name}</button>
+          }}>{k === 'ALL' ? 'All' : colName(k)}</button>
         ))}
       </div>
       {shown.map((s) => s.eligible
-        ? <StoryCard key={s.k} s={s} showExpected={showExpected} />
+        ? <StoryCard key={s.id} s={s} showExpected={showExpected} />
         : (
-          <div key={s.k} style={{ border: `1px dashed ${T.line}`, borderRadius: 10, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div key={s.id} style={{ border: `1px dashed ${T.line}`, borderRadius: 10, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
             <PartnerName k={s.k} size={18} />
             <span style={{ fontSize: 12, color: T.muted }}>Not eligible at {fmtMoney(debt)} — this partner’s minimum is {fmtMoney(s.minDebt)} enrolled.</span>
           </div>
