@@ -4,7 +4,7 @@ import type { BackendKey, ModelInputs } from './types';
 import { BACKEND_KEYS } from './types';
 import { BRANDS, cloneDefaults } from './config';
 import { runModel } from './simulate';
-import { blendedTransferCost } from './costs';
+import { blendedCreditPullPrice, blendedTransferCost, creditPullPolicy, CREDIT_PULL_UNCONFIRMED } from './costs';
 import { legacy, shield } from './backends';
 import { RosterEditor } from './RosterEditor';
 import { ShowTheMath } from './ShowTheMath';
@@ -355,7 +355,8 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
   // Soft credit pulls — one per BILLED qualified transfer, so a dud never costs
   // a pull. The month figure comes straight off the cost ledger rather than
   // being recomputed here, so the two can never disagree.
-  const cp = inputs.costs.creditPulls;
+  const cp = creditPullPolicy(inputs.costs);
+  const blendedPull = blendedCreditPullPrice(inputs);
   const creditPullSpend = month?.costs.groups.find((g) => g.id === 'creditpulls')?.subtotal ?? 0;
   const creditPullsTotal = useMemo(
     () => results.months.reduce((s, r) => s + (r.costs.groups.find((g) => g.id === 'creditpulls')?.subtotal ?? 0), 0),
@@ -363,6 +364,8 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
   );
   const setCreditPulls = (p: Partial<typeof cp>) =>
     patch({ costs: { ...inputs.costs, creditPulls: { ...cp, ...p } } });
+  const setPullPrice = (k: BackendKey, v: number) =>
+    setCreditPulls({ pricePerPullByBackend: { ...cp.pricePerPullByBackend, [k]: v } });
   const mixTotal = inputs.operations.buffers.reduce((a, b) => a + b.mixPct, 0);
   const setBuffer = (key: string, patch: Record<string, number>) => patch && setInputs({
     ...inputs,
@@ -474,7 +477,7 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
             sub="Most capital needed before revenue catches up"
             tooltip="The deepest the cash position goes. This is the money that has to be funded from outside before the business self-sustains." />
           <Stat label="Soft credit pulls" value={fmtMoney(creditPullsTotal)}
-            sub={`${fmtNum(month?.costs.creditPullCount ?? 0, 0)} pulls in month ${stmtMonth} · ${fmtMoney2(cp.pricePerPull)} each`}
+            sub={`${fmtNum(month?.costs.creditPullCount ?? 0, 0)} pulls in month ${stmtMonth} · ${fmtMoney2(blendedPull)} blended`}
             tooltip="Underwriting cost, over the whole simulation. A soft credit pull is run on every qualified transfer Funding Tier is billed for, so the file can be scored before a program is quoted — it is incurred whether or not the call closes. Duds never reach a pull, because they disconnect before the buffer elapses and are never invoiced." />
           <Stat label="Reserve target first met"
             value={results.totals.reserveTargetFirstMet ? `Month ${results.totals.reserveTargetFirstMet}` : 'Not met'}
@@ -1195,8 +1198,8 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                   </div>
                 </td>
                 <td style={tdNum}>
-                  <NumberInput value={cp.pricePerPull} min={0} step={0.25} prefix="$" suffix="/pull"
-                    onChange={(v) => setCreditPulls({ pricePerPull: v })} />
+                  {fmtMoney2(blendedPull)}
+                  <div style={{ fontSize: 10, color: T.faint }}>blended /pull</div>
                 </td>
                 <td style={tdNum}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
@@ -1210,6 +1213,22 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                 </td>
                 <td style={{ ...tdNum, fontWeight: 700 }}>{fmtMoney(creditPullSpend)}</td>
               </tr>
+              {BACKEND_KEYS.map((k) => (
+                <tr key={`cp-${k}`}>
+                  <td style={{ ...td, paddingLeft: 36 }}>
+                    {BRANDS[k].name}{k === 'LEVEL' ? ' — Forth / Spinwheel' : ''}
+                    <div style={{ fontSize: 10, color: CREDIT_PULL_UNCONFIRMED[k] ? T.bad : T.faint, marginTop: 1 }}>
+                      {CREDIT_PULL_UNCONFIRMED[k] ?? 'Confirmed rate'}
+                    </div>
+                  </td>
+                  <td style={tdNum}>
+                    <NumberInput value={cp.pricePerPullByBackend[k]} min={0} step={0.05} prefix="$" suffix="/pull"
+                      onChange={(v) => setPullPrice(k, v)} />
+                  </td>
+                  <td style={{ ...tdNum, color: T.body }}>{fmtPct(inputs.volume.mixPct[k], 0)} of volume</td>
+                  <td style={{ ...tdNum, color: T.body }}>{fmtMoney(month?.costs.creditPullSpendByBackend?.[k] ?? 0)}</td>
+                </tr>
+              ))}
               <tr><td colSpan={4} style={{ ...td, background: T.panel, fontWeight: 800, fontSize: 10.5, letterSpacing: 0.5, textTransform: 'uppercase', color: T.ink }}>Labor</td></tr>
               <tr>
                 <td style={{ ...td, paddingLeft: 20 }}>Roster — {month?.costs.headcount ?? 0} agents</td>

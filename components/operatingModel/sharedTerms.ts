@@ -14,6 +14,7 @@
 // this file nor operatingModel/backends.ts reimplements any of it.
 //
 import { DEFAULT_ASSUMPTIONS } from '../fundingTierEngine';
+import { CREDIT_PULL_PRICES } from './costs';
 import type {
   CostInputs, LegacyTerms, LevelDebtTerms, ShieldTerms,
 } from './types';
@@ -61,8 +62,10 @@ export const sharedCosts = (): CostInputs => ({
   transferCost: { ...A.costs.transferCost },
   dids: { perAgent: 1, additional: 0 },
   // Soft credit pull run on every billed qualified transfer, before a program
-  // is quoted. $2.50 a pull is the rate Funding Tier is charged.
-  creditPulls: { enabled: true, pricePerPull: 2.5, pullsPerBilledTransfer: 1 },
+  // is quoted, priced by the backend that runs it (see CREDIT_PULL_PRICES):
+  // Level Debt via Forth/Spinwheel $1.65 and Elite Legal Practice $2.60 are
+  // confirmed; Consumer Shield $1.75 is a placeholder to confirm with Adam Robles.
+  creditPulls: { enabled: true, pricePerPullByBackend: { ...CREDIT_PULL_PRICES }, pullsPerBilledTransfer: 1 },
 });
 
 /** The blended labour rate the old model applied to everyone, kept for reference. */

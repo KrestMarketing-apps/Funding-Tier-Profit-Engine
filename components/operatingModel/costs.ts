@@ -1,7 +1,12 @@
 import type {
-  CostBreakdownGroup, CostInputs, ModelInputs, MonthlyCostBreakdown, TrackdriveTier,
+  BackendKey, CostBreakdownGroup, CostInputs, CreditPullPolicy, ModelInputs, MonthlyCostBreakdown, TrackdriveTier,
 } from './types';
+import { BACKEND_KEYS } from './types';
 import type { RosterMonthSummary } from './labor';
+
+const PULL_BACKEND_LABEL: Record<BackendKey, string> = {
+  LEVEL: 'Level Debt (Forth / Spinwheel)', CS: 'Consumer Shield', LEGACY: 'Elite Legal Practice',
+};
 
 export const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
 export const money2 = (n: number) => `$${n.toFixed(2)}`;
@@ -38,11 +43,57 @@ export function didCount(costs: CostInputs, headcount: number): number {
   return Math.max(0, Math.round(headcount * costs.dids.perAgent + costs.dids.additional));
 }
 
-/** Defaults for the credit-pull policy, so an older saved input shape still runs. */
-export const CREDIT_PULL_FALLBACK = { enabled: true, pricePerPull: 2.5, pullsPerBilledTransfer: 1 };
+/**
+ * What Funding Tier is charged for one soft credit pull, by backend.
+ *
+ *   Level Debt (Forth via Spinwheel)  $1.65  confirmed 2026-09-23
+ *   Elite Legal Practice (Salesforce) $2.60  confirmed 2026-09-23
+ *   Consumer Shield (Equifax)         $1.75  PLACEHOLDER — confirm with Adam Robles
+ */
+export const CREDIT_PULL_PRICES: Record<BackendKey, number> = { LEVEL: 1.65, CS: 1.75, LEGACY: 2.6 };
 
-export function creditPullPolicy(costs: CostInputs) {
-  return costs.creditPulls ?? CREDIT_PULL_FALLBACK;
+/** Backends whose pull price is still an estimate, with who to confirm it with. */
+export const CREDIT_PULL_UNCONFIRMED: Partial<Record<BackendKey, string>> = {
+  CS: 'Placeholder — confirm the Consumer Shield pull price with Adam Robles',
+};
+
+/** Defaults for the credit-pull policy, so an older saved input shape still runs. */
+export const CREDIT_PULL_FALLBACK: CreditPullPolicy = {
+  enabled: true, pricePerPullByBackend: { ...CREDIT_PULL_PRICES }, pullsPerBilledTransfer: 1,
+};
+
+/**
+ * The policy in force. A profile saved before per-backend pricing carries a
+ * single flat `pricePerPull`; that number is dropped in favour of the
+ * confirmed per-backend prices rather than silently kept.
+ */
+export function creditPullPolicy(costs: CostInputs): CreditPullPolicy {
+  const p = costs.creditPulls;
+  if (!p) return CREDIT_PULL_FALLBACK;
+  return {
+    enabled: p.enabled ?? true,
+    pullsPerBilledTransfer: p.pullsPerBilledTransfer ?? 1,
+    pricePerPullByBackend: { ...CREDIT_PULL_PRICES, ...(p.pricePerPullByBackend ?? {}) },
+  };
+}
+
+/**
+ * Each backend's share of pulls. A pull is run by the backend the file is
+ * pushed to, so pulls follow the backend volume split.
+ */
+export function creditPullShares(inputs: ModelInputs): Record<BackendKey, number> {
+  const mix = inputs.volume.mixPct;
+  const total = BACKEND_KEYS.reduce((s, k) => s + (mix[k] || 0), 0) || 1;
+  const out = {} as Record<BackendKey, number>;
+  BACKEND_KEYS.forEach((k) => { out[k] = (mix[k] || 0) / total; });
+  return out;
+}
+
+/** Blended price of one pull across the backend volume split. */
+export function blendedCreditPullPrice(inputs: ModelInputs): number {
+  const p = creditPullPolicy(inputs.costs);
+  const sh = creditPullShares(inputs);
+  return BACKEND_KEYS.reduce((s, k) => s + sh[k] * p.pricePerPullByBackend[k], 0);
 }
 
 /**
@@ -196,17 +247,24 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
   // is incurred whether or not the call closes.
   const cp = creditPullPolicy(c);
   const pulls = creditPullCount(c, ctx.totalTransfers);
-  const pullSpend = pulls * cp.pricePerPull;
-  const creditLines = [
-    {
-      id: 'cp-soft', label: 'Soft credit pulls',
+  const shares = creditPullShares(inputs);
+  const blendedPull = blendedCreditPullPrice(inputs);
+  const pullSpendByBackend = {} as Record<BackendKey, number>;
+  const creditLines = BACKEND_KEYS.map((k) => {
+    const n = pulls * shares[k];
+    const price = cp.pricePerPullByBackend[k];
+    pullSpendByBackend[k] = n * price;
+    const flag = CREDIT_PULL_UNCONFIRMED[k] ? ` — ${CREDIT_PULL_UNCONFIRMED[k]}` : '';
+    return {
+      id: `cp-${k.toLowerCase()}`, label: `Soft credit pulls — ${PULL_BACKEND_LABEL[k]}`,
       detail: cp.enabled
-        ? `${Math.round(pulls).toLocaleString()} pulls x ${money2(cp.pricePerPull)} — ${cp.pullsPerBilledTransfer} per billed transfer`
+        ? `${Math.round(n).toLocaleString()} pulls x ${money2(price)}${flag}`
         : 'Disabled — no pull cost is being charged to the model',
-      formula: `${Math.round(ctx.totalTransfers).toLocaleString()} billed transfers x ${cp.pullsPerBilledTransfer} x ${money2(cp.pricePerPull)}`,
-      amount: pullSpend,
-    },
-  ];
+      formula: `${Math.round(ctx.totalTransfers).toLocaleString()} billed transfers x ${cp.pullsPerBilledTransfer} x ${(shares[k] * 100).toFixed(1)}% volume x ${money2(price)}`,
+      amount: n * price,
+    };
+  });
+  const pullSpend = creditLines.reduce((s, l) => s + l.amount, 0);
   if (cp.enabled && (ctx.deals ?? 0) > 0.01) {
     creditLines.push({
       id: 'cp-perdeal', label: 'Cost per closed deal',
@@ -217,7 +275,7 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
   }
   groups.push({
     id: 'creditpulls', label: 'Credit Pulls (soft)',
-    note: `${money2(cp.pricePerPull)} per soft pull, one on every billed qualified transfer. Duds never reach a pull — they disconnect before the buffer and are never invoiced.`,
+    note: `Priced by backend — Level Debt (Forth/Spinwheel) ${money2(cp.pricePerPullByBackend.LEVEL)}, Elite Legal Practice ${money2(cp.pricePerPullByBackend.LEGACY)}, Consumer Shield ${money2(cp.pricePerPullByBackend.CS)} (unconfirmed — Adam Robles); ${money2(blendedPull)} blended on the volume split. One pull on every billed qualified transfer. Duds never reach a pull — they disconnect before the buffer and are never invoiced.`,
     lines: creditLines, subtotal: creditLines.reduce((s, l) => s + l.amount, 0),
   });
 
@@ -246,6 +304,7 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
     totalEmails: emails,
     didCount: dids,
     creditPullCount: pulls,
+    creditPullSpendByBackend: pullSpendByBackend,
     headcount,
   };
 }

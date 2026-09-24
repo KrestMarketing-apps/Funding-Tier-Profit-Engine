@@ -388,10 +388,16 @@ export interface DidPolicy {
  */
 export interface CreditPullPolicy {
   enabled: boolean;
-  /** Cost of a single soft credit pull. */
-  pricePerPull: number;
+  /**
+   * Cost of a single soft credit pull, by the backend whose system runs it.
+   * Level Debt pulls run through Forth via Spinwheel; Elite Legal Practice runs
+   * its own in Salesforce; Consumer Shield runs Equifax.
+   */
+  pricePerPullByBackend: Record<BackendKey, number>;
   /** Pulls run per billed qualified transfer. Normally 1. */
   pullsPerBilledTransfer: number;
+  /** @deprecated Flat price from saved profiles before per-backend pricing. Ignored. */
+  pricePerPull?: number;
 }
 
 export interface CostInputs {
@@ -528,6 +534,8 @@ export interface MonthlyCostBreakdown {
   didCount: number;
   /** Soft credit pulls run this month — one per billed qualified transfer. */
   creditPullCount: number;
+  /** Pull spend this month split by backend, from the ledger. */
+  creditPullSpendByBackend: Record<BackendKey, number>;
   headcount: number;
 }
 
