@@ -3,6 +3,7 @@ import type {
 } from './types';
 import { BACKEND_KEYS } from './types';
 import type { RosterMonthSummary } from './labor';
+import { elpSeatFeeForFiles } from '../legacyEngine';
 
 const PULL_BACKEND_LABEL: Record<BackendKey, string> = {
   LEVEL: 'Level Debt (Forth / Spinwheel)', CS: 'Consumer Shield', LEGACY: 'Elite Legal Practice',
@@ -118,6 +119,8 @@ export interface CostContext {
   transferCost: number;
   /** Deals closed this month — used only to express costs per closed deal. */
   deals?: number;
+  /** Deals by backend this month — prices the ELP seat on its file-count schedule. */
+  dealsByBackend?: Record<BackendKey, number>;
   roster: RosterMonthSummary;
 }
 
@@ -142,12 +145,19 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
   });
 
   // 2 — Per-user (FIX: line items and subtotal both use CURRENT headcount)
-  const perUserLines = c.perUserCosts.filter((p) => p.enabled).map((p) => ({
-    id: p.id, label: p.label,
-    detail: `${money2(p.amountPerUser)}/user x ${headcount} user${headcount === 1 ? '' : 's'}`,
-    formula: `${money2(p.amountPerUser)} x ${headcount}`,
-    amount: p.amountPerUser * headcount,
-  }));
+  const elpFiles = Math.round(ctx.dealsByBackend?.LEGACY ?? 0);
+  const perUserLines = c.perUserCosts.filter((p) => p.enabled).map((p) => {
+    const tiered = p.tieredBy === 'ELP_FILES';
+    const rate = tiered ? elpSeatFeeForFiles(elpFiles) : p.amountPerUser;
+    return {
+      id: p.id, label: p.label,
+      detail: tiered
+        ? `${money2(rate)}/user (${elpFiles} ELP file${elpFiles === 1 ? '' : 's'} this month — $25 over 50, $50 for 1-50, $100 at zero) x ${headcount}`
+        : `${money2(rate)}/user x ${headcount} user${headcount === 1 ? '' : 's'}`,
+      formula: `${money2(rate)} x ${headcount}`,
+      amount: rate * headcount,
+    };
+  });
   groups.push({
     id: 'peruser', label: 'Per-User Tools',
     note: `Scales with active headcount (${headcount} on payroll this month)`,

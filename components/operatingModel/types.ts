@@ -335,6 +335,24 @@ export interface LegacyTerms {
   agentPayoutMonth: number;
   feeRate: number;
   bands: LegacyBand[];
+  /** Exhibit D Option 2 — the Accelerated payout model's terms. */
+  accelerated?: LegacyAcceleratedTerms;
+  /**
+   * Share of ELP files enrolled under the Accelerated model, 0-100. 0 = every
+   * file on the Residual (billable) model, the original contract. Files written
+   * under the accelerated minimum term are paid residual regardless.
+   */
+  acceleratedSharePct?: number;
+}
+
+export interface LegacyAcceleratedTerms {
+  frontRate: number;
+  frontMonths: number;
+  backRate: number;
+  backMonths: number;
+  minTerm: number;
+  /** 'net' = payment less maintenance and fees (Exhibit D Service Fee base); 'draft' = payment less draft fee only. */
+  base: 'net' | 'draft';
 }
 
 /**
@@ -351,7 +369,15 @@ export interface RemittanceLag {
 // ── Costs ────────────────────────────────────────────────────────────────────
 
 export interface FixedCost { id: string; label: string; amount: number }
-export interface PerUserCost { id: string; label: string; amountPerUser: number; enabled: boolean }
+export interface PerUserCost {
+  id: string; label: string; amountPerUser: number; enabled: boolean;
+  /**
+   * 'ELP_FILES' prices the seat off Legacy Capital Services' Exhibit D seat
+   * schedule — $25 over 50 ELP files in the month, $50 for 1-49, $100 at zero —
+   * instead of amountPerUser.
+   */
+  tieredBy?: 'ELP_FILES';
+}
 
 export interface UsageRates {
   inboundForwardPerMin: number;

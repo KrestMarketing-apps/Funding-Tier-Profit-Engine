@@ -153,15 +153,25 @@ export const shield = {
 //   Payments 3+  : (clientDraft - maintenance - draftFee) x tier rate
 //
 // A split schedule drafts the client twice a month: the $4 is charged twice,
-// the $80 maintenance still once.
+// the $80 maintenance still once. The residual Service Fee runs on the first
+// 48 months only (Exhibit D).
+//
+// Exhibit D Option 2 — the Accelerated model — is an election made file by
+// file: 90% of the payment for months 1-7, then 25% for months 8-24, nothing
+// after. Files written under 24 months are paid residual regardless. The model
+// carries it as a share of ELP files, the same way it carries the Consumer
+// Shield buyout.
 //
 // The math itself lives in components/legacyEngine.ts, which is the single
 // source of truth shared with the Profit Engine and mirrors the production
 // Billable Payout Simulator. Nothing is reimplemented here.
 import {
+  ELP_ACCELERATED_DEFAULT, ELP_RESIDUAL_MAX_MONTHS,
+  elpAcceleratedBase, elpAcceleratedEligible, elpAcceleratedRevenueForMonth,
   elpDraftMonthly, elpFinalPayment, elpMaxTerm, elpPaymentForMonth,
+  elpResidualCatchUpMonth, elpResidualRevenueForMonth,
   elpSchedule, elpScheduledPayment, elpTierRateForFiles, elpTerm,
-  type ElpTerms as EngineElpTerms,
+  type ElpAcceleratedTerms, type ElpTerms as EngineElpTerms,
 } from '../legacyEngine';
 
 function findBand(bands: LegacyBand[], avgDebt: number): LegacyBand | undefined {
@@ -225,11 +235,81 @@ export const legacy = {
   serviceFeeMonthly(avgDebt: number, terms: LegacyTerms): number {
     return elpSchedule(avgDebt, engineTerms(terms)).serviceFeeMonthly;
   },
-  revenueForDealMonth(avgDebt: number, dealMonth: number, terms: LegacyTerms): number {
-    const sched = elpSchedule(avgDebt, engineTerms(terms));
-    if (!sched.eligible || dealMonth < 1 || dealMonth > sched.term) return 0;
-    return dealMonth <= 2 ? sched.earlyRevenue : sched.lateRevenue;
+  /** Accelerated terms, with the Exhibit D defaults filling anything unset. */
+  acceleratedTerms(terms: LegacyTerms): ElpAcceleratedTerms {
+    return { ...ELP_ACCELERATED_DEFAULT, ...(terms.accelerated ?? {}) };
   },
+  /** Share of ELP files elected onto the Accelerated model, 0-1. */
+  acceleratedShare(terms: LegacyTerms): number {
+    return Math.min(1, Math.max(0, (terms.acceleratedSharePct ?? 0) / 100));
+  },
+  /** False when the modelled term is under the accelerated minimum — those files are paid residual. */
+  acceleratedEligible(avgDebt: number, terms: LegacyTerms): boolean {
+    return elpAcceleratedEligible(elpSchedule(avgDebt, engineTerms(terms)), legacy.acceleratedTerms(terms));
+  },
+  /** Monthly payment the accelerated rates apply to. */
+  acceleratedBase(avgDebt: number, terms: LegacyTerms): number {
+    return elpAcceleratedBase(elpSchedule(avgDebt, engineTerms(terms)), legacy.acceleratedTerms(terms));
+  },
+  /** Residual (billable) model — the original Exhibit D Option 1. */
+  residualRevenueForDealMonth(avgDebt: number, dealMonth: number, terms: LegacyTerms): number {
+    return elpResidualRevenueForMonth(elpSchedule(avgDebt, engineTerms(terms)), dealMonth);
+  },
+  /** Accelerated model — Exhibit D Option 2. Falls back to residual under the minimum term. */
+  acceleratedRevenueForDealMonth(avgDebt: number, dealMonth: number, terms: LegacyTerms): number {
+    return elpAcceleratedRevenueForMonth(elpSchedule(avgDebt, engineTerms(terms)), dealMonth, legacy.acceleratedTerms(terms));
+  },
+  /**
+   * Blended per-deal revenue: acceleratedSharePct of files on the Accelerated
+   * model, the rest on the Residual. The survival curve is applied by the
+   * caller.
+   */
+  revenueForDealMonth(avgDebt: number, dealMonth: number, terms: LegacyTerms): number {
+    const share = legacy.acceleratedShare(terms);
+    const res = share < 1 ? legacy.residualRevenueForDealMonth(avgDebt, dealMonth, terms) : 0;
+    const acc = share > 0 ? legacy.acceleratedRevenueForDealMonth(avgDebt, dealMonth, terms) : 0;
+    return res * (1 - share) + acc * share;
+  },
+  /** Income per deal if the client never cancels, under one model. */
+  fullTerm(avgDebt: number, terms: LegacyTerms, model: 'residual' | 'accelerated'): number {
+    const term = legacy.getMaxTerm(avgDebt, terms);
+    let total = 0;
+    for (let m = 1; m <= term; m++) {
+      total += model === 'accelerated'
+        ? legacy.acceleratedRevenueForDealMonth(avgDebt, m, terms)
+        : legacy.residualRevenueForDealMonth(avgDebt, m, terms);
+    }
+    return total;
+  },
+  /** Survival-weighted income per deal whose first payment cleared, under one model. */
+  expected(avgDebt: number, terms: LegacyTerms, survival: number[], model: 'residual' | 'accelerated'): number {
+    const term = legacy.getMaxTerm(avgDebt, terms);
+    const s1 = survival[1] ?? 0;
+    if (s1 <= 0) return 0;
+    let total = 0;
+    for (let m = 1; m <= term; m++) {
+      const r = model === 'accelerated'
+        ? legacy.acceleratedRevenueForDealMonth(avgDebt, m, terms)
+        : legacy.residualRevenueForDealMonth(avgDebt, m, terms);
+      total += ((survival[m] ?? 0) / s1) * r;
+    }
+    return total;
+  },
+  /** Cumulative income through a deal month, under one model (no cancellations). */
+  cumulativeAt(avgDebt: number, terms: LegacyTerms, month: number, model: 'residual' | 'accelerated'): number {
+    let total = 0;
+    for (let m = 1; m <= month; m++) {
+      total += model === 'accelerated'
+        ? legacy.acceleratedRevenueForDealMonth(avgDebt, m, terms)
+        : legacy.residualRevenueForDealMonth(avgDebt, m, terms);
+    }
+    return total;
+  },
+  /** Payments a residual file must make before it out-earns the accelerated election for good. null = never. */
+  residualCatchUpMonth(avgDebt: number, terms: LegacyTerms): number | null {
+    return elpResidualCatchUpMonth(elpSchedule(avgDebt, engineTerms(terms)), legacy.acceleratedTerms(terms));
+  },
+  residualMaxMonths: ELP_RESIDUAL_MAX_MONTHS,
   /**
    * Flat band commission. This was previously scaled by feeRate / 0.4, which
    * paid 22.5% over schedule at the 49% fee rate. The live Commission
@@ -292,7 +372,15 @@ export function revenueModelLabel(key: BackendKey, avgDebt: number, inputs: Mode
   const pay = legacy.getMonthlyPayment(avgDebt, t);
   const draftFee = legacy.draftFeePerMonth(t);
   const schedule = t.splitSchedule ? '2 drafts/mo' : '1 draft/mo';
-  return `Monthly perpetuity across a ${term}-month term. Client draft $${pay.toFixed(0)} = service fee + $${t.maintenanceFee} maintenance + $${draftFee} processing (${schedule}). Months 1-2 pass through less the $${draftFee} draft fee; from month 3 the maintenance fee also comes off and Funding Tier keeps ${(t.tier1Rate * 100).toFixed(0)}% of what is left.`;
+  const residual = `Residual model across a ${term}-month term (Service Fee paid on the first ${ELP_RESIDUAL_MAX_MONTHS} months at most). Client draft $${pay.toFixed(0)} = service fee + $${t.maintenanceFee} maintenance + $${draftFee} processing (${schedule}). Months 1-2 pass through less the $${draftFee} draft fee; from month 3 the maintenance fee also comes off and Funding Tier keeps ${(t.tier1Rate * 100).toFixed(0)}% of what is left.`;
+  const a = legacy.acceleratedTerms(t);
+  const share = t.acceleratedSharePct ?? 0;
+  if (share <= 0) return residual;
+  const accel = legacy.acceleratedEligible(avgDebt, t)
+    ? `Accelerated model: ${(a.frontRate * 100).toFixed(0)}% of $${legacy.acceleratedBase(avgDebt, t).toFixed(2)} for months 1-${a.frontMonths}, then ${(a.backRate * 100).toFixed(0)}% for months ${a.frontMonths + 1}-${a.frontMonths + a.backMonths}; nothing after.`
+    : `Accelerated model elected, but the ${term}-month term is under the ${a.minTerm}-month minimum, so these files are paid on the Residual model.`;
+  if (share >= 100) return accel;
+  return `${share.toFixed(0)}% of files on the Accelerated model, ${(100 - share).toFixed(0)}% on the Residual. ${accel} ${residual}`;
 }
 
 export function isPerpetuity(key: BackendKey, inputs?: ModelInputs): boolean {

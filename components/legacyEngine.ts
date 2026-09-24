@@ -32,6 +32,69 @@ export const ELP_TIER_RATE_BASE = 0.60;
 export const ELP_TIER_RATE_HIGH = 0.65;
 export const ELP_TIER_RATE_FILE_THRESHOLD = 100;
 
+/**
+ * Exhibit D (Payout Model Election, 20260601EXD6065): the residual Service Fee
+ * is calculated on the Active Lead's MMP for the first 48 months only (or the
+ * term, if shorter). A 60-month program earns nothing in months 49-60.
+ */
+export const ELP_RESIDUAL_MAX_MONTHS = 48;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ACCELERATED PAYOUT MODEL (Exhibit D, Option 2)
+//
+// 90% of the Active Lead's payment each month for the first 7 months, then 25%
+// for the following 17 months — a 24-month combined maximum. Nothing is paid
+// after month 24. Leads written under 24 months cannot take it: they are paid
+// on the Residual model instead.
+//
+// The payment it is applied to is the Service Fee base the whole of Exhibit D
+// is built on: the cleared payment less the monthly maintenance fee, less
+// processing / draft / software fees. That is the default ('net'). The
+// exhibit's Option 2 sentence just says "the Active Lead's payment", so the
+// model also carries the reading where only the draft fee comes off ('draft')
+// until Legacy Capital Services confirms which base they pay on.
+//
+// The residual model's two-month maintenance add-back ("Additional
+// Compensation") is written under Option 1 only, so it is NOT applied here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ElpAcceleratedBase = 'net' | 'draft';
+
+export type ElpAcceleratedTerms = {
+  frontRate: number;     // 0.90
+  frontMonths: number;   // 7
+  backRate: number;      // 0.25
+  backMonths: number;    // 17
+  /** Shortest term a lead can be written at and still take the accelerated model. */
+  minTerm: number;       // 24
+  base: ElpAcceleratedBase;
+};
+
+export const ELP_ACCELERATED_DEFAULT: ElpAcceleratedTerms = {
+  frontRate: 0.90, frontMonths: 7, backRate: 0.25, backMonths: 17, minTerm: 24, base: 'net',
+};
+
+/** Software fees Legacy Capital Services deducts from Service Fees (Exhibit D). */
+export const ELP_SOFTWARE_FEES = {
+  eSign: 0,
+  creditPull: 2.60,
+  /** Per user per month, by files that became Active Leads in the month. */
+  seatOver50: 25,
+  seat1to49: 50,
+  seatZero: 100,
+};
+
+/**
+ * Seat fee per user for a month with this many ELP files. Exhibit D reads
+ * "over 50" → $25 and "1 to 49" → $50, which leaves exactly 50 unassigned; it
+ * is priced at $50 here (not "over 50") until LCS says otherwise.
+ */
+export function elpSeatFeeForFiles(files: number): number {
+  if (files > 50) return ELP_SOFTWARE_FEES.seatOver50;
+  if (files >= 1) return ELP_SOFTWARE_FEES.seat1to49;
+  return ELP_SOFTWARE_FEES.seatZero;
+}
+
 /** States where Legacy Capital Services cannot be sold. */
 export const ELP_BLOCKED_STATES = ["ID", "ND", "GA"];
 
@@ -194,13 +257,85 @@ export function elpSchedule(debt: number, terms: ElpTerms): ElpSchedule {
   };
 }
 
-/** Cumulative Funding Tier revenue through a given deal month. */
+/**
+ * Residual-model revenue in one deal month. Months 1-2 pass through, the tier
+ * share applies from month 3, and nothing is paid past month 48 (Exhibit D).
+ */
+export function elpResidualRevenueForMonth(s: ElpSchedule, month: number): number {
+  if (!s.eligible || month < 1 || month > s.term || month > ELP_RESIDUAL_MAX_MONTHS) return 0;
+  return month <= 2 ? s.earlyRevenue : s.lateRevenue;
+}
+
+/** Cumulative Funding Tier revenue through a given deal month (residual model). */
 export function elpRevenueAt(month: number, s: ElpSchedule): number {
   if (month <= 0 || !s.eligible) return 0;
-  const m = Math.min(month, s.term);
+  const m = Math.min(month, s.term, ELP_RESIDUAL_MAX_MONTHS);
   const early = Math.min(m, 2);
   const late  = Math.max(0, m - 2);
   return round2(early * s.earlyRevenue + late * s.lateRevenue);
+}
+
+// ── Accelerated model ────────────────────────────────────────────────────────
+
+/** True when a lead's term lets it take the accelerated model at all. */
+export function elpAcceleratedEligible(s: ElpSchedule, a: ElpAcceleratedTerms = ELP_ACCELERATED_DEFAULT): boolean {
+  return s.eligible && s.term >= a.minTerm;
+}
+
+/** Monthly payment the accelerated rates are applied to. */
+export function elpAcceleratedBase(s: ElpSchedule, a: ElpAcceleratedTerms = ELP_ACCELERATED_DEFAULT): number {
+  return a.base === 'draft' ? s.earlyNet : s.lateNet;
+}
+
+/**
+ * Accelerated-model revenue in one deal month. A lead written under the minimum
+ * term falls back to the residual model, exactly as Exhibit D requires.
+ */
+export function elpAcceleratedRevenueForMonth(
+  s: ElpSchedule, month: number, a: ElpAcceleratedTerms = ELP_ACCELERATED_DEFAULT,
+): number {
+  if (!s.eligible || month < 1 || month > s.term) return 0;
+  if (!elpAcceleratedEligible(s, a)) return elpResidualRevenueForMonth(s, month);
+  const base = elpAcceleratedBase(s, a);
+  if (month <= a.frontMonths) return round2(base * a.frontRate);
+  if (month <= a.frontMonths + a.backMonths) return round2(base * a.backRate);
+  return 0;
+}
+
+/** Cumulative accelerated revenue through a given deal month. */
+export function elpAcceleratedRevenueAt(
+  month: number, s: ElpSchedule, a: ElpAcceleratedTerms = ELP_ACCELERATED_DEFAULT,
+): number {
+  let total = 0;
+  for (let m = 1; m <= Math.min(month, s.term); m++) total += elpAcceleratedRevenueForMonth(s, m, a);
+  return round2(total);
+}
+
+export function elpAcceleratedFullRevenue(s: ElpSchedule, a: ElpAcceleratedTerms = ELP_ACCELERATED_DEFAULT): number {
+  return elpAcceleratedRevenueAt(s.term, s, a);
+}
+
+/**
+ * Last deal month in which the residual model is still behind the accelerated
+ * model on a cumulative basis, i.e. the payment count a residual lead must
+ * survive past before it out-earns the accelerated election. null = the
+ * residual never catches up inside the term.
+ */
+export function elpResidualCatchUpMonth(
+  s: ElpSchedule, a: ElpAcceleratedTerms = ELP_ACCELERATED_DEFAULT,
+): number | null {
+  if (!elpAcceleratedEligible(s, a)) return null;
+  for (let m = 1; m <= s.term; m++) {
+    if (elpRevenueAt(m, s) >= elpAcceleratedRevenueAt(m, s, a)) {
+      // Must stay ahead from here on — the accelerated model stops at 24.
+      let ahead = true;
+      for (let k = m; k <= s.term; k++) {
+        if (elpRevenueAt(k, s) < elpAcceleratedRevenueAt(k, s, a)) { ahead = false; break; }
+      }
+      if (ahead) return m;
+    }
+  }
+  return null;
 }
 
 export function elpFullRevenue(s: ElpSchedule): number {
@@ -214,7 +349,7 @@ export function elpBuildTimeline(s: ElpSchedule): ElpTimelineRow[] {
     return {
       month,
       phase: (month <= 2 ? "Pass-Through" : "Tier Share") as ElpTimelineRow["phase"],
-      monthlyRevenue: month <= 2 ? s.earlyRevenue : s.lateRevenue,
+      monthlyRevenue: elpResidualRevenueForMonth(s, month),
       cumulativeRevenue: elpRevenueAt(month, s),
       liabilityFreeMonth: month + 4,
       payoutHitMonthAssumed: month + 1,

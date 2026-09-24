@@ -15,6 +15,7 @@
 //
 import { DEFAULT_ASSUMPTIONS } from '../fundingTierEngine';
 import { CREDIT_PULL_PRICES } from './costs';
+import { ELP_ACCELERATED_DEFAULT } from '../legacyEngine';
 import type {
   CostInputs, LegacyTerms, LevelDebtTerms, ShieldTerms,
 } from './types';
@@ -39,6 +40,10 @@ export const sharedShield = (): ShieldTerms => ({
 export const sharedLegacy = (): LegacyTerms => ({
   ...A.legacy,
   bands: A.legacy.bands.map((b) => ({ ...b })),
+  accelerated: { ...ELP_ACCELERATED_DEFAULT },
+  // Default stays on the Residual model so every existing figure is unchanged
+  // until the Accelerated election is switched on in ELP Accelerated.
+  acceleratedSharePct: 0,
 });
 
 /**
@@ -55,6 +60,9 @@ export const sharedCosts = (): CostInputs => ({
   })),
   perUserCosts: A.costs.perUserCosts.map((c, i) => ({
     id: `user-${i}`, label: c.label, amountPerUser: c.amountPerUser, enabled: true,
+    // The ELP Salesforce seat is billed on Legacy Capital Services' Exhibit D
+    // seat schedule, which steps with the month's ELP file count.
+    ...(/elite legal practice/i.test(c.label) ? { tieredBy: 'ELP_FILES' as const } : {}),
   })),
   usageRates: { ...A.costs.usageRates },
   trackdriveTiers: A.costs.trackdriveTiers.map((t) => ({ ...t })),

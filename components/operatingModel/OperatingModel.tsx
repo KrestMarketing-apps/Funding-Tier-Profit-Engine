@@ -10,6 +10,7 @@ import { RosterEditor } from './RosterEditor';
 import { ShowTheMath } from './ShowTheMath';
 import { MonthEndReport } from './MonthEndReport';
 import { ShieldBuyout } from './ShieldBuyout';
+import { ElpAccelerated } from './ElpAccelerated';
 import { BackendExplainer } from './BackendExplainer';
 import {
   Btn, Callout, Field, FT_LOGO, G, Icon, Info, NumberInput, Panel, PartnerName, PartnerMark, Row, T,
@@ -32,7 +33,7 @@ import ToolShell from '../ToolShell';
 // ─────────────────────────────────────────────────────────────────────────────
 
 type SectionId =
-  | 'results' | 'volume' | 'roster' | 'operations' | 'backends' | 'buyout' | 'reppay'
+  | 'results' | 'volume' | 'roster' | 'operations' | 'backends' | 'buyout' | 'accelerated' | 'reppay'
   | 'costs' | 'incentives' | 'risk' | 'statement' | 'monthend' | 'partnermo'
   | 'forecast' | 'monthly';
 
@@ -59,6 +60,7 @@ const NAV: NavItem[] = [
   { id: 'operations', label: 'Operations',         hint: '2 · Calls into deals',    icon: 'phone',     math: ['capacity'] },
   { id: 'backends',   label: 'Backend Terms',      hint: '3 · How partners pay',    icon: 'briefcase', math: ['revenue'] },
   { id: 'buyout',     label: 'Shield Buyout',      hint: '3b · Buyout vs perpetual', icon: 'card',     math: ['revenue'] },
+  { id: 'accelerated', label: 'ELP Accelerated',   hint: '3c · Accelerated vs residual', icon: 'card', math: ['revenue'] },
   { id: 'reppay',     label: 'Rep Pay Model',      hint: '4 · Contract vs draw',    icon: 'wallet',    math: ['commission'] },
   { id: 'costs',      label: 'Cost Stack',         hint: '5 · Rates & multipliers', icon: 'receipt',   math: ['costs'] },
   { id: 'incentives', label: 'Overrides & Bonuses',hint: 'Pay on top of commission',icon: 'award',     math: ['commission'] },
@@ -805,7 +807,19 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                 { label: 'Term', value: `${term} mo${term === cap ? ' · at floor' : ''}`, help: `Deals are modelled at ${L.targetTerm} months — the length they are actually written at. The ${fmtMoney(L.minMonthlyPayment)} floor is a minimum on the client DRAFT, not a target, and it caps the term at ${cap} months here (⌊${fmtMoney2(fee)} ÷ ${fmtMoney(headroom)} headroom⌋, max ${L.maxTerm}). Shorter terms earn more and earn it sooner, because months 1–2 pass through in full and a longer term pushes more of the fee into the ${fmtPct(L.tier1Rate * 100, 0)} phase.` },
                 { label: 'Final draft', value: trueUp ? fmtMoney2(last) : 'even', help: trueUp ? `Only the service fee has to total exactly. The last draft carries the remainder so the client is billed exactly ${fmtMoney2(fee)} in fees.` : `The fee divides evenly across ${term} drafts — no true-up needed.` },
                 { label: 'FT keeps', value: `${fmtMoney2(early)} → ${fmtMoney2(late)}`, help: `Months 1–2: ${fmtMoney2(pay)} draft less the ${fmtMoney(draftFee)} processing fee = ${fmtMoney2(early)} — maintenance is not backed out yet. Month 3 on: (${fmtMoney2(pay)} − ${fmtMoney(L.maintenanceFee)} maintenance − ${fmtMoney(draftFee)} processing) × ${fmtPct(L.tier1Rate * 100, 0)} = ${fmtMoney2(late)}. Tier steps to ${fmtPct(L.tier2Rate * 100, 0)} at ${L.tier2FileThreshold}+ billable files a month.` },
-                { label: 'Rep payout', value: `${fmtMoney(legacy.agentCommission(debt, L))} · mo ${L.agentPayoutMonth}`, help: 'Flat band commission from the live schedule, split across the Payment 2 and Payment 4 milestones. Band L1 pays in full at Payment 2.' },
+                { label: 'Rep payout', value: `${fmtMoney(legacy.agentCommission(debt, L))} · mo ${L.agentPayoutMonth}`, help: 'Flat band commission from the live schedule, split across the Payment 2 and Payment 4 milestones. Band L1 pays in full at Payment 2. Unchanged by the payout model.' },
+                (() => {
+                  const A = legacy.acceleratedTerms(L);
+                  const base = legacy.acceleratedBase(debt, L);
+                  const ok = legacy.acceleratedEligible(debt, L);
+                  return {
+                    label: 'Accelerated',
+                    value: ok ? `${fmtMoney2(base * A.frontRate)} → ${fmtMoney2(base * A.backRate)} · ${fmtPct(L.acceleratedSharePct ?? 0, 0)} of files` : `term < ${A.minTerm} mo · residual only`,
+                    help: ok
+                      ? `Exhibit D Option 2: ${fmtPct(A.frontRate * 100, 0)} of ${fmtMoney2(base)} for months 1–${A.frontMonths}, then ${fmtPct(A.backRate * 100, 0)} for months ${A.frontMonths + 1}–${A.frontMonths + A.backMonths}, nothing after. Set the share of files elected onto it in ELP Accelerated.`
+                      : `The ${term}-month term is under the ${A.minTerm}-month minimum, so these files are paid on the Residual model whatever is elected.`,
+                  };
+                })(),
               ];
             })();
 
@@ -824,6 +838,8 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                   padding: '2px 7px', borderRadius: 20,
                 }}>
                   {k === 'LEVEL' ? 'One-time payment'
+                    : k === 'LEGACY' && (inputs.legacy.acceleratedSharePct ?? 0) >= 100 ? 'Accelerated · 24 mo'
+                    : k === 'LEGACY' && (inputs.legacy.acceleratedSharePct ?? 0) > 0 ? `Residual + ${fmtPct(inputs.legacy.acceleratedSharePct ?? 0, 0)} accelerated`
                     : k === 'CS' && (inputs.consumerShield.buyoutSharePct ?? 0) >= 100 ? 'File buyout · one-time'
                     : k === 'CS' && (inputs.consumerShield.buyoutSharePct ?? 0) > 0 ? `Perpetuity + ${fmtPct(inputs.consumerShield.buyoutSharePct, 0)} buyout`
                     : 'Monthly perpetuity'}
@@ -852,6 +868,8 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
           flatters the perpetuities and understates how quickly Level Debt de-risks.
           {' '}{BRANDS.CS.name} files can instead be sold through the <strong>Enrollment File Buyout</strong> — one advance once the first
           payment clears — compared head to head in <a href="#" onClick={(e) => { e.preventDefault(); goTo('buyout'); }}>Shield Buyout</a>.
+          {' '}{BRANDS.LEGACY.name} files can be enrolled under the <strong>Accelerated model</strong> (90% × 7 months, then 25% × 17) instead
+          of the Residual — compared in <a href="#" onClick={(e) => { e.preventDefault(); goTo('accelerated'); }}>ELP Accelerated</a>.
         </Callout>
       </Panel>
 
@@ -859,6 +877,10 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
 
       {active === 'buyout' && (
         <ShieldBuyout inputs={inputs} patch={patch} />
+      )}
+
+      {active === 'accelerated' && (
+        <ElpAccelerated inputs={inputs} patch={patch} />
       )}
 
       {active === 'reppay' && (<>

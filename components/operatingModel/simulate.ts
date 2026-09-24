@@ -352,6 +352,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
       totalCallMinutes: capacity.requiredCallMinutes,
       transferCost: funnel.totalCost,
       deals: totalDeals,
+      dealsByBackend,
       roster: rosterMonth,
     });
     const overhead = costs.total;

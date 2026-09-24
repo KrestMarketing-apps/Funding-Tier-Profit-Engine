@@ -224,8 +224,24 @@ export function buildTrace(inputs: ModelInputs, results: ModelResults, monthInde
         step: brand.name, what: 'Revenue per payment',
         formula: 'months 1–2: draft − processing · months 3+: (draft − maintenance − processing) × tier rate',
         substitution: `${money2(pay)} − ${money2(draftFee)}  ·  (${money2(pay)} − ${money2(L.maintenanceFee)} − ${money2(draftFee)}) × ${pct(L.tier1Rate * 100)}`,
-        result: `${money2(legacy.revenueForDealMonth(debt, 1, L))} / ${money2(legacy.revenueForDealMonth(debt, 3, L))}`,
-        note: `Maintenance is not backed out until month 3, which is why the first two months are worth several times any later month. Monthly perpetuity across ${term} months.`,
+        result: `${money2(legacy.residualRevenueForDealMonth(debt, 1, L))} / ${money2(legacy.residualRevenueForDealMonth(debt, 3, L))}`,
+        note: `Residual (billable) model. Maintenance is not backed out until month 3, which is why the first two months are worth several times any later month. Paid across ${Math.min(term, legacy.residualMaxMonths)} months — the Service Fee runs on the first ${legacy.residualMaxMonths} months only.`,
+      });
+      const A = legacy.acceleratedTerms(L);
+      const aBase = legacy.acceleratedBase(debt, L);
+      const aShare = L.acceleratedSharePct ?? 0;
+      revRows.push({
+        step: brand.name, what: 'Accelerated model (Exhibit D Option 2)',
+        formula: `months 1–${A.frontMonths}: base × ${pct(A.frontRate * 100)} · months ${A.frontMonths + 1}–${A.frontMonths + A.backMonths}: base × ${pct(A.backRate * 100)} · base = ${A.base === 'net' ? 'draft − maintenance − processing' : 'draft − processing'}`,
+        substitution: legacy.acceleratedEligible(debt, L)
+          ? `${money2(aBase)} × ${pct(A.frontRate * 100)}  ·  ${money2(aBase)} × ${pct(A.backRate * 100)}`
+          : `${term}-month term < ${A.minTerm}-month minimum → paid residual`,
+        result: legacy.acceleratedEligible(debt, L)
+          ? `${money2(legacy.acceleratedRevenueForDealMonth(debt, 1, L))} / ${money2(legacy.acceleratedRevenueForDealMonth(debt, A.frontMonths + 1, L))}`
+          : 'residual',
+        note: aShare <= 0
+          ? 'Not elected — every ELP file is on the Residual model.'
+          : `${pct(aShare)} of ELP files are modelled as Accelerated; each blended deal earns ${pct(aShare)} × accelerated + ${pct(100 - aShare)} × residual. Nothing is paid on an accelerated file after month ${A.frontMonths + A.backMonths}.`,
       });
     }
     revRows.push({
