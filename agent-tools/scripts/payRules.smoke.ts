@@ -1,0 +1,12 @@
+import { simulateEarnings, DEFAULT_EARNINGS_INPUTS, balancedBookBonus, firstPaymentTimeline, monthlyVolumeBonus, dailyBonusTotal } from '../lib/payRules';
+const r = simulateEarnings(DEFAULT_EARNINGS_INPUTS);
+console.log('calls', r.qualifiedCallsPerMonth.toFixed(1), 'enroll', r.enrollmentsPerMonth.toFixed(1), 'paid', r.paidDealsPerMonth.toFixed(1));
+console.log('shield per deal', r.byProgram.SHIELD.perDeal, 'commission', r.commissionTotal.toFixed(0), 'daily', r.dailyBonus.toFixed(0), 'monthly', r.monthlyBonus, 'bb', r.balancedBook, 'total', r.monthlyTotal.toFixed(0));
+const c = simulateEarnings({ ...DEFAULT_EARNINGS_INPUTS, clearedOnAllPrograms: true, mix: { SHIELD: .5, ELP: .2, LEVEL: .3 }, closeRate: .15, firstPaymentFallout: .4 });
+console.log('cleared total', c.monthlyTotal.toFixed(0), 'bb', c.balancedBook, 'LD tier', c.levelTier.label);
+console.log(balancedBookBonus(10, 3, true), balancedBookBonus(4, 2, true), balancedBookBonus(10, 5, false));
+console.log(monthlyVolumeBonus(12), monthlyVolumeBonus(7), dailyBonusTotal(3), dailyBonusTotal(5), dailyBonusTotal(2));
+const t1 = firstPaymentTimeline('SHIELD', new Date(Date.UTC(2026,11,5)), { nsf: true, nsfDays: 3, redraftDays: 14 });
+const t2 = firstPaymentTimeline('SHIELD', new Date(Date.UTC(2026,11,20)), { nsf: true, nsfDays: 3, redraftDays: 14 });
+const t3 = firstPaymentTimeline('LEVEL', new Date(Date.UTC(2026,11,10)), { nsf: true, nsfDays: 3, redraftDays: 7 });
+for (const t of [t1,t2,t3]) console.log(t.clearedAt.toISOString().slice(0,10), 'pay', t.payDate.toISOString().slice(0,10), 'ontime', t.onTimePayDate.toISOString().slice(0,10), 'slip', t.slipDays);
