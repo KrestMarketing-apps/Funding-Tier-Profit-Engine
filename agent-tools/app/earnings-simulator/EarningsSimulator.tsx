@@ -76,11 +76,12 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
   const [tlDay, setTlDay] = useState(5);
   const [tlNsf, setTlNsf] = useState(true);
   const [tlRedraft, setTlRedraft] = useState(14);
+  const [tlSplit, setTlSplit] = useState(false);
   const tl = useMemo(() => {
     const now = new Date();
     const sched = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, tlDay));
-    return firstPaymentTimeline(tlProgram, sched, { nsf: tlNsf, nsfDays: 3, redraftDays: tlRedraft });
-  }, [tlProgram, tlDay, tlNsf, tlRedraft]);
+    return firstPaymentTimeline(tlProgram, sched, { nsf: tlNsf, nsfDays: 3, redraftDays: tlRedraft, split: tlSplit, splitGapDays: 14 });
+  }, [tlProgram, tlDay, tlNsf, tlRedraft, tlSplit]);
 
   const mixTotal = inp.mix.SHIELD + inp.mix.ELP + inp.mix.LEVEL;
   const mixWarn = inp.clearedOnAllPrograms && Math.abs(mixTotal - 1) > 0.01;
@@ -205,15 +206,22 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
                 <input type="number" min={1} max={28} value={tlDay} onChange={(e) => setTlDay(Math.min(28, Math.max(1, Number(e.target.value))))} style={{ display: "block", width: "100%", marginTop: 4, padding: 8, borderRadius: 8, border: `1px solid ${BORDER}`, fontWeight: 700 }} />
               </label>
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, cursor: "pointer" }}>
-              <input type="checkbox" checked={tlNsf} onChange={(e) => setTlNsf(e.target.checked)} style={{ accentColor: RED, width: 18, height: 18 }} />
-              <span style={{ fontWeight: 800, fontSize: 13, color: DARK }}>First draft returns NSF</span>
-            </label>
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 10 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                <input type="checkbox" checked={tlSplit} onChange={(e) => setTlSplit(e.target.checked)} style={{ accentColor: BLUE, width: 18, height: 18 }} />
+                <span style={{ fontWeight: 800, fontSize: 13, color: DARK }}>Client pays twice a month (split plan)</span>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                <input type="checkbox" checked={tlNsf} onChange={(e) => setTlNsf(e.target.checked)} style={{ accentColor: RED, width: 18, height: 18 }} />
+                <span style={{ fontWeight: 800, fontSize: 13, color: DARK }}>{tlSplit ? "First half returns NSF" : "First draft returns NSF"}</span>
+              </label>
+            </div>
+            {tlSplit && <div style={{ fontSize: 12.5, color: DARK, background: BLUE + "10", border: `1px solid ${BLUE}44`, borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}><strong>Split plan:</strong> a program payment is one month of the plan. Half a month clearing is not a first program payment. Nothing is owed, and the pay clock does not start, until the second half clears. Two half-drafts are one program payment, never two.</div>}
             {tlNsf && <Slider label="Days until the re-draft clears" value={tlRedraft} min={3} max={45} step={1} onChange={setTlRedraft} format={(v) => `${v} days`} help="Most providers re-present within 7 to 14 days. Some clients ask to move it to their next payday." />}
 
             <div style={{ borderLeft: `3px solid ${BORDER}`, marginLeft: 8, paddingLeft: 16, marginTop: 6 }}>
               {tl.events.map((e, i) => {
-                const c = e.kind === "nsf" ? RED : e.kind === "scheduled" ? MUTED : GD;
+                const c = e.kind === "nsf" ? RED : e.kind === "scheduled" ? MUTED : e.kind === "half_cleared" ? BLUE : GD;
                 return (
                   <div key={i} style={{ position: "relative", paddingBottom: 12 }}>
                     <span style={{ position: "absolute", left: -23, top: 3, width: 11, height: 11, borderRadius: 999, background: c, border: "2px solid #fff", boxShadow: `0 0 0 1px ${c}` }} />
@@ -232,7 +240,9 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
 
             <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: tl.slipDays > 0 ? "#fff7ed" : "#f0fdf4", border: `1px solid ${tl.slipDays > 0 ? "#fdba74" : "#86efac"}`, fontSize: 13, color: DARK }}>
               {tl.slipDays > 0
-                ? <><strong>Pay date moves {tl.slipDays} days later</strong> (from {day(tl.onTimePayDate)} to {day(tl.payDate)}). The NSF draft never counts; the re-draft's clear date is program payment 1, and the pay schedule runs from that date.</>
+                ? <><strong>Pay date moves {tl.slipDays} days later</strong> (from {day(tl.onTimePayDate)} to {day(tl.payDate)}). {tlSplit ? "The first half never counted on its own, and the NSF pushed it; program payment 1 was complete only when the second half cleared, and the pay schedule runs from that date." : "The NSF draft never counts; the re-draft's clear date is program payment 1, and the pay schedule runs from that date."}</>
+                : tlSplit && !tlNsf
+                  ? <><strong>Both halves cleared on schedule.</strong> Program payment 1 completed {day(tl.clearedAt)} when the second half cleared; you are paid {day(tl.payDate)}. Note the first half clearing on {day(tl.events[0].date)} did not start anything.</>
                 : tlNsf
                   ? <><strong>No change to your pay date.</strong> The re-draft cleared inside the same pay window, so you are still paid {day(tl.payDate)}. The NSF still shows on the file and the client's 2nd payment is now the one that makes {tlProgram === "LEVEL" ? "a Level Debt commission final" : "the Monthly Volume Bonus count"}.</>
                   : <><strong>On time.</strong> First payment clears {day(tl.clearedAt)}; you are paid {day(tl.payDate)}.</>}

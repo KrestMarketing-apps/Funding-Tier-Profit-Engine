@@ -425,21 +425,51 @@ export function scheduledPayDate(program: ProgramKey, clearedAt: Date): Date {
 
 export interface DraftEvent {
   date: Date;
-  kind: "scheduled" | "nsf" | "redraft_cleared" | "cleared";
+  kind: "scheduled" | "nsf" | "redraft_cleared" | "cleared" | "half_cleared";
   label: string;
 }
 
 /**
- * Walk a first-payment scenario so a rep can see exactly what an NSF does to
- * their pay date. `nsfDays` = days after the scheduled draft that it returns;
- * `redraftDays` = days after the NSF that the re-draft clears.
+ * Walk a first-payment scenario so a rep can see exactly what an NSF or a
+ * split plan does to their pay date.
+ *   nsfDays     = days after the scheduled draft that it returns
+ *   redraftDays = days after the NSF that the re-draft clears
+ *   split       = client pays the month in two halves; program payment 1 is
+ *                 complete only when BOTH halves clear (the NSF, if any, is
+ *                 applied to the first half)
+ *   splitGapDays = days between the two halves (default 14)
  */
-export function firstPaymentTimeline(program: ProgramKey, scheduledDraft: Date, opts: { nsf?: boolean; nsfDays?: number; redraftDays?: number } = {}) {
-  const events: DraftEvent[] = [{ date: scheduledDraft, kind: "scheduled", label: "First draft scheduled" }];
+export function firstPaymentTimeline(program: ProgramKey, scheduledDraft: Date, opts: { nsf?: boolean; nsfDays?: number; redraftDays?: number; split?: boolean; splitGapDays?: number } = {}) {
+  const dayMs = 86_400_000;
+  const events: DraftEvent[] = [];
+  let firstClearedAt = scheduledDraft;
+
+  if (opts.split) {
+    events.push({ date: scheduledDraft, kind: "scheduled", label: "First half-draft scheduled (split plan)" });
+    if (opts.nsf) {
+      const nsfAt = new Date(scheduledDraft.getTime() + (opts.nsfDays ?? 3) * dayMs);
+      const redraftAt = new Date(nsfAt.getTime() + (opts.redraftDays ?? 14) * dayMs);
+      events.push({ date: nsfAt, kind: "nsf", label: "First half returned NSF — does not count" });
+      events.push({ date: redraftAt, kind: "half_cleared", label: "First half re-drafted and cleared — half of program payment 1, nothing owed yet" });
+      firstClearedAt = redraftAt;
+    } else {
+      events.push({ date: scheduledDraft, kind: "half_cleared", label: "First half cleared — half of program payment 1, nothing owed yet" });
+    }
+    const secondHalfAt = new Date(Math.max(firstClearedAt.getTime(), scheduledDraft.getTime() + (opts.splitGapDays ?? 14) * dayMs));
+    events.push({ date: secondHalfAt, kind: "cleared", label: "Second half cleared — program payment 1 is now complete" });
+    const clearedAt = secondHalfAt;
+    const payDate = scheduledPayDate(program, clearedAt);
+    // "On time" for a split plan = both halves clear on schedule.
+    const onTimePayDate = scheduledPayDate(program, new Date(scheduledDraft.getTime() + (opts.splitGapDays ?? 14) * dayMs));
+    const slipDays = Math.round((payDate.getTime() - onTimePayDate.getTime()) / dayMs);
+    return { events, clearedAt, payDate, onTimePayDate, slipDays };
+  }
+
+  events.push({ date: scheduledDraft, kind: "scheduled", label: "First draft scheduled" });
   let clearedAt = scheduledDraft;
   if (opts.nsf) {
-    const nsfAt = new Date(scheduledDraft.getTime() + (opts.nsfDays ?? 3) * 86_400_000);
-    const redraftAt = new Date(nsfAt.getTime() + (opts.redraftDays ?? 14) * 86_400_000);
+    const nsfAt = new Date(scheduledDraft.getTime() + (opts.nsfDays ?? 3) * dayMs);
+    const redraftAt = new Date(nsfAt.getTime() + (opts.redraftDays ?? 14) * dayMs);
     events.push({ date: nsfAt, kind: "nsf", label: "Draft returned NSF — does not count as a program payment" });
     events.push({ date: redraftAt, kind: "redraft_cleared", label: "Re-draft cleared — this is program payment 1" });
     clearedAt = redraftAt;
@@ -448,6 +478,6 @@ export function firstPaymentTimeline(program: ProgramKey, scheduledDraft: Date, 
   }
   const payDate = scheduledPayDate(program, clearedAt);
   const onTimePayDate = scheduledPayDate(program, scheduledDraft);
-  const slipDays = Math.round((payDate.getTime() - onTimePayDate.getTime()) / 86_400_000);
+  const slipDays = Math.round((payDate.getTime() - onTimePayDate.getTime()) / dayMs);
   return { events, clearedAt, payDate, onTimePayDate, slipDays };
 }
