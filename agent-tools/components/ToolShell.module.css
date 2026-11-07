@@ -18,13 +18,28 @@
   --card-line: rgba(255, 255, 255, 0.1);
 
   font-family: -apple-system, "Inter", Segoe UI, Helvetica, Arial, sans-serif;
-  max-width: 1100px;
-  margin: 0 auto 40px;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 12px 34px rgba(10, 20, 25, 0.18);
-  border: 1px solid #d7ddda;
+  /* Full width, like the Router's admin pages: the hero band runs edge to
+     edge and the body gets a wide max-width with gutters. */
+  width: 100%;
+  margin: 0;
+  background: #f1f5f4;
+  min-height: 100vh;
 }
+.inner { max-width: 1600px; margin: 0 auto; padding: 0 clamp(16px, 3vw, 40px); }
+
+/* compact: title, badge and metrics on one band; sticky: pinned under the
+   toolkit header so the headline numbers stay in view while inputs change. */
+.hero.compact { padding: 14px 0 14px; }
+.hero.compact .heroTitle { font-size: 19px; margin: 0; }
+.hero.compact .heroSub { display: none; }
+.hero.compact .heroTop { margin-bottom: 8px; }
+.hero.compact .slot { margin-top: 0; }
+.hero.compact .metricCard { padding: 8px 12px; }
+.hero.compact .metricValue { font-size: 17px; }
+.hero.compact .metricLabel { margin-bottom: 3px; }
+.hero.compact .compactRow { position: relative; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: 18px; align-items: center; }
+@media (max-width: 900px) { .hero.compact .compactRow { grid-template-columns: 1fr; } }
+.hero.sticky { position: sticky; top: var(--ft-toolkit-height, 0px); z-index: 40; box-shadow: 0 8px 24px rgba(5, 12, 18, 0.35); }
 
 /* The top bar lives in toolkit.js — shared across both repos, shadow-DOM
    isolated and already role-aware. Its styles used to sit here; keeping a
@@ -38,7 +53,7 @@
     radial-gradient(120% 140% at 88% -20%, var(--sky-600) 0%, transparent 58%),
     radial-gradient(90% 110% at -10% 115%, rgba(20, 184, 166, 0.22) 0%, transparent 62%),
     linear-gradient(150deg, var(--navy-1) 0%, var(--navy-2) 60%, var(--navy-2) 100%);
-  padding: 30px 28px 26px;
+  padding: 30px 0 26px;
   border-bottom: 1px solid var(--line);
 }
 .hero::before {
@@ -133,13 +148,13 @@
 .tabstrip button.active { background: var(--sky-400); color: #04302b; }
 
 /* ============ BODY — page-specific content, unchanged ============ */
-.bodyContent { background: #fff; padding: 26px 28px; }
+.bodyContent { padding: 22px 0 60px; }
 .contentCard { background: #f5f9f8; border: 1px solid #e1e8e6; border-radius: 8px; padding: 16px 18px; border-left: 2px solid var(--teal-500); }
 .contentCard h3 { margin: 0 0 6px; font-size: 14px; color: #0c2a26; }
 .contentCard p { margin: 0; font-size: 13px; color: #516560; line-height: 1.5; }
 
 @media (max-width: 640px) {
-  .hero { padding: 22px 16px 20px; }
-  .bodyContent { padding: 18px 16px; }
+  .hero { padding: 22px 0 20px; }
+  .bodyContent { padding: 16px 0 40px; }
   .controlResult { border-left: none; border-top: 1px solid var(--card-line); padding-left: 0; padding-top: 10px; }
 }

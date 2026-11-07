@@ -1,6 +1,6 @@
 import { query } from './db';
 import { reconcile, creditedAgent } from './recon';
-import { evaluateCloserPay, PAY_RULES, type CloserPayVerdict, type SeparationType } from './closerPay';
+import { evaluateCloserPay, programPayments, PAY_RULES, type CloserPayVerdict, type SeparationType } from './closerPay';
 import { fileKeyFor } from './imports';
 import { ghlConfigs, ghlFetch } from './ghl';
 import type { DealPayment, PaymentSchedule } from './vesting';
@@ -212,11 +212,20 @@ export async function recomputeCloserPay(opts: { asOf?: string; pushToGhl?: bool
     }
     byState[state] = (byState[state] ?? 0) + 1;
 
+    // Draft-level detail for the agent-facing table: every draft as the backend
+    // reported it, the dates program payments completed, when the first draft
+    // was due, and how many drafts came back NSF.
+    const drafts = file ? draftsFor(file).slice().sort((x, y) => String(x.dueAt ?? x.clearedAt ?? '').localeCompare(String(y.dueAt ?? y.clearedAt ?? ''))) : [];
+    const paymentDates = file && v.schedule !== 'unknown' ? programPayments(drafts, v.schedule).map((d) => d.toISOString().slice(0, 10)) : [];
+    const firstDraftDue = drafts.map((d) => d.dueAt).filter(Boolean).sort()[0] ?? file?.firstPaymentAt ?? null;
+    const nsfCount = drafts.filter((d) => d.status === 'returned' || d.status === 'nsf').length;
+
     out.push([
       e.id, agentId, a?.email ?? null, e.clientName ?? file?.clientName ?? null, backend, fileId,
       (e.firstEnrolledAt ?? e.enrolledAt)?.slice(0, 10) ?? null, debt || null, comp.amount, comp.basis,
       state, v.schedule, v.programPaymentsCleared, v.draftsCleared, v.owedAmount, v.paidAmount, v.clawbackAmount,
       v.nextPayDate, v.chargebackFreeAt, file?.payoutAt ?? null, v.reason, JSON.stringify(v.installments),
+      JSON.stringify(drafts), JSON.stringify(paymentDates), firstDraftDue, nsfCount,
     ]);
 
     const label = pushLabel(state, v.nextPayDate);
@@ -231,7 +240,8 @@ export async function recomputeCloserPay(opts: { asOf?: string; pushToGhl?: bool
     await query(
       `insert into ao_closer_pay (deal_id, agent_id, agent_email, client_name, backend, backend_file_id, enrolled_at,
          enrolled_debt, commission, commission_basis, state, schedule, program_payments, drafts_cleared, owed, paid,
-         clawback, next_pay_date, chargeback_free_at, backend_paid_at, reason, installments)
+         clawback, next_pay_date, chargeback_free_at, backend_paid_at, reason, installments,
+         drafts, payment_dates, first_draft_due, nsf_count)
        values ${values}`,
       params,
     );

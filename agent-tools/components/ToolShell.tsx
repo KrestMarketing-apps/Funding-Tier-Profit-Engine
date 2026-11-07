@@ -24,6 +24,10 @@ interface ToolShellProps {
   heroSlot?: ReactNode;
   /** Page body content below the hero */
   children?: ReactNode;
+  /** Short hero: title and metrics share one band, subtitle hidden. */
+  compact?: boolean;
+  /** Pin the hero under the toolkit header while the body scrolls. */
+  sticky?: boolean;
 }
 
 export default function ToolShell({
@@ -35,29 +39,43 @@ export default function ToolShell({
   subtitle,
   heroSlot,
   children,
+  compact = false,
+  sticky = false,
 }: ToolShellProps) {
+  const heroClass = [styles.hero, compact ? styles.compact : "", sticky ? styles.sticky : ""].join(" ");
   return (
     <div className={styles.frame} data-ft-tool={tool}>
       {/* HERO — same shell, `mode` sets the accent color, `heroSlot` carries the page-specific content */}
-      <div className={styles.hero} data-mode={mode}>
-        <div className={styles.heroTop}>
-          <div className={styles.eyebrow}>
-            <div className={styles.eyebrowIcon}>◆</div>
-            <span className={styles.eyebrowText}>{eyebrow}</span>
+      <div className={heroClass} data-mode={mode} data-ft-hero="">
+        <div className={styles.inner}>
+          <div className={styles.heroTop}>
+            <div className={styles.eyebrow}>
+              <div className={styles.eyebrowIcon}>◆</div>
+              <span className={styles.eyebrowText}>{eyebrow}</span>
+            </div>
+            {badge && (
+              <span className={`${styles.badge} ${styles[badge.style ?? mode]}`}>
+                {badge.text}
+              </span>
+            )}
           </div>
-          {badge && (
-            <span className={`${styles.badge} ${styles[badge.style ?? mode]}`}>
-              {badge.text}
-            </span>
+          {compact ? (
+            <div className={styles.compactRow}>
+              <h1 className={styles.heroTitle} title={subtitle}>{title}</h1>
+              {heroSlot && <div className={styles.slot}>{heroSlot}</div>}
+            </div>
+          ) : (
+            <>
+              <h1 className={styles.heroTitle}>{title}</h1>
+              <p className={styles.heroSub}>{subtitle}</p>
+              {heroSlot && <div className={styles.slot}>{heroSlot}</div>}
+            </>
           )}
         </div>
-        <h1 className={styles.heroTitle}>{title}</h1>
-        <p className={styles.heroSub}>{subtitle}</p>
-        {heroSlot && <div className={styles.slot}>{heroSlot}</div>}
       </div>
 
-      {/* BODY — existing page content, unchanged */}
-      <div className={styles.bodyContent}>{children}</div>
+      {/* BODY — page-specific content */}
+      <div className={styles.bodyContent}><div className={styles.inner}>{children}</div></div>
     </div>
   );
 }

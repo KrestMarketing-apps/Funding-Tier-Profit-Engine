@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ToolShell, { Metric, MetricsGrid } from "../../components/ToolShell";
 import {
   DEFAULT_EARNINGS_INPUTS, simulateEarnings, firstPaymentTimeline, scheduledPayDate,
@@ -14,33 +14,52 @@ const BORDER = "#e2e8f0", MUTED = "#64748b", BG = "#f8fafc";
 const usd = (n: number, dp = 0) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: dp }).format(n);
 const num = (n: number, dp = 1) => n.toLocaleString("en-US", { maximumFractionDigits: dp, minimumFractionDigits: 0 });
 const pct = (n: number) => `${Math.round(n * 100)}%`;
-const day = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const day = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const dayY = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 // ── Small UI pieces ────────────────────────────────────────────────────────
 
-function Card({ title, sub, accent = G, children, style }: { title: string; sub?: string; accent?: string; children: React.ReactNode; style?: React.CSSProperties }) {
+function Card({ title, sub, accent = G, children, style, right }: { title: string; sub?: string; accent?: string; children: React.ReactNode; style?: React.CSSProperties; right?: React.ReactNode }) {
   return (
     <section style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: 20, borderLeft: `4px solid ${accent}`, ...style }}>
-      <div style={{ fontWeight: 900, fontSize: 16, color: DARK }}>{title}</div>
-      {sub && <div style={{ fontSize: 13, color: MUTED, marginTop: 2, marginBottom: 12 }}>{sub}</div>}
-      {!sub && <div style={{ height: 12 }} />}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontWeight: 900, fontSize: 16, color: DARK }}>{title}</div>
+          {sub && <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{sub}</div>}
+        </div>
+        {right}
+      </div>
+      <div style={{ height: 12 }} />
       {children}
     </section>
   );
 }
 
-function Slider({ label, value, min, max, step, onChange, format, help }: {
-  label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void; format: (v: number) => string; help?: string;
+/** Number box with a unit. `scale` converts between the stored value and the displayed one (0.15 ↔ 15). */
+function NumberField({ label, value, min, max, step, unit, onChange, help, scale = 1, dp = 0 }: {
+  label: string; value: number; min: number; max: number; step: number; unit?: string; onChange: (v: number) => void; help?: string; scale?: number; dp?: number;
 }) {
+  const shown = +(value * scale).toFixed(dp + 2);
+  const [draft, setDraft] = useState<string>(String(shown));
+  useEffect(() => { setDraft(String(shown)); }, [shown]);
+  const commit = () => {
+    const n = Number(draft);
+    if (!Number.isFinite(n)) { setDraft(String(shown)); return; }
+    onChange(clamp(n, min, max) / scale);
+  };
   return (
-    <label style={{ display: "block", marginBottom: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+    <label style={{ display: "block", marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
         <span style={{ fontWeight: 700, fontSize: 13, color: DARK }}>{label}</span>
-        <span style={{ fontWeight: 900, fontSize: 16, color: GD, fontVariantNumeric: "tabular-nums" }}>{format(value)}</span>
+        <span style={{ display: "inline-flex", alignItems: "center", border: `1px solid ${BORDER}`, borderRadius: 8, overflow: "hidden", background: "#fff" }}>
+          <input type="number" value={draft} min={min} max={max} step={step}
+            onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+            style={{ width: 84, padding: "7px 8px", border: "none", outline: "none", fontWeight: 900, fontSize: 15, color: GD, textAlign: "right", fontVariantNumeric: "tabular-nums", background: "transparent" }} />
+          {unit && <span style={{ padding: "0 9px 0 4px", fontSize: 12, fontWeight: 800, color: MUTED, background: BG, alignSelf: "stretch", display: "flex", alignItems: "center", borderLeft: `1px solid ${BORDER}` }}>{unit}</span>}
+        </span>
       </div>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))}
-        style={{ width: "100%", accentColor: G, marginTop: 4 }} />
-      {help && <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{help}</div>}
+      {help && <div style={{ fontSize: 11, color: MUTED, marginTop: 3, lineHeight: 1.4 }}>{help}</div>}
     </label>
   );
 }
@@ -59,6 +78,24 @@ function Row({ label, value, sub, strong, color }: { label: string; value: strin
 
 function Pill({ children, color = G }: { children: React.ReactNode; color?: string }) {
   return <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: color + "18", color, border: `1px solid ${color}44` }}>{children}</span>;
+}
+
+/** Left-to-right process: boxes joined by arrows. */
+function Flow({ steps }: { steps: { label: string; value: string; color: string; sub?: string }[] }) {
+  return (
+    <div style={{ display: "flex", alignItems: "stretch", gap: 0, overflowX: "auto", paddingBottom: 4 }}>
+      {steps.map((s, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 150 }}>
+          <div style={{ flex: 1, background: BG, border: `1px solid ${BORDER}`, borderTop: `3px solid ${s.color}`, borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ fontSize: 11, color: MUTED, fontWeight: 700 }}>{s.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: s.color, fontVariantNumeric: "tabular-nums" }}>{s.value}</div>
+            {s.sub && <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{s.sub}</div>}
+          </div>
+          {i < steps.length - 1 && <div style={{ padding: "0 6px", color: "#94a3b8", fontSize: 18, fontWeight: 900 }}>→</div>}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // ── Page ───────────────────────────────────────────────────────────────────
@@ -86,14 +123,39 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
   const mixTotal = inp.mix.SHIELD + inp.mix.ELP + inp.mix.LEVEL;
   const mixWarn = inp.clearedOnAllPrograms && Math.abs(mixTotal - 1) > 0.01;
 
+  // Sticky inputs sit under the sticky hero: measure the hero so the offset is exact.
+  const [stickyTop, setStickyTop] = useState(140);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const calc = () => {
+      const hero = document.querySelector<HTMLElement>("[data-ft-hero]");
+      const tk = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ft-toolkit-height")) || 0;
+      // The hero is sticky at `tk`, so the inputs must start below tk + hero height.
+      setStickyTop(tk + (hero?.getBoundingClientRect().height ?? 120) + 18);
+    };
+    calc();
+    window.addEventListener("resize", calc);
+    const t = setInterval(calc, 1500); // toolkit mounts late; settle after it does
+    setTimeout(() => clearInterval(t), 8000);
+    return () => { window.removeEventListener("resize", calc); clearInterval(t); };
+  }, []);
+
+  const tlColor = (kind: string) => kind === "nsf" ? RED : kind === "scheduled" ? MUTED : kind === "half_cleared" ? BLUE : GD;
+  const timelineSteps = [
+    ...tl.events.map((e) => ({ date: e.date, label: e.label, color: tlColor(e.kind), strong: false })),
+    { date: tl.payDate, label: "You are paid", color: DARK, strong: true },
+  ];
+
   return (
     <ToolShell
       mode={mode}
       tool="Earnings Simulator"
+      compact
+      sticky
       eyebrow={mode === "admin" ? "ADMIN · AGENT TOOLS" : "AGENT TOOLS"}
       badge={{ text: `PAY RULES ${PAY_RULES_VERSION}` }}
       title="What Could You Make?"
-      subtitle="Set your hours, how many qualified calls you take, and your close rate. The simulator applies the published commission and bonus rules and shows what a month looks like, when the money lands, and what happens when a first payment bounces."
+      subtitle="Set your hours, qualified calls and close rate. The simulator applies the published commission and bonus rules."
       heroSlot={
         <MetricsGrid>
           <Metric label="Per month" value={usd(r.monthlyTotal)} accent />
@@ -103,23 +165,23 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
         </MetricsGrid>
       }
     >
-      <div style={{ padding: 20, background: BG, display: "grid", gridTemplateColumns: "minmax(280px, 380px) 1fr", gap: 18 }}>
+      <div ref={bodyRef} className="es-grid" style={{ display: "grid", gridTemplateColumns: "minmax(300px, 360px) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
 
-        {/* ── Inputs ── */}
-        <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
+        {/* ── Inputs (sticky) ── */}
+        <div className="es-side" style={{ display: "grid", gap: 16, alignContent: "start", position: "sticky", top: stickyTop, maxHeight: `calc(100vh - ${stickyTop + 16}px)`, overflowY: "auto", paddingRight: 2 }}>
           <Card title="Your Activity" sub="Realistic numbers beat optimistic ones. Start with what a trained rep does in a normal week.">
-            <Slider label="Hours per week" value={inp.hoursPerWeek} min={10} max={60} step={1} onChange={(v) => set("hoursPerWeek", v)} format={(v) => `${v} hrs`} />
-            <Slider label="Qualified calls per hour" value={inp.qualifiedCallsPerHour} min={0.25} max={4} step={0.25} onChange={(v) => set("qualifiedCallsPerHour", v)} format={(v) => num(v, 2)}
+            <NumberField label="Hours per week" value={inp.hoursPerWeek} min={5} max={70} step={1} unit="hrs" onChange={(v) => set("hoursPerWeek", v)} />
+            <NumberField label="Qualified calls per hour" value={inp.qualifiedCallsPerHour} min={0.25} max={6} step={0.25} unit="calls" dp={2} onChange={(v) => set("qualifiedCallsPerHour", v)}
               help="Live transfers or inbound calls that reach a real pitch. Not dials." />
-            <Slider label="Close rate" value={inp.closeRate} min={0.02} max={0.4} step={0.01} onChange={(v) => set("closeRate", v)} format={pct}
+            <NumberField label="Close rate" value={inp.closeRate} min={1} max={60} step={1} unit="%" scale={100} onChange={(v) => set("closeRate", v)}
               help="Share of qualified calls that enroll. New reps: 8 to 12%. Strong reps: 15%+." />
-            <Slider label="First payment never clears" value={inp.firstPaymentFallout} min={0} max={0.8} step={0.05} onChange={(v) => set("firstPaymentFallout", v)} format={pct}
-              help="NSF, cancel, or no-show before the first program payment. No commission on these. Plan on 40 to 50%." />
-            <Slider label="Second payment clears" value={inp.secondPaymentClears} min={0.5} max={1} step={0.05} onChange={(v) => set("secondPaymentClears", v)} format={pct}
-              help="Drives the Monthly Volume Bonus and makes Level Debt commission final." />
+            <NumberField label="First payment clears" value={1 - inp.firstPaymentFallout} min={10} max={100} step={5} unit="%" scale={100} onChange={(v) => set("firstPaymentFallout", 1 - v)}
+              help="Share of enrollments whose first program payment clears. Commission is earned on these only. Plan on 50 to 60%." />
+            <NumberField label="Second payment clears" value={inp.secondPaymentClears} min={50} max={100} step={5} unit="%" scale={100} onChange={(v) => set("secondPaymentClears", v)}
+              help="Share of paid deals whose second payment clears. Drives the Monthly Volume Bonus and makes Level Debt commission final." />
           </Card>
 
-          <Card title="Your Programs" accent={BLUE} sub="Shield Services is the primary program. The other programs unlock once you are trained and cleared on their enrollment systems.">
+          <Card title="Your Programs" accent={BLUE} sub="Shield Services is the primary program. The others unlock once you are trained and cleared on their enrollment systems.">
             <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: inp.clearedOnAllPrograms ? BLUE + "12" : BG, border: `1px solid ${inp.clearedOnAllPrograms ? BLUE + "55" : BORDER}`, marginBottom: 14, cursor: "pointer" }}>
               <input type="checkbox" checked={inp.clearedOnAllPrograms} onChange={(e) => set("clearedOnAllPrograms", e.target.checked)} style={{ accentColor: BLUE, width: 18, height: 18 }} />
               <div>
@@ -131,52 +193,51 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
             {inp.clearedOnAllPrograms && (
               <>
                 <div style={{ fontWeight: 800, fontSize: 12, color: MUTED, letterSpacing: 0.4, marginBottom: 6 }}>PROGRAM MIX OF YOUR DEALS</div>
-                <Slider label="Shield Services" value={inp.mix.SHIELD} min={0} max={1} step={0.05} onChange={(v) => setMix("SHIELD", v)} format={pct} />
-                <Slider label="Debt Resolution" value={inp.mix.ELP} min={0} max={1} step={0.05} onChange={(v) => setMix("ELP", v)} format={pct} />
-                <Slider label="Level Debt" value={inp.mix.LEVEL} min={0} max={1} step={0.05} onChange={(v) => setMix("LEVEL", v)} format={pct} />
+                <NumberField label="Shield Services" value={inp.mix.SHIELD} min={0} max={100} step={5} unit="%" scale={100} onChange={(v) => setMix("SHIELD", v)} />
+                <NumberField label="Debt Resolution" value={inp.mix.ELP} min={0} max={100} step={5} unit="%" scale={100} onChange={(v) => setMix("ELP", v)} />
+                <NumberField label="Level Debt" value={inp.mix.LEVEL} min={0} max={100} step={5} unit="%" scale={100} onChange={(v) => setMix("LEVEL", v)} />
                 {mixWarn && <div style={{ fontSize: 12, color: AMBER, fontWeight: 700, marginBottom: 10 }}>Mix adds to {pct(mixTotal)}; it is scaled to 100% in the math.</div>}
               </>
             )}
 
             <div style={{ fontWeight: 800, fontSize: 12, color: MUTED, letterSpacing: 0.4, margin: "6px 0" }}>AVERAGE ENROLLED DEBT</div>
-            <Slider label="Shield Services deal" value={inp.avgDebt.SHIELD} min={4000} max={60000} step={500} onChange={(v) => setDebt("SHIELD", v)} format={(v) => usd(v)} help={r.byProgram.SHIELD.basis} />
-            {inp.clearedOnAllPrograms && inp.mix.ELP > 0 && <Slider label="Debt Resolution deal" value={inp.avgDebt.ELP} min={6000} max={60000} step={500} onChange={(v) => setDebt("ELP", v)} format={(v) => usd(v)} help={r.byProgram.ELP.basis} />}
-            {inp.clearedOnAllPrograms && inp.mix.LEVEL > 0 && <Slider label="Level Debt deal" value={inp.avgDebt.LEVEL} min={7000} max={80000} step={500} onChange={(v) => setDebt("LEVEL", v)} format={(v) => usd(v)} help={r.byProgram.LEVEL.basis} />}
+            <NumberField label="Shield Services deal" value={inp.avgDebt.SHIELD} min={4000} max={60000} step={500} unit="$" onChange={(v) => setDebt("SHIELD", v)} help={r.byProgram.SHIELD.basis} />
+            {inp.clearedOnAllPrograms && inp.mix.ELP > 0 && <NumberField label="Debt Resolution deal" value={inp.avgDebt.ELP} min={6000} max={60000} step={500} unit="$" onChange={(v) => setDebt("ELP", v)} help={r.byProgram.ELP.basis} />}
+            {inp.clearedOnAllPrograms && inp.mix.LEVEL > 0 && <NumberField label="Level Debt deal" value={inp.avgDebt.LEVEL} min={7000} max={80000} step={500} unit="$" onChange={(v) => setDebt("LEVEL", v)} help={r.byProgram.LEVEL.basis} />}
           </Card>
         </div>
 
         {/* ── Results ── */}
-        <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
+        <div style={{ display: "grid", gap: 16, alignContent: "start", minWidth: 0 }}>
 
-          <Card title="How A Month Breaks Down" sub={`${num(r.hoursPerMonth, 0)} hours → ${num(r.qualifiedCallsPerMonth, 0)} qualified calls → ${num(r.enrollmentsPerMonth)} enrollments → ${num(r.paidDealsPerMonth)} deals that actually pay.`}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 14 }}>
-              {[
-                ["Qualified calls", num(r.qualifiedCallsPerMonth, 0), MUTED],
-                ["Enrollments", num(r.enrollmentsPerMonth), BLUE],
-                ["Lost before 1st payment", `−${num(r.lostToFallout)}`, RED],
-                ["Paid deals", num(r.paidDealsPerMonth), GD],
-              ].map(([l, v, c]) => (
-                <div key={l as string} style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 12px" }}>
-                  <div style={{ fontSize: 11, color: MUTED, fontWeight: 700 }}>{l}</div>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: c as string }}>{v}</div>
-                </div>
-              ))}
+          <Card title="How A Month Breaks Down" sub="Hours in, paid deals out. Each step applies one of your inputs.">
+            <Flow steps={[
+              { label: "Hours worked", value: num(r.hoursPerMonth, 0), color: MUTED, sub: `${inp.hoursPerWeek} hrs × 4.33 weeks` },
+              { label: "Qualified calls", value: num(r.qualifiedCallsPerMonth, 0), color: MUTED, sub: `${num(inp.qualifiedCallsPerHour, 2)} per hour` },
+              { label: "Enrollments", value: num(r.enrollmentsPerMonth), color: BLUE, sub: `${pct(inp.closeRate)} close rate` },
+              { label: "Lost before 1st payment", value: `−${num(r.lostToFallout)}`, color: RED, sub: `${pct(inp.firstPaymentFallout)} never clear` },
+              { label: "Paid deals", value: num(r.paidDealsPerMonth), color: GD, sub: `${pct(1 - inp.firstPaymentFallout)} first payment clears` },
+            ]} />
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginTop: 16 }} className="es-two">
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 12, color: MUTED, letterSpacing: 0.4, marginBottom: 2 }}>COMMISSION</div>
+                {r.byProgram.SHIELD.deals > 0 && <Row label="Shield Services" sub={`${num(r.byProgram.SHIELD.deals)} deals × ${usd(r.byProgram.SHIELD.perDeal)} · ${r.byProgram.SHIELD.basis}`} value={usd(r.byProgram.SHIELD.commission)} />}
+                {r.byProgram.ELP.deals > 0 && <Row label="Debt Resolution" sub={`${num(r.byProgram.ELP.deals)} deals × ${usd(r.byProgram.ELP.perDeal)} · ${r.byProgram.ELP.basis}`} value={usd(r.byProgram.ELP.commission)} />}
+                {r.byProgram.LEVEL.deals > 0 && <Row label="Level Debt" sub={`${num(r.byProgram.LEVEL.deals)} deals · ${usd(r.levelMonthlyVolume)} enrolled this month · ${r.levelTier.label} (${(r.levelTier.rate * 100).toFixed(2)}%)`} value={usd(r.byProgram.LEVEL.commission)} />}
+                <Row label="Commission total" value={usd(r.commissionTotal)} strong color={GD} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 12, color: MUTED, letterSpacing: 0.4, marginBottom: 2 }}>BONUSES AND SPIFFS</div>
+                <Row label="Daily Deal Bonus" sub={r.dailyBonusNote} value={usd(r.dailyBonus)} color={r.dailyBonus > 0 ? AMBER : MUTED} />
+                <Row label="Monthly Volume Bonus"
+                  sub={r.monthlyBonusNext ? `${num(r.pooledDealsP2)} pooled deals with 2nd payment cleared. ${r.monthlyBonusNext.minDeals} unlocks ${usd(r.monthlyBonusNext.bonus)}.` : `${num(r.pooledDealsP2)} pooled deals with 2nd payment cleared — top tier.`}
+                  value={usd(r.monthlyBonus)} color={r.monthlyBonus > 0 ? AMBER : MUTED} />
+                <Row label="Balanced Book Bonus" sub={r.balancedBook.reason} value={usd(r.balancedBook.bonus)} color={r.balancedBook.bonus > 0 ? PURPLE : MUTED} />
+                {inp.clearedOnAllPrograms && <Row label="Level Debt Enrollment Bonus" sub={`${usd(r.levelMonthlyVolume / WORK_DAYS_PER_MONTH)} Level Debt enrolled per day on average; pays at $75,000 and $100,000 a day.`} value={usd(r.levelEnrollment)} color={r.levelEnrollment > 0 ? PURPLE : MUTED} />}
+                <Row label="Bonus total" value={usd(r.bonusTotal)} strong color={AMBER} />
+              </div>
             </div>
-
-            <div style={{ fontWeight: 800, fontSize: 12, color: MUTED, letterSpacing: 0.4, marginBottom: 2 }}>COMMISSION</div>
-            {r.byProgram.SHIELD.deals > 0 && <Row label="Shield Services" sub={`${num(r.byProgram.SHIELD.deals)} deals × ${usd(r.byProgram.SHIELD.perDeal)} · ${r.byProgram.SHIELD.basis}`} value={usd(r.byProgram.SHIELD.commission)} />}
-            {r.byProgram.ELP.deals > 0 && <Row label="Debt Resolution" sub={`${num(r.byProgram.ELP.deals)} deals × ${usd(r.byProgram.ELP.perDeal)} · ${r.byProgram.ELP.basis}`} value={usd(r.byProgram.ELP.commission)} />}
-            {r.byProgram.LEVEL.deals > 0 && <Row label="Level Debt" sub={`${num(r.byProgram.LEVEL.deals)} deals · ${usd(r.levelMonthlyVolume)} enrolled this month · ${r.levelTier.label} (${(r.levelTier.rate * 100).toFixed(2)}%)`} value={usd(r.byProgram.LEVEL.commission)} />}
-            <Row label="Commission total" value={usd(r.commissionTotal)} strong color={GD} />
-
-            <div style={{ fontWeight: 800, fontSize: 12, color: MUTED, letterSpacing: 0.4, margin: "14px 0 2px" }}>BONUSES AND SPIFFS</div>
-            <Row label="Daily Deal Bonus" sub={r.dailyBonusNote} value={usd(r.dailyBonus)} color={r.dailyBonus > 0 ? AMBER : MUTED} />
-            <Row label="Monthly Volume Bonus"
-              sub={r.monthlyBonusNext ? `${num(r.pooledDealsP2)} pooled deals with 2nd payment cleared. ${r.monthlyBonusNext.minDeals} unlocks ${usd(r.monthlyBonusNext.bonus)}.` : `${num(r.pooledDealsP2)} pooled deals with 2nd payment cleared — top tier.`}
-              value={usd(r.monthlyBonus)} color={r.monthlyBonus > 0 ? AMBER : MUTED} />
-            <Row label="Balanced Book Bonus" sub={r.balancedBook.reason} value={usd(r.balancedBook.bonus)} color={r.balancedBook.bonus > 0 ? PURPLE : MUTED} />
-            {inp.clearedOnAllPrograms && <Row label="Level Debt Enrollment Bonus" sub={`${usd(r.levelMonthlyVolume / WORK_DAYS_PER_MONTH)} Level Debt enrolled per day on average; pays at $75,000 and $100,000 a day.`} value={usd(r.levelEnrollment)} color={r.levelEnrollment > 0 ? PURPLE : MUTED} />}
-            <Row label="Bonus total" value={usd(r.bonusTotal)} strong color={AMBER} />
 
             <div style={{ marginTop: 14, padding: 14, borderRadius: 12, background: DARK, color: "#fff", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
               <div>
@@ -193,59 +254,69 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
             </div>
           </Card>
 
-          <Card title="When The Money Lands" accent={AMBER} sub="You are paid on a deal after the client's first program payment clears and the provider has paid Funding Tier. Here is what an NSF on that first payment does to the date.">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-              <label style={{ fontSize: 13, fontWeight: 700, color: DARK }}>Program
-                <select value={tlProgram} onChange={(e) => setTlProgram(e.target.value as ProgramKey)} style={{ display: "block", width: "100%", marginTop: 4, padding: 8, borderRadius: 8, border: `1px solid ${BORDER}`, fontWeight: 700 }}>
+          <Card title="Revenue / Payout Timeline (Estimated)" accent={AMBER}
+            sub="You are paid on a deal after the client's first program payment clears and the provider has paid Funding Tier. Change the scenario to see how the date moves."
+            right={<Pill color={tl.slipDays > 0 ? AMBER : G}>{tl.slipDays > 0 ? `Pay date slips ${tl.slipDays} days` : "On schedule"}</Pill>}>
+
+            {/* Scenario controls in one row */}
+            <div className="es-controls" style={{ display: "grid", gridTemplateColumns: "minmax(160px,1fr) minmax(140px,180px) auto auto", gap: 14, alignItems: "end", marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 800, color: MUTED }}>PROGRAM
+                <select value={tlProgram} onChange={(e) => setTlProgram(e.target.value as ProgramKey)} style={{ display: "block", width: "100%", marginTop: 4, padding: 8, borderRadius: 8, border: `1px solid ${BORDER}`, fontWeight: 700, color: DARK, background: "#fff" }}>
                   <option value="SHIELD">Shield Services</option>
                   <option value="ELP">Debt Resolution</option>
                   <option value="LEVEL">Level Debt</option>
                 </select>
               </label>
-              <label style={{ fontSize: 13, fontWeight: 700, color: DARK }}>First draft scheduled on day
-                <input type="number" min={1} max={28} value={tlDay} onChange={(e) => setTlDay(Math.min(28, Math.max(1, Number(e.target.value))))} style={{ display: "block", width: "100%", marginTop: 4, padding: 8, borderRadius: 8, border: `1px solid ${BORDER}`, fontWeight: 700 }} />
+              <label style={{ fontSize: 12, fontWeight: 800, color: MUTED }}>FIRST DRAFT ON DAY
+                <input type="number" min={1} max={28} value={tlDay} onChange={(e) => setTlDay(clamp(Number(e.target.value) || 1, 1, 28))} style={{ display: "block", width: "100%", marginTop: 4, padding: 8, borderRadius: 8, border: `1px solid ${BORDER}`, fontWeight: 800, color: GD }} />
               </label>
-            </div>
-            <div style={{ display: "flex", gap: 18, flexWrap: "wrap", marginBottom: 10 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", paddingBottom: 8 }}>
                 <input type="checkbox" checked={tlSplit} onChange={(e) => setTlSplit(e.target.checked)} style={{ accentColor: BLUE, width: 18, height: 18 }} />
-                <span style={{ fontWeight: 800, fontSize: 13, color: DARK }}>Client pays twice a month (split plan)</span>
+                <span style={{ fontWeight: 800, fontSize: 13, color: DARK }}>Split plan (twice a month)</span>
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", paddingBottom: 8 }}>
                 <input type="checkbox" checked={tlNsf} onChange={(e) => setTlNsf(e.target.checked)} style={{ accentColor: RED, width: 18, height: 18 }} />
                 <span style={{ fontWeight: 800, fontSize: 13, color: DARK }}>{tlSplit ? "First half returns NSF" : "First draft returns NSF"}</span>
               </label>
             </div>
-            {tlSplit && <div style={{ fontSize: 12.5, color: DARK, background: BLUE + "10", border: `1px solid ${BLUE}44`, borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}><strong>Split plan:</strong> a program payment is one month of the plan. Half a month clearing is not a first program payment. Nothing is owed, and the pay clock does not start, until the second half clears. Two half-drafts are one program payment, never two.</div>}
-            {tlNsf && <Slider label="Days until the re-draft clears" value={tlRedraft} min={3} max={45} step={1} onChange={setTlRedraft} format={(v) => `${v} days`} help="Most providers re-present within 7 to 14 days. Some clients ask to move it to their next payday." />}
+            {tlNsf && (
+              <div style={{ maxWidth: 360, marginBottom: 12 }}>
+                <NumberField label="Days until the re-draft clears" value={tlRedraft} min={3} max={45} step={1} unit="days" onChange={setTlRedraft} help="Most providers re-present within 7 to 14 days. Some clients ask to move it to their next payday." />
+              </div>
+            )}
+            {tlSplit && <div style={{ fontSize: 12.5, color: DARK, background: BLUE + "10", border: `1px solid ${BLUE}44`, borderRadius: 8, padding: "8px 10px", marginBottom: 12 }}><strong>Split plan:</strong> a program payment is one month of the plan. Half a month clearing is not a first program payment. Nothing is owed, and the pay clock does not start, until the second half clears.</div>}
 
-            <div style={{ borderLeft: `3px solid ${BORDER}`, marginLeft: 8, paddingLeft: 16, marginTop: 6 }}>
-              {tl.events.map((e, i) => {
-                const c = e.kind === "nsf" ? RED : e.kind === "scheduled" ? MUTED : e.kind === "half_cleared" ? BLUE : GD;
-                return (
-                  <div key={i} style={{ position: "relative", paddingBottom: 12 }}>
-                    <span style={{ position: "absolute", left: -23, top: 3, width: 11, height: 11, borderRadius: 999, background: c, border: "2px solid #fff", boxShadow: `0 0 0 1px ${c}` }} />
-                    <div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>{day(e.date)}</div>
-                    <div style={{ fontSize: 13.5, fontWeight: 700, color: c }}>{e.label}</div>
-                  </div>
-                );
-              })}
-              <div style={{ position: "relative" }}>
-                <span style={{ position: "absolute", left: -23, top: 3, width: 11, height: 11, borderRadius: 999, background: DARK, border: "2px solid #fff", boxShadow: `0 0 0 1px ${DARK}` }} />
-                <div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>{day(tl.payDate)}</div>
-                <div style={{ fontSize: 15, fontWeight: 900, color: DARK }}>You are paid</div>
-                <div style={{ fontSize: 12.5, color: MUTED, marginTop: 2 }}>{PROGRAMS[tlProgram].timing}</div>
+            {/* Left-to-right process illustration */}
+            <div style={{ overflowX: "auto", paddingBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", minWidth: timelineSteps.length * 170 }}>
+                {timelineSteps.map((s, i) => {
+                  const last = i === timelineSteps.length - 1;
+                  return (
+                    <div key={i} style={{ flex: 1, minWidth: 150, position: "relative" }}>
+                      {/* connector */}
+                      {!last && <div style={{ position: "absolute", top: 29, left: "50%", right: "-50%", height: 3, background: `linear-gradient(90deg, ${s.color}, ${timelineSteps[i + 1].color})`, opacity: 0.55 }} />}
+                      <div style={{ textAlign: "center", padding: "0 8px" }}>
+                        <div style={{ fontSize: 11.5, fontWeight: 800, color: MUTED, height: 18 }}>{day(s.date)}</div>
+                        <div style={{ position: "relative", zIndex: 1, width: 22, height: 22, borderRadius: 999, margin: "0 auto", background: s.strong ? DARK : "#fff", border: `4px solid ${s.color}`, boxShadow: "0 0 0 3px #fff" }} />
+                        <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 10, background: s.strong ? DARK : BG, border: `1px solid ${s.strong ? DARK : BORDER}`, borderTop: `3px solid ${s.color}`, minHeight: 58 }}>
+                          <div style={{ fontSize: s.strong ? 14 : 12.5, fontWeight: s.strong ? 900 : 700, color: s.strong ? "#fff" : s.color, lineHeight: 1.3 }}>{s.label}</div>
+                          {s.strong && <div style={{ fontSize: 11, color: "rgba(255,255,255,.75)", marginTop: 3 }}>{PROGRAMS[tlProgram].timing}</div>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
             <div style={{ marginTop: 14, padding: 12, borderRadius: 10, background: tl.slipDays > 0 ? "#fff7ed" : "#f0fdf4", border: `1px solid ${tl.slipDays > 0 ? "#fdba74" : "#86efac"}`, fontSize: 13, color: DARK }}>
               {tl.slipDays > 0
-                ? <><strong>Pay date moves {tl.slipDays} days later</strong> (from {day(tl.onTimePayDate)} to {day(tl.payDate)}). {tlSplit ? "The first half never counted on its own, and the NSF pushed it; program payment 1 was complete only when the second half cleared, and the pay schedule runs from that date." : "The NSF draft never counts; the re-draft's clear date is program payment 1, and the pay schedule runs from that date."}</>
+                ? <><strong>Pay date moves {tl.slipDays} days later</strong> (from {dayY(tl.onTimePayDate)} to {dayY(tl.payDate)}). {tlSplit ? "The first half never counted on its own, and the NSF pushed it; program payment 1 was complete only when the second half cleared, and the pay schedule runs from that date." : "The NSF draft never counts; the re-draft's clear date is program payment 1, and the pay schedule runs from that date."}</>
                 : tlSplit && !tlNsf
-                  ? <><strong>Both halves cleared on schedule.</strong> Program payment 1 completed {day(tl.clearedAt)} when the second half cleared; you are paid {day(tl.payDate)}. Note the first half clearing on {day(tl.events[0].date)} did not start anything.</>
+                  ? <><strong>Both halves cleared on schedule.</strong> Program payment 1 completed {dayY(tl.clearedAt)} when the second half cleared; you are paid {dayY(tl.payDate)}. The first half clearing on {dayY(tl.events[0].date)} did not start anything.</>
                 : tlNsf
-                  ? <><strong>No change to your pay date.</strong> The re-draft cleared inside the same pay window, so you are still paid {day(tl.payDate)}. The NSF still shows on the file and the client's 2nd payment is now the one that makes {tlProgram === "LEVEL" ? "a Level Debt commission final" : "the Monthly Volume Bonus count"}.</>
-                  : <><strong>On time.</strong> First payment clears {day(tl.clearedAt)}; you are paid {day(tl.payDate)}.</>}
+                  ? <><strong>No change to your pay date.</strong> The re-draft cleared inside the same pay window, so you are still paid {dayY(tl.payDate)}. The NSF still shows on the file and the client's 2nd payment is now the one that makes {tlProgram === "LEVEL" ? "a Level Debt commission final" : "the Monthly Volume Bonus count"}.</>
+                  : <><strong>On time.</strong> First payment clears {dayY(tl.clearedAt)}; you are paid {dayY(tl.payDate)}.</>}
             </div>
             <div style={{ fontSize: 11.5, color: MUTED, marginTop: 8 }}>{POLICY.nsf} {POLICY.programPayment} {POLICY.lateBackend}</div>
           </Card>
@@ -253,7 +324,7 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
           <Card title="The Rules Behind These Numbers" accent={PURPLE} sub="Same tables the commission tracker and the Commission, Bonuses & SPIFFs page use. If a number changes there, it changes here.">
             <details>
               <summary style={{ cursor: "pointer", fontWeight: 800, color: DARK, fontSize: 13 }}>Commission tables</summary>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 10, fontSize: 12.5 }}>
+              <div className="es-two" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 10, fontSize: 12.5 }}>
                 <div>
                   <div style={{ fontWeight: 800, color: GD, marginBottom: 4 }}>Shield Services (flat per deal)</div>
                   {SHIELD_PROGRAMS.map((b) => <div key={b.code} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${BORDER}` }}><span>{b.label} · {usd(b.minDebt)}{b.maxDebt === Infinity ? "+" : ` – ${usd(b.maxDebt)}`}</span><strong>{usd(b.commission)}</strong></div>)}
@@ -268,7 +339,7 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
             </details>
             <details style={{ marginTop: 10 }}>
               <summary style={{ cursor: "pointer", fontWeight: 800, color: DARK, fontSize: 13 }}>Bonus tables</summary>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 10, fontSize: 12.5 }}>
+              <div className="es-two" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 10, fontSize: 12.5 }}>
                 <div>
                   <div style={{ fontWeight: 800, color: AMBER, marginBottom: 4 }}>Daily Deal Bonus <Pill color={AMBER}>Shield + Debt Resolution pooled</Pill></div>
                   {DAILY_DEAL_BONUS.map((t) => <div key={t.minDeals} style={{ padding: "3px 0", borderBottom: `1px solid ${BORDER}` }}>{t.minDeals}+ deals in a day → <strong>{usd(t.perDeal)} per deal</strong> that day</div>)}
@@ -299,7 +370,15 @@ export default function EarningsSimulator({ mode }: { mode: "admin" | "agent" })
           </Card>
         </div>
       </div>
-      <style>{`@media (max-width: 860px){ [data-ft-tool="Earnings Simulator"] > div:last-child > div { grid-template-columns: 1fr !important; } }`}</style>
+      <style>{`
+        @media (max-width: 960px) {
+          .es-grid { grid-template-columns: 1fr !important; }
+          .es-side { position: static !important; max-height: none !important; overflow: visible !important; }
+          .es-two { grid-template-columns: 1fr !important; }
+          .es-controls { grid-template-columns: 1fr 1fr !important; }
+        }
+        input[type=number]::-webkit-inner-spin-button { opacity: 1; }
+      `}</style>
     </ToolShell>
   );
 }
