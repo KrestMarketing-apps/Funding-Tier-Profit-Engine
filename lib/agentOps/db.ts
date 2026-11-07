@@ -341,6 +341,22 @@ const DDL: string[] = [
      computed_at timestamptz not null default now()
    )`,
   `create index if not exists ao_closer_pay_agent on ao_closer_pay (agent_id, next_pay_date)`,
+  // Per-draft detail and the dates each PROGRAM payment completed, so My Deals
+  // & Pay can show 1st / 2nd payment, NSFs and split plans without recomputing.
+  `alter table ao_closer_pay add column if not exists drafts jsonb`,
+  `alter table ao_closer_pay add column if not exists payment_dates jsonb`,
+  `alter table ao_closer_pay add column if not exists first_draft_due date`,
+  `alter table ao_closer_pay add column if not exists nsf_count integer not null default 0`,
+
+  // Admin-written notes and a quality grade per deal. Kept apart from
+  // ao_closer_pay, which is rebuilt from scratch on every run.
+  `create table if not exists ao_deal_notes (
+     deal_id text primary key,
+     note text,
+     grade text,
+     updated_by text,
+     updated_at timestamptz not null default now()
+   )`,
   `create index if not exists ao_closer_pay_email on ao_closer_pay (lower(agent_email))`,
 
   // A payment actually made to a closer. The lines are ao_comp_ledger rows

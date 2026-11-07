@@ -296,7 +296,7 @@ export interface EarningsInputs {
 export const DEFAULT_EARNINGS_INPUTS: EarningsInputs = {
   hoursPerWeek: 40,
   qualifiedCallsPerHour: 1.5,
-  closeRate: 0.12,
+  closeRate: 0.15,
   firstPaymentFallout: 0.5,
   secondPaymentClears: 0.9,
   mix: { SHIELD: 1, ELP: 0, LEVEL: 0 },
