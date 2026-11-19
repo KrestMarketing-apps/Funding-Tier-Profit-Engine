@@ -250,7 +250,11 @@ export const DEFAULT_INPUTS: ModelInputs = {
   marketing: {
     directMail: {
       enabled: false, startMonth: 1, piecesPerMonth: 10000, costPerPiece: 0.8,
-      dataCostPerMonth: 1500, responsePct: 1.25, qualifiedPct: 45, closeRatePct: 20, avgDebt: 25000,
+      dataCostPerMonth: 1500, responsePct: 1.25,
+      // Qualified share: the prescreen list already excludes bankruptcies and sets
+      // the debt floor; what remains is wrong party / duplicate, state program
+      // exclusions and callers who cannot show an ability to pay. 70% planning.
+      qualifiedPct: 70, closeRatePct: 20, avgDebt: 25000,
     },
     paidSocial: {
       enabled: false, startMonth: 1, spendPerMonth: 4000, costPerLead: 35,
