@@ -4,6 +4,7 @@ import type { BackendKey, ModelInputs } from './types';
 import { BACKEND_KEYS } from './types';
 import { BRANDS, cloneDefaults } from './config';
 import GrowthMarketing from './GrowthMarketing';
+import ScalePlanner from './ScalePlanner';
 import { runModel } from './simulate';
 import { blendedCreditPullPrice, blendedTransferCost, creditPullPolicy, CREDIT_PULL_UNCONFIRMED } from './costs';
 import { legacy, shield } from './backends';
@@ -60,7 +61,7 @@ const NAV: NavItem[] = [
   { id: 'volume',     label: 'Deal Volume',        hint: '1 · Ramp planner',        icon: 'trend',     math: ['capacity'] },
   { id: 'roster',     label: 'Staffing & Labor',   hint: 'Who is on the clock',     icon: 'users',     math: ['labor', 'capacity'] },
   { id: 'operations', label: 'Operations',         hint: '2 · Calls into deals',    icon: 'phone',     math: ['capacity'] },
-  { id: 'marketing',  label: 'Growth Marketing',   hint: '2b · Mail, data, social', icon: 'trend',     math: ['capacity', 'costs'] },
+  { id: 'marketing',  label: 'Growth Marketing',   hint: '2b · Mail, data, social · 2c · Scale planner', icon: 'trend',     math: ['capacity', 'costs'] },
   { id: 'backends',   label: 'Backend Terms',      hint: '3 · How partners pay',    icon: 'briefcase', math: ['revenue'] },
   { id: 'buyout',     label: 'Shield Buyout',      hint: '3b · Buyout vs perpetual', icon: 'card',     math: ['revenue'] },
   { id: 'accelerated', label: 'ELP Accelerated',   hint: '3c · Accelerated vs residual', icon: 'card', math: ['revenue'] },
@@ -759,8 +760,11 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       </>)}
 
       {active === 'marketing' && (
-        <GrowthMarketing inputs={inputs} setInputs={setInputs} results={results}
-          month={stmtMonth} setMonth={setStmtMonth} horizon={horizon} />
+        <>
+          <GrowthMarketing inputs={inputs} setInputs={setInputs} results={results}
+            month={stmtMonth} setMonth={setStmtMonth} horizon={horizon} />
+          <ScalePlanner inputs={inputs} />
+        </>
       )}
 
       {active === 'backends' && (<>

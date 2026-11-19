@@ -3,6 +3,10 @@ import type { ModelInputs, ModelResults, MarketingChannelMonth } from './types';
 import { Callout, Field, NumberInput, Panel, Row, T, fmtMoney, fmtNum, td, tdNum, th } from './ui';
 import { marketingIsOn } from './marketing';
 import { runModel } from './simulate';
+import { makeEmployee } from './config';
+import { computeEmployeeCost } from './labor';
+
+const MK_CLOSER_PREFIX = 'mk-closer-';
 
 /**
  * 2b · Growth Marketing — direct mail, credit-bureau data, paid social.
@@ -39,6 +43,8 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
     if (!on) return null;
     const off: ModelInputs = {
       ...inputs,
+      // The plan before marketing: no channels AND none of the closers hired to answer them.
+      roster: inputs.roster.filter((e) => !e.id.startsWith(MK_CLOSER_PREFIX)),
       marketing: {
         ...inputs.marketing,
         directMail: { ...inputs.marketing.directMail, enabled: false },
@@ -54,6 +60,7 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
     commission: results.totals.repCommission - baseline.totals.repCommission,
     spend: results.totals.marketingCost,
     cash: results.totals.finalCash - baseline.totals.finalCash,
+    labor: results.totals.laborCost - baseline.totals.laborCost,
     deals: results.months.reduce((s, r) => s + r.deals, 0) - baseline.months.reduce((s, r) => s + r.deals, 0),
     enrolled: results.partners.reduce((s, p) => s + p.enrolledVolume, 0) - baseline.partners.reduce((s, p) => s + p.enrolledVolume, 0),
   } : null;
@@ -64,13 +71,44 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
     { label: 'Tier 2 · Growth ($40k)', mail: 30000, cpp: 0.75, data: 3000, social: 12000, creative: 2500 },
     { label: 'Tier 3 · Scale ($90k)', mail: 75000, cpp: 0.7, data: 6000, social: 27000, creative: 4500 },
   ] as const;
+  // A tier is a budget AND the closers to answer what it generates. Marketing
+  // is only ever added alongside headcount — calls nobody can take are wasted
+  // spend — so each preset hires enough in-house closers to absorb its
+  // qualified calls at the model's handle time, and "Off" lets them go.
+  const closersNeededFor = (pieces: number, social: number) => {
+    const dm = mk.directMail, ps = mk.paidSocial;
+    const calls = pieces * (dm.responsePct / 100) * (dm.qualifiedPct / 100)
+      + (ps.costPerLead > 0 ? social / ps.costPerLead : 0) * (ps.qualifiedPct / 100);
+    const minutes = calls * Math.max(1, inputs.operations.avgHandleMinutes);
+    const template = inputs.roster.find((e) => e.type === 'inhouse' && e.role === 'closer');
+    const one = computeEmployeeCost(makeEmployee({ ...(template ?? {}), id: 'probe', type: 'inhouse', role: 'closer', startMonth: 1, endMonth: null }), inputs.laborPolicy);
+    const perCloser = Math.max(1, one.monthlyCloserHours * 60);
+    return Math.ceil(minutes / perCloser);
+  };
+  const rosterWithMarketingClosers = (n: number) => {
+    const base = inputs.roster.filter((e) => !e.id.startsWith(MK_CLOSER_PREFIX));
+    const template = base.find((e) => e.type === 'inhouse' && e.role === 'closer');
+    const start = Math.min(mk.directMail.startMonth, mk.paidSocial.startMonth) || 1;
+    const added = Array.from({ length: n }, (_, i) => makeEmployee({
+      ...(template ?? {}), id: `${MK_CLOSER_PREFIX}${i + 1}`, name: `Closer (marketing) ${i + 1} — In-House`,
+      type: 'inhouse', role: 'closer', startMonth: start, endMonth: null, teamId: template?.teamId ?? 'team-a',
+    }));
+    return [...base, ...added];
+  };
+  const mkClosersOnRoster = inputs.roster.filter((e) => e.id.startsWith(MK_CLOSER_PREFIX)).length;
+
   const applyTier = (t: typeof tierPresets[number]) => {
     if (t.mail === 0) {
-      setInputs({ ...inputs, marketing: { ...mk, directMail: { ...mk.directMail, enabled: false }, paidSocial: { ...mk.paidSocial, enabled: false } } });
+      setInputs({
+        ...inputs,
+        roster: rosterWithMarketingClosers(0),
+        marketing: { ...mk, directMail: { ...mk.directMail, enabled: false }, paidSocial: { ...mk.paidSocial, enabled: false } },
+      });
       return;
     }
     setInputs({
       ...inputs,
+      roster: rosterWithMarketingClosers(closersNeededFor(t.mail, t.social)),
       marketing: {
         ...mk,
         directMail: { ...mk.directMail, enabled: true, piecesPerMonth: t.mail, costPerPiece: t.cpp, dataCostPerMonth: t.data },
@@ -79,6 +117,7 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
       },
     });
   };
+  const closersNeededNow = on ? closersNeededFor(mk.directMail.enabled ? mk.directMail.piecesPerMonth : 0, mk.paidSocial.enabled ? mk.paidSocial.spendPerMonth : 0) : 0;
 
   return (
     <>
@@ -91,8 +130,9 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
             <button key={t.label} onClick={() => applyTier(t)} style={{
               padding: '6px 10px', borderRadius: 8, border: `1px solid ${T.line}`, background: '#fff',
               fontSize: 12, fontWeight: 700, cursor: 'pointer', color: T.ink,
-            }}>{t.label}</button>
+            }}>{t.label}{t.mail > 0 ? ` · +${closersNeededFor(t.mail, t.social)} closers` : ''}</button>
           ))}
+          <span style={{ fontSize: 11.5, color: T.muted }}>Each tier hires the in-house closers needed to answer the calls it generates; Off lets them go.</span>
         </div>
 
         <Row cols={2} gap={16}>
@@ -178,12 +218,24 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
               </tbody>
             </table>
 
+            <div style={{ fontSize: 12.5, color: T.body, marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span>
+                Occupancy: marketing calls use <strong>{fmtNum(row.capacity.availableCallMinutes > 0 ? (det.callMinutes / row.capacity.availableCallMinutes) * 100 : 0)}%</strong> of closer talk time this month;
+                roster is <strong>{fmtNum(row.utilizationPct)}%</strong> utilised with {fmtNum(det.unansweredCalls)} qualified calls unanswered.
+                Closers needed for this spend: <strong>{closersNeededNow}</strong>{mkClosersOnRoster > 0 ? ` (${mkClosersOnRoster} marketing closers on the roster)` : ''}.
+              </span>
+              {closersNeededNow !== mkClosersOnRoster && (
+                <button onClick={() => setInputs({ ...inputs, roster: rosterWithMarketingClosers(closersNeededNow) })} style={{
+                  padding: '4px 10px', borderRadius: 8, border: `1px solid ${T.brandLine}`, background: T.brandSoft, fontSize: 12, fontWeight: 700, cursor: 'pointer', color: T.brandDeep,
+                }}>Size roster to this spend ({closersNeededNow} closers)</button>
+              )}
+            </div>
             {det.unansweredCalls > 0.5 && (
               <Callout tone="warn">
                 {fmtNum(det.unansweredCalls)} qualified inbound calls went unanswered in month {month} — the roster is out of talk time ({fmtNum(row.utilizationPct)}% utilised). Marketing spend is buying calls nobody can take. Add closer hours (overtime first, then a seat in Staffing &amp; Labor) or reduce the drop.
               </Callout>
             )}
-            {det.unansweredCalls <= 0.5 && row.utilizationPct >= 99 && (
+            {det.unansweredCalls <= 0.5 && row.utilizationPct >= 99 && mkClosersOnRoster < closersNeededNow && (
               <Callout tone="warn">
                 Closers are at {fmtNum(row.utilizationPct)}% utilisation, so inbound marketing calls are <em>replacing</em> purchased transfers rather than adding deals. The spend buys larger debt loads and lower transfer bills, not volume — to grow volume, add closer hours alongside the budget.
               </Callout>
@@ -194,10 +246,11 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
         {/* ── Horizon ROI vs the same plan with marketing off ── */}
         {on && horizonDelta && (
           <div style={{ marginTop: 14, border: `1px solid ${T.line}`, borderRadius: 10, padding: 12, background: '#fafcfb' }}>
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Over the {horizon}-month horizon, versus the identical plan with marketing off</div>
-            <Row cols={6} gap={10}>
+            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 8 }}>Over the {horizon}-month horizon, versus the plan before marketing (no channels, none of the {mkClosersOnRoster} closers hired for them)</div>
+            <Row cols={7} gap={10}>
               {[
                 ['Marketing spend', -horizonDelta.spend],
+                ['Added closer labor', -horizonDelta.labor],
                 ['Added revenue', horizonDelta.revenue],
                 ['Transfer spend saved', horizonDelta.transfers],
                 ['Added rep commission', -horizonDelta.commission],
@@ -213,7 +266,7 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
               ))}
             </Row>
             <div style={{ fontSize: 12, color: T.muted, marginTop: 8 }}>
-              Added enrolled debt over the horizon: <strong>{fmtMoney(horizonDelta.enrolled)}</strong>. Net cash is the only number that matters: it is revenue the channels added, plus transfers they replaced, minus their cost and the commission on the extra deals.
+              Added enrolled debt over the horizon: <strong>{fmtMoney(horizonDelta.enrolled)}</strong>. Net cash is the only number that matters: it is revenue the channels added, plus transfers they replaced, minus their cost, the closers hired to answer them and the commission on the extra deals.
             </div>
           </div>
         )}
