@@ -25,15 +25,45 @@ export function weeklyPaidHours(emp: Employee): number {
 export function computeEmployeeCost(emp: Employee, policy: LaborPolicy): EmployeeCost {
   const warnings: string[] = [];
   const weekly = weeklyPaidHours(emp);
-
   const otApplies = emp.otEligible && !emp.commissionOnly;
-  const otHours = otApplies ? Math.max(0, weekly - policy.otThresholdHrsPerWeek) : 0;
-  const regularHours = weekly - otHours;
-
   const rate = emp.commissionOnly ? 0 : emp.hourlyRate;
-  const regularCostPerWeek = regularHours * rate;
-  const otCostPerWeek = otHours * rate * policy.otMultiplier;
 
+  // Overtime, California style when enabled: each paid hour is classified once
+  // at the highest rate that applies — daily (>8 → 1.5x, >12 → 2x), 7th
+  // consecutive day (first 8 hrs → 1.5x), then whatever remains over 40 in the
+  // week → 1.5x. The weekly rule alone is the legacy behaviour.
+  let otHours = 0;
+  let dtHours = 0;
+  if (otApplies) {
+    if (policy.californiaDailyOt) {
+      const dailyT = policy.dailyOtThresholdHrs ?? 8;
+      const dtT = policy.doubleTimeThresholdHrs ?? 12;
+      const perDay = DAY_KEYS.map((d) => paidHoursForDay(emp, d));
+      const daysWorked = perDay.filter((h) => h > 0).length;
+      let dailyOt = 0, dailyDt = 0, straight = 0;
+      perDay.forEach((h) => {
+        if (h <= 0) return;
+        dailyDt += Math.max(0, h - dtT);
+        dailyOt += Math.max(0, Math.min(h, dtT) - dailyT);
+        straight += Math.min(h, dailyT);
+      });
+      if (daysWorked >= 7) {
+        // 7th consecutive day: first 8 hours at 1.5x regardless of daily total.
+        const seventh = Math.min(perDay.filter((h) => h > 0).slice(-1)[0] ?? 0, dailyT);
+        dailyOt += seventh; straight -= seventh;
+      }
+      // Remaining straight-time hours over the weekly threshold are also 1.5x.
+      const weeklyOt = Math.max(0, straight - policy.otThresholdHrsPerWeek);
+      otHours = dailyOt + weeklyOt;
+      dtHours = dailyDt;
+    } else {
+      otHours = Math.max(0, weekly - policy.otThresholdHrsPerWeek);
+    }
+  }
+  const regularHours = weekly - otHours - dtHours;
+  const regularCostPerWeek = regularHours * rate;
+  const otCostPerWeek = otHours * rate * policy.otMultiplier
+    + dtHours * rate * (policy.doubleTimeMultiplier ?? 2);
   const regularCostPerMonth = regularCostPerWeek * policy.weeksPerMonth;
   const otCostPerMonth = otCostPerWeek * policy.weeksPerMonth;
   const monthlyCost = regularCostPerMonth + otCostPerMonth;
@@ -57,9 +87,9 @@ export function computeEmployeeCost(emp: Employee, policy: LaborPolicy): Employe
       `${emp.name}: BPO rate $${emp.hourlyRate.toFixed(2)}/hr is outside the $${policy.bpoRateMin}-$${policy.bpoRateMax} band.`,
     );
   }
-  if (otHours > 0) {
+  if (otHours > 0 || dtHours > 0) {
     warnings.push(
-      `${emp.name}: ${weekly.toFixed(1)} paid hrs/wk exceeds ${policy.otThresholdHrsPerWeek} — ${otHours.toFixed(1)} hrs billed at ${policy.otMultiplier}x.`,
+      `${emp.name}: ${weekly.toFixed(1)} paid hrs/wk — ${otHours.toFixed(1)} hrs at ${policy.otMultiplier}x${dtHours > 0 ? ` and ${dtHours.toFixed(1)} hrs at ${(policy.doubleTimeMultiplier ?? 2)}x` : ''}${policy.californiaDailyOt ? ' (California daily + weekly overtime)' : ''}.`,
     );
   }
   if (emp.type === 'bpo' && emp.otEligible && weekly > policy.otThresholdHrsPerWeek) {
@@ -71,6 +101,7 @@ export function computeEmployeeCost(emp: Employee, policy: LaborPolicy): Employe
     weeklyPaidHours: weekly,
     regularHoursPerWeek: regularHours,
     otHoursPerWeek: otHours,
+    doubleTimeHoursPerWeek: dtHours,
     monthlyPaidHours,
     monthlyCloserHours: monthlyPaidHours * closerShare,
     monthlyOpenerHours: monthlyPaidHours * (1 - closerShare),

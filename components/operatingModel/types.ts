@@ -86,6 +86,16 @@ export interface OverridePolicy {
 export interface LaborPolicy {
   otThresholdHrsPerWeek: number;
   otMultiplier: number;
+  /**
+   * California daily overtime (Labor Code §510): hours over 8 in a day at 1.5x,
+   * over 12 at 2x, and the first 8 hours on a 7th consecutive day at 1.5x.
+   * Weekly and daily overtime are not stacked — each hour is paid once at the
+   * highest rate that applies. Optional so older inputs still type-check.
+   */
+  dailyOtThresholdHrs?: number;
+  doubleTimeThresholdHrs?: number;
+  doubleTimeMultiplier?: number;
+  californiaDailyOt?: boolean;
   inHouseMinWage: number;
   bpoRateMin: number;
   bpoRateMax: number;
@@ -96,6 +106,8 @@ export interface LaborPolicy {
 }
 
 export interface EmployeeCost {
+  /** Hours per week paid at double time (California, over 12 in a day). */
+  doubleTimeHoursPerWeek?: number;
   employee: Employee;
   weeklyPaidHours: number;
   regularHoursPerWeek: number;
@@ -511,6 +523,83 @@ export interface SurvivalCurveInputs {
   steadyStateMonthlyCancelPct: number;
 }
 
+// ── Growth marketing (direct mail · bureau data · paid social) ───────────────
+
+/**
+ * A marketing channel produces INBOUND qualified calls that closers handle in
+ * place of purchased transfers. The channel's own close rate and average
+ * enrolled debt travel with the deals it produces, which is the whole point of
+ * paying for targeting: fewer, larger, better-closing calls.
+ */
+export interface DirectMailChannel {
+  enabled: boolean;
+  startMonth: number;
+  piecesPerMonth: number;
+  /** Print + postage + data append + handling, all in, per piece. */
+  costPerPiece: number;
+  /** Credit-bureau prescreen / modeled list spend per month (reseller fee + minimum). */
+  dataCostPerMonth: number;
+  /** Share of pieces that produce an inbound call. */
+  responsePct: number;
+  /** Share of inbound calls that are qualified (reach a real pitch). */
+  qualifiedPct: number;
+  /** Close rate on qualified inbound mail calls. */
+  closeRatePct: number;
+  /** Average enrolled debt on a mail-sourced deal — the targeting dividend. */
+  avgDebt: number;
+}
+
+export interface PaidSocialChannel {
+  enabled: boolean;
+  startMonth: number;
+  spendPerMonth: number;
+  /** Cost per lead (form fill or click-to-call). */
+  costPerLead: number;
+  /** Share of leads that become a qualified call. */
+  qualifiedPct: number;
+  closeRatePct: number;
+  avgDebt: number;
+}
+
+export interface MarketingInputs {
+  directMail: DirectMailChannel;
+  paidSocial: PaidSocialChannel;
+  /** Creative, landing pages, call-tracking numbers, compliance review. */
+  creativeAndTrackingPerMonth: number;
+}
+
+export interface MarketingChannelMonth {
+  key: 'mail' | 'social';
+  label: string;
+  active: boolean;
+  spend: number;
+  /** Mail pieces or social leads. */
+  units: number;
+  inboundCalls: number;
+  qualifiedCalls: number;
+  /** Qualified calls the roster had talk time to take. */
+  handledCalls: number;
+  deals: number;
+  closeRatePct: number;
+  avgDebt: number;
+  enrolledVolume: number;
+  costPerQualifiedCall: number;
+  costPerDeal: number;
+}
+
+export interface MarketingMonthDetail {
+  channels: MarketingChannelMonth[];
+  spend: number;
+  creativeAndTracking: number;
+  qualifiedCalls: number;
+  handledCalls: number;
+  /** Qualified calls that went unanswered for lack of closer talk time. */
+  unansweredCalls: number;
+  deals: number;
+  enrolledVolume: number;
+  callMinutes: number;
+}
+
 // ── Root ─────────────────────────────────────────────────────────────────────
 
 export interface ModelInputs {
@@ -530,6 +619,7 @@ export interface ModelInputs {
   overridePolicy: OverridePolicy;
   bonusPolicy: BonusPolicy;
   survivalCurves: Record<BackendKey, SurvivalCurveInputs>;
+  marketing: MarketingInputs;
 }
 
 // ── Outputs ──────────────────────────────────────────────────────────────────
@@ -584,6 +674,9 @@ export interface CapacityDetail {
   openerSuppliedTransfers: number;
   purchasedTransfers: number;
   totalTransfers: number;
+  /** Inbound marketing calls handled this month (minutes already removed from closer hours). */
+  marketingCallsHandled: number;
+  marketingDeals: number;
 }
 
 export interface PartnerMonthDetail {
@@ -611,6 +704,8 @@ export interface MonthRow {
   overhead: number;
   transferCost: number;
   laborCost: number;
+  marketingCost: number;
+  marketing: MarketingMonthDetail;
   netCashFlow: number;
   cashPosition: number;
   reserveTarget: number;
@@ -651,6 +746,9 @@ export interface ModelResults {
     overhead: number;
     transferCost: number;
     laborCost: number;
+    marketingCost: number;
+    marketingDeals: number;
+    marketingEnrolledVolume: number;
     finalCash: number;
     distributableAboveReserve: number;
     firstCashPositiveMonth: number | null;
