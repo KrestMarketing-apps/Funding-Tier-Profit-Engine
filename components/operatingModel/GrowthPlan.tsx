@@ -59,8 +59,8 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
 
   // ── setters ──────────────────────────────────────────────────────────────
   const setRoster = (roster: Employee[]) => setInputs({ ...inputs, roster });
-  const setOwner = (n: number) => setRoster(resizeGroup(inputs.roster, (e) => e.type === 'owner', Math.min(1, n),
-    () => makeEmployee({ name: 'Owner Operator', type: 'owner', role: 'closer', teamId: 'team-a' })));
+  const setOwner = (n: number) => setRoster(resizeGroup(inputs.roster, (e) => e.type === 'owner', n,
+    (i) => makeEmployee({ name: i === 1 ? 'Owner Operator' : `Owner / Partner ${i}`, type: 'owner', role: 'closer', teamId: 'team-a' })));
   const setUs = (n: number) => setRoster(resizeGroup(inputs.roster, (e) => (e.type === 'inhouse' || e.type === 'manager') && e.role !== 'opener', n,
     (i) => makeEmployee({ name: `Closer ${i} — In-House`, type: 'inhouse', role: 'closer', teamId: 'team-a' })));
   const setBpo = (n: number) => setRoster(resizeGroup(inputs.roster, (e) => e.type === 'bpo', n,
@@ -211,7 +211,7 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
       <Panel title="1 · Team — who is on the phones" accent={T.accent}
         tooltip="Owner-operator closes on commission only. US closers are W-2 in-house at the labor policy's rate and shifts. BPO openers generate transfers at the opener rate instead of buying them. Edit individuals in Staffing & Labor.">
         <Row cols={5} gap={12}>
-          <Field label="Owner-operator (closes)"><NumberInput value={team.owner} min={0} max={1} onChange={setOwner} /></Field>
+          <Field label="Owner-operators / partners (close, commission only)"><NumberInput value={team.owner} min={0} max={10} onChange={setOwner} /></Field>
           <Field label="US-based closers"><NumberInput value={team.us} min={0} max={60} onChange={setUs} /></Field>
           <Field label="BPO openers"><NumberInput value={team.bpo} min={0} max={60} onChange={setBpo} /></Field>
           <Field label="Closer talk time / month"><div style={{ fontFamily: T.mono, fontWeight: 800, fontSize: 16, padding: '7px 0' }}>{fmtNum(m.closerHours)} hrs</div></Field>
