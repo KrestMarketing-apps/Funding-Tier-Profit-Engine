@@ -4,12 +4,13 @@ import { Callout, Field, NumberInput, Panel, Row, T, fmtMoney, fmtMoney2, fmtNum
 import { DEFAULT_SCALE_SETTINGS, planScale, planScaleRow, type ScalePlanRow, type ScalePlanSettings } from './scalePlan';
 import { BACKEND_KEYS } from './types';
 
-const RETENTION_CASES: { label: string; firstPay: number; cancel: number }[] = [
-  { label: '50% first pay · 15%/mo cancel', firstPay: 50, cancel: 15 },
-  { label: '65% · 10%/mo', firstPay: 65, cancel: 10 },
-  { label: '75% · 6%/mo', firstPay: 75, cancel: 6 },
-  { label: '80% · 4%/mo', firstPay: 80, cancel: 4 },
-];
+/** Hold the observed first-pay rate and vary the cancel rate, plus one row for better qualifying. */
+function retentionCases(firstPay: number, cancel: number): { label: string; firstPay: number; cancel: number }[] {
+  const cancels = Array.from(new Set([cancel, 10, 6, 4])).sort((a, b) => b - a);
+  const rows = cancels.map((c) => ({ label: `${firstPay}% first pay · ${c}%/mo cancel${c === cancel ? ' (current)' : ''}`, firstPay, cancel: c }));
+  rows.push({ label: `${Math.min(95, firstPay + 10)}% first pay (better qualifying) · 6%/mo`, firstPay: Math.min(95, firstPay + 10), cancel: 6 });
+  return rows;
+}
 function withRetention(inputs: ModelInputs, firstPay: number, cancel: number): ModelInputs {
   const curves = { ...inputs.survivalCurves };
   for (const k of BACKEND_KEYS) curves[k] = { firstPayPct: firstPay, cancelPctByMonth: [cancel], steadyStateMonthlyCancelPct: cancel };
@@ -201,11 +202,11 @@ export default function ScalePlanner({ inputs }: { inputs: ModelInputs }) {
 
 function RetentionStrip({ inputs, settings, closers }: { inputs: ModelInputs; settings: ScalePlanSettings; closers: number }) {
   const cur = inputs.survivalCurves.LEVEL;
-  const rows = React.useMemo(() => RETENTION_CASES.map((c) => ({
+  const rows = React.useMemo(() => retentionCases(cur.firstPayPct, cur.steadyStateMonthlyCancelPct).map((c) => ({
     ...c,
     mk: planScaleRow(withRetention(inputs, c.firstPay, c.cancel), closers, settings),
     tx: planScaleRow(withRetention(inputs, c.firstPay, c.cancel), closers, { ...settings, transferCapPerMonth: 0 }),
-  })), [inputs, settings, closers]);
+  })), [inputs, settings, closers, cur.firstPayPct, cur.steadyStateMonthlyCancelPct]);
   return (
     <div style={{ marginTop: 14, border: `1px solid ${T.warnLine}`, background: T.warnBg, borderRadius: 10, padding: 12 }}>
       <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>The assumption that decides this: first-payment clear and monthly cancellation (Risk &amp; Attrition, section 6)</div>
