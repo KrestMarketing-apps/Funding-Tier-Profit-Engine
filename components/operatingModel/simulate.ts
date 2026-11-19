@@ -9,6 +9,7 @@ import {
   agentCommissionForDeal, agentPayoutMonth, buildSurvivalCurve, isPerpetuity,
   maxRevenueMonth, revenueForDealMonth, revenueModelLabel, tierRate,
 } from './backends';
+import { resolveMarketingMonth } from './marketing';
 import { buildMonthlyCosts } from './costs';
 import { computeFunnel, blendedCloseRateOnBilled } from './funnel';
 import { computeBonuses } from './bonuses';
@@ -54,11 +55,16 @@ interface Cohort {
 
 export function computeCapacity(
   inputs: ModelInputs,
-  closerHours: number,
+  closerHoursAll: number,
   openerHours: number,
   rampFactor: number,
+  marketing?: { callMinutes: number; deals: number; handledCalls: number },
 ): CapacityDetail {
   const ops = inputs.operations;
+  // Inbound marketing calls are handled first; the transfer funnel below is
+  // derived from whatever closer time is left.
+  const mkMinutes = marketing?.callMinutes ?? 0;
+  const closerHours = Math.max(0, closerHoursAll - mkMinutes / 60);
   // The capacity model works in BILLED transfers, because those are the calls a
   // closer actually spends handle time on.
   const closeRate = blendedCloseRateOnBilled(inputs);
@@ -94,14 +100,18 @@ export function computeCapacity(
   const openerSuppliedTransfers = Math.min(totalTransfers, openerRawSupply);
   const purchasedTransfers = Math.max(0, totalTransfers - openerSuppliedTransfers);
 
+  const allMinutes = closerHoursAll * 60;
   return {
-    closerHours, openerHours, paidHours: closerHours + openerHours,
+    closerHours: closerHoursAll, openerHours, paidHours: closerHoursAll + openerHours,
     ruleCapacityDeals, talkTimeCapacityDeals, bindingConstraint,
     targetDeals,
-    utilizationPct: availableCallMinutes > 0 ? (requiredCallMinutes / availableCallMinutes) * 100 : 0,
-    ruleUtilizationPct: availableCallMinutes > 0 ? (ruleDemandMinutes / availableCallMinutes) * 100 : 0,
-    requiredCallMinutes, availableCallMinutes,
+    // Utilisation counts marketing minutes too — they are real closer time.
+    utilizationPct: allMinutes > 0 ? ((requiredCallMinutes + mkMinutes) / allMinutes) * 100 : 0,
+    ruleUtilizationPct: allMinutes > 0 ? ((ruleDemandMinutes + mkMinutes) / allMinutes) * 100 : 0,
+    requiredCallMinutes: requiredCallMinutes + mkMinutes, availableCallMinutes: allMinutes,
     openerRawSupply, openerSuppliedTransfers, purchasedTransfers, totalTransfers,
+    marketingCallsHandled: marketing?.handledCalls ?? 0,
+    marketingDeals: marketing?.deals ?? 0,
   };
 }
 
@@ -174,8 +184,24 @@ export function runModel(inputs: ModelInputs): ModelResults {
 
     // ── Volume ───────────────────────────────────────────────────────────────
     const rampFactor = Math.min(1, m / rampMonths);
-    const capacity = computeCapacity(inputs, rosterMonth.closerHours, rosterMonth.openerHours, rampFactor);
-    const dealsByBackend = allocate(capacity.targetDeals, inputs.volume.mixPct);
+    // Growth marketing: inbound calls take closer time first, then transfers.
+    const marketing = resolveMarketingMonth(inputs, m, rosterMonth.closerHours * 60);
+    const capacity = computeCapacity(inputs, rosterMonth.closerHours, rosterMonth.openerHours, rampFactor, marketing);
+    const transferDealsByBackend = allocate(capacity.targetDeals, inputs.volume.mixPct);
+    const marketingDealsByBackend = allocate(marketing.deals, inputs.volume.mixPct);
+    const dealsByBackend = {} as Record<BackendKey, number>;
+    // Average enrolled debt this month blends transfer deals (base assumption)
+    // with marketing deals (the channel's own, typically larger, debt load).
+    const avgDebtM = {} as Record<BackendKey, number>;
+    const mkAvgDebt = marketing.deals > 0 ? marketing.enrolledVolume / marketing.deals : 0;
+    BACKEND_KEYS.forEach((k) => {
+      const tx = transferDealsByBackend[k];
+      const mk = marketingDealsByBackend[k];
+      dealsByBackend[k] = tx + mk;
+      avgDebtM[k] = tx + mk > 0
+        ? (tx * inputs.volume.avgDebt[k] + mk * mkAvgDebt) / (tx + mk)
+        : inputs.volume.avgDebt[k];
+    });
     const totalDeals = BACKEND_KEYS.reduce((s, k) => s + dealsByBackend[k], 0);
 
     // In the draw scenario, one rate is resolved per month from each US-based
@@ -199,7 +225,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
     if (inputs.repPay.mode === 'draw') {
       const repCount = Math.max(1, usClosers.length);
       const combinedEnrolled = BACKEND_KEYS.reduce(
-        (s, k) => s + dealsByBackend[k] * inputs.volume.avgDebt[k], 0,
+        (s, k) => s + dealsByBackend[k] * avgDebtM[k], 0,
       );
       const perRepCombinedEnrolled = (combinedEnrolled * usShare) / repCount;
       repDrawRate = tierRate(perRepCombinedEnrolled, inputs.repPay.drawTiers);
@@ -215,7 +241,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
     BACKEND_KEYS.forEach((k) => {
       if (dealsByBackend[k] <= 0) {
         rollup[k].dealsSubmitted += dealsByBackend[k];
-        rollup[k].enrolledVolume += dealsByBackend[k] * inputs.volume.avgDebt[k];
+        rollup[k].enrolledVolume += dealsByBackend[k] * avgDebtM[k];
         return;
       }
       if (inputs.repPay.mode === 'draw') {
@@ -230,14 +256,14 @@ export function runModel(inputs: ModelInputs): ModelResults {
         if (rampDealCount > 0) {
           cohorts.push({
             backendKey: k, startMonth: m, dealCount: rampDealCount,
-            avgDebt: inputs.volume.avgDebt[k], repDrawRate,
+            avgDebt: avgDebtM[k], repDrawRate,
             payoutDealMonthOverride: inputs.repPay.ramp.probationPayoutDealMonth,
           });
         }
         if (tenuredDealCount > 0) {
           cohorts.push({
             backendKey: k, startMonth: m, dealCount: tenuredDealCount,
-            avgDebt: inputs.volume.avgDebt[k], repDrawRate,
+            avgDebt: avgDebtM[k], repDrawRate,
           });
         }
         if (bpoDealCount > 0) {
@@ -245,17 +271,17 @@ export function runModel(inputs: ModelInputs): ModelResults {
           // agentCommissionForDeal at payout time since repDrawRate is unset.
           cohorts.push({
             backendKey: k, startMonth: m, dealCount: bpoDealCount,
-            avgDebt: inputs.volume.avgDebt[k],
+            avgDebt: avgDebtM[k],
           });
         }
       } else {
         cohorts.push({
           backendKey: k, startMonth: m, dealCount: dealsByBackend[k],
-          avgDebt: inputs.volume.avgDebt[k],
+          avgDebt: avgDebtM[k],
         });
       }
       rollup[k].dealsSubmitted += dealsByBackend[k];
-      rollup[k].enrolledVolume += dealsByBackend[k] * inputs.volume.avgDebt[k];
+      rollup[k].enrolledVolume += dealsByBackend[k] * avgDebtM[k];
     });
 
     // ── Revenue & commission from every live cohort ──────────────────────────
@@ -302,14 +328,14 @@ export function runModel(inputs: ModelInputs): ModelResults {
     }
 
     // ── Transfer funnel ──────────────────────────────────────────────────────
-    const funnel = computeFunnel(inputs, totalDeals, capacity.openerSuppliedTransfers);
+    const funnel = computeFunnel(inputs, capacity.targetDeals, capacity.openerSuppliedTransfers);
 
     // ── Manager / owner overrides on their team's closed deals ───────────────
     let overrideAccrued = 0;
     if (inputs.overridePolicy.enabled) {
       const totalCloserHours = rosterMonth.closerHours;
       const enrolledThisMonth = BACKEND_KEYS.reduce(
-        (s, k) => s + dealsByBackend[k] * inputs.volume.avgDebt[k], 0,
+        (s, k) => s + dealsByBackend[k] * avgDebtM[k], 0,
       );
       for (const mgr of rosterMonth.managers) {
         if (mgr.employee.overridePct <= 0) continue;
@@ -354,8 +380,10 @@ export function runModel(inputs: ModelInputs): ModelResults {
       deals: totalDeals,
       dealsByBackend,
       roster: rosterMonth,
+      marketing,
     });
     const overhead = costs.total;
+    const marketingCost = costs.groups.find((g) => g.id === 'marketing')?.subtotal ?? 0;
     const transferCost = costs.groups.find((g) => g.id === 'transfers')?.subtotal ?? 0;
     const laborCost = costs.groups.find((g) => g.id === 'labor')?.subtotal ?? 0;
 
@@ -400,7 +428,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
       revenue, repCommission: commission,
       managerOverride, managerOverrideAccrued: overrideAccrued,
       bonuses, bonusPaid,
-      overhead, transferCost, laborCost,
+      overhead, transferCost, laborCost, marketingCost, marketing,
       netCashFlow, cashPosition: cash,
       reserveTarget, reserveMet,
       seats, utilizationPct: util,
@@ -421,6 +449,9 @@ export function runModel(inputs: ModelInputs): ModelResults {
     overhead: months.reduce((s, r) => s + r.overhead, 0),
     transferCost: months.reduce((s, r) => s + r.transferCost, 0),
     laborCost: months.reduce((s, r) => s + r.laborCost, 0),
+    marketingCost: months.reduce((s, r) => s + r.marketingCost, 0),
+    marketingDeals: months.reduce((s, r) => s + r.marketing.deals, 0),
+    marketingEnrolledVolume: months.reduce((s, r) => s + r.marketing.enrolledVolume, 0),
     finalCash: cash,
     distributableAboveReserve: Math.max(0, cash - (months[months.length - 1]?.reserveTarget ?? 0)),
     firstCashPositiveMonth: firstCashPositive,
@@ -452,6 +483,13 @@ export function runModel(inputs: ModelInputs): ModelResults {
   }
   if (inputs.volume.mode === 'override') {
     warnings.push('Deal volume is on manual override — it is no longer derived from employed hours.');
+  }
+  const unanswered = months.reduce((s, r) => s + r.marketing.unansweredCalls, 0);
+  if (unanswered > 0.5) {
+    const worst = months.reduce((w, r) => (r.marketing.unansweredCalls > w.marketing.unansweredCalls ? r : w), months[0]);
+    warnings.push(
+      `Marketing is producing more qualified inbound calls than the roster can answer: ${Math.round(unanswered).toLocaleString()} calls went unanswered over the horizon (worst month ${worst.month}: ${Math.round(worst.marketing.unansweredCalls)}). Add closer hours — overtime first, then a seat — or reduce the mail drop.`,
+    );
   }
 
   return {

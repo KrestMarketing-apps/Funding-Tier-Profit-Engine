@@ -174,6 +174,12 @@ export const DEFAULT_INPUTS: ModelInputs = {
   laborPolicy: {
     otThresholdHrsPerWeek: 40,
     otMultiplier: 1.5,
+    // California daily overtime — in-house W-2 closers are California
+    // employees. Commission-only 1099 reps are untouched (otEligible false).
+    californiaDailyOt: true,
+    dailyOtThresholdHrs: 8,
+    doubleTimeThresholdHrs: 12,
+    doubleTimeMultiplier: 2,
     inHouseMinWage: IN_HOUSE_MIN_WAGE,
     bpoRateMin: BPO_RATE_MIN,
     bpoRateMax: BPO_RATE_MAX,
@@ -238,6 +244,20 @@ export const DEFAULT_INPUTS: ModelInputs = {
   },
 
   // Straight from the agent incentive reference.
+  // Growth marketing — OFF by default so every existing figure is unchanged.
+  // Tier 1 "test" numbers from the Growth Marketing Budget Plan (Nov 2026);
+  // every rate is a planning assumption to be calibrated from the CRM.
+  marketing: {
+    directMail: {
+      enabled: false, startMonth: 1, piecesPerMonth: 10000, costPerPiece: 0.8,
+      dataCostPerMonth: 1500, responsePct: 1.25, qualifiedPct: 45, closeRatePct: 20, avgDebt: 25000,
+    },
+    paidSocial: {
+      enabled: false, startMonth: 1, spendPerMonth: 4000, costPerLead: 35,
+      qualifiedPct: 30, closeRatePct: 12, avgDebt: 18000,
+    },
+    creativeAndTrackingPerMonth: 1500,
+  },
   bonusPolicy: {
     enabled: true,
     workingDaysPerMonth: 21.7,

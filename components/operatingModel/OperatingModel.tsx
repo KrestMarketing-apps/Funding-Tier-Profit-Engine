@@ -3,6 +3,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import type { BackendKey, ModelInputs } from './types';
 import { BACKEND_KEYS } from './types';
 import { BRANDS, cloneDefaults } from './config';
+import GrowthMarketing from './GrowthMarketing';
 import { runModel } from './simulate';
 import { blendedCreditPullPrice, blendedTransferCost, creditPullPolicy, CREDIT_PULL_UNCONFIRMED } from './costs';
 import { legacy, shield } from './backends';
@@ -35,7 +36,8 @@ import ToolShell from '../ToolShell';
 type SectionId =
   | 'results' | 'volume' | 'roster' | 'operations' | 'backends' | 'buyout' | 'accelerated' | 'reppay'
   | 'costs' | 'incentives' | 'risk' | 'statement' | 'monthend' | 'partnermo'
-  | 'forecast' | 'monthly';
+  | 'forecast' | 'monthly'
+  | 'marketing';
 
 interface NavItem {
   id: SectionId;
@@ -58,6 +60,7 @@ const NAV: NavItem[] = [
   { id: 'volume',     label: 'Deal Volume',        hint: '1 · Ramp planner',        icon: 'trend',     math: ['capacity'] },
   { id: 'roster',     label: 'Staffing & Labor',   hint: 'Who is on the clock',     icon: 'users',     math: ['labor', 'capacity'] },
   { id: 'operations', label: 'Operations',         hint: '2 · Calls into deals',    icon: 'phone',     math: ['capacity'] },
+  { id: 'marketing',  label: 'Growth Marketing',   hint: '2b · Mail, data, social', icon: 'trend',     math: ['capacity', 'costs'] },
   { id: 'backends',   label: 'Backend Terms',      hint: '3 · How partners pay',    icon: 'briefcase', math: ['revenue'] },
   { id: 'buyout',     label: 'Shield Buyout',      hint: '3b · Buyout vs perpetual', icon: 'card',     math: ['revenue'] },
   { id: 'accelerated', label: 'ELP Accelerated',   hint: '3c · Accelerated vs residual', icon: 'card', math: ['revenue'] },
@@ -754,6 +757,11 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       </Panel>
 
       </>)}
+
+      {active === 'marketing' && (
+        <GrowthMarketing inputs={inputs} setInputs={setInputs} results={results}
+          month={stmtMonth} setMonth={setStmtMonth} horizon={horizon} />
+      )}
 
       {active === 'backends' && (<>
       {/* ── 3 · Backend terms, explained for an owner / investor ──────────── */}

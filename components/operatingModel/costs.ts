@@ -1,5 +1,6 @@
 import type {
-  BackendKey, CostBreakdownGroup, CostInputs, CreditPullPolicy, ModelInputs, MonthlyCostBreakdown, TrackdriveTier,
+  BackendKey, CostBreakdownGroup, CostBreakdownLine, CostInputs, CreditPullPolicy, MarketingMonthDetail,
+  ModelInputs, MonthlyCostBreakdown, TrackdriveTier,
 } from './types';
 import { BACKEND_KEYS } from './types';
 import type { RosterMonthSummary } from './labor';
@@ -122,6 +123,8 @@ export interface CostContext {
   /** Deals by backend this month — prices the ELP seat on its file-count schedule. */
   dealsByBackend?: Record<BackendKey, number>;
   roster: RosterMonthSummary;
+  /** Growth marketing spend this month (mail, data, social, creative/tracking). */
+  marketing?: MarketingMonthDetail;
 }
 
 /**
@@ -249,6 +252,52 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
     note: `Blended ${money2(blended)} per BILLED transfer. Transfers that drop before the buffer are never invoiced.`,
     lines: transferLines, subtotal: transferLines.reduce((s, l) => s + l.amount, 0),
   });
+
+  // 5b — Growth marketing (direct mail, bureau data, paid social). Only
+  // present when a channel is switched on, so the default ledger is unchanged.
+  const mk = ctx.marketing;
+  if (mk && mk.spend > 0) {
+    const mkLines: CostBreakdownLine[] = [];
+    for (const ch of mk.channels) {
+      if (!ch.active || ch.spend <= 0) continue;
+      if (ch.key === 'mail') {
+        const dm = inputs.marketing.directMail;
+        mkLines.push({
+          id: 'mk-mail', label: 'Direct mail pieces',
+          detail: `${Math.round(ch.units).toLocaleString()} pieces x ${money2(dm.costPerPiece)} all-in → ${Math.round(ch.inboundCalls)} calls, ${Math.round(ch.qualifiedCalls)} qualified`,
+          formula: `${Math.round(ch.units).toLocaleString()} x ${money2(dm.costPerPiece)}`,
+          amount: ch.units * dm.costPerPiece,
+        });
+        mkLines.push({
+          id: 'mk-data', label: 'Credit-bureau prescreen data',
+          detail: 'Reseller list fee + monthly minimum',
+          formula: money(dm.dataCostPerMonth),
+          amount: dm.dataCostPerMonth,
+        });
+      } else {
+        const ps = inputs.marketing.paidSocial;
+        mkLines.push({
+          id: 'mk-social', label: 'Paid social',
+          detail: `${money(ch.spend)} ÷ ${money2(ps.costPerLead)} CPL → ${Math.round(ch.units)} leads, ${Math.round(ch.qualifiedCalls)} qualified calls`,
+          formula: `${money(ch.spend)} budget`,
+          amount: ch.spend,
+        });
+      }
+    }
+    if (mk.creativeAndTracking > 0) {
+      mkLines.push({
+        id: 'mk-creative', label: 'Creative, landing pages, call tracking, compliance review',
+        detail: 'Flat monthly while any channel is active',
+        formula: money(mk.creativeAndTracking),
+        amount: mk.creativeAndTracking,
+      });
+    }
+    groups.push({
+      id: 'marketing', label: 'Growth Marketing',
+      note: `${Math.round(mk.handledCalls)} inbound qualified calls handled → ${mk.deals.toFixed(1)} deals at ${money(mk.deals > 0 ? mk.enrolledVolume / mk.deals : 0)} avg debt. ${mk.deals > 0 ? money(mk.spend / mk.deals) + ' per marketing deal.' : ''}`,
+      lines: mkLines, subtotal: mkLines.reduce((s, l) => s + l.amount, 0),
+    });
+  }
 
   // 6 — Soft credit pulls
   //
