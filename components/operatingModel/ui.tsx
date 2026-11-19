@@ -302,13 +302,26 @@ export function NumberInput({ value, onChange, min, max, step = 1, prefix, suffi
   value: number; onChange: (v: number) => void; min?: number; max?: number;
   step?: number; prefix?: string; suffix?: string; invalid?: boolean;
 }) {
+  // Hold the typed text while the field has focus. Derived inputs (a budget
+  // computed back from pieces, say) would otherwise snap the text back to the
+  // recomputed value on every keystroke and make it impossible to type.
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? String(Number.isFinite(value) ? value : 0);
+  const commit = (raw: string) => {
+    if (raw === '' || raw === '-' || raw === '.') return;
+    const n = Number(raw);
+    if (Number.isFinite(n)) onChange(n);
+  };
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
       {prefix && <span style={{ fontSize: 12, color: T.faint }}>{prefix}</span>}
       <input
-        type="number" value={Number.isFinite(value) ? value : 0}
+        type="number" value={shown}
         min={min} max={max} step={step}
-        onChange={(e) => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
+        onFocus={() => setDraft(String(Number.isFinite(value) ? value : 0))}
+        onChange={(e) => { setDraft(e.target.value); commit(e.target.value); }}
+        onBlur={(e) => { commit(e.target.value); setDraft(null); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         style={{ ...inputStyle, borderColor: invalid ? T.bad : T.line, background: invalid ? T.badBg : T.bg }}
       />
       {suffix && <span style={{ fontSize: 11, color: T.faint, whiteSpace: 'nowrap' }}>{suffix}</span>}

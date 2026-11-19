@@ -73,12 +73,14 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
   const setSocial = (p: Partial<typeof mk.paidSocial>) => setInputs({ ...inputs, marketing: { ...mk, paidSocial: { ...mk.paidSocial, ...p } } });
   const setMix = (k: BackendKey, v: number) => setInputs({ ...inputs, volume: { ...inputs.volume, mixPct: { ...inputs.volume.mixPct, [k]: v } }, marketing: { ...mk, mixPct: { ...(mk.mixPct ?? inputs.volume.mixPct), [k]: v } } });
 
-  const mailBudget = mk.directMail.enabled ? mk.directMail.piecesPerMonth * mk.directMail.costPerPiece + mk.directMail.dataCostPerMonth : 0;
+  const mailBudget = mk.directMail.enabled ? Math.round(mk.directMail.piecesPerMonth * mk.directMail.costPerPiece + mk.directMail.dataCostPerMonth) : 0;
   const setMailBudget = (b: number) => {
     const dm = mk.directMail;
     if (b <= 0) { setMail({ enabled: false }); return; }
-    const pieces = Math.max(0, Math.floor((b - dm.dataCostPerMonth) / Math.max(0.01, dm.costPerPiece) / 500) * 500);
-    setMail({ enabled: pieces > 0, piecesPerMonth: pieces, startMonth: 1 });
+    // Budget covers the data first, the rest buys pieces. Exact, no rounding,
+    // so the field shows what was typed.
+    const pieces = Math.max(0, (b - dm.dataCostPerMonth) / Math.max(0.01, dm.costPerPiece));
+    setMail({ enabled: true, piecesPerMonth: Math.round(pieces), startMonth: 1 });
   };
   const socialBudget = mk.paidSocial.enabled ? mk.paidSocial.spendPerMonth : 0;
   const setSocialBudget = (b: number) => setSocial({ enabled: b > 0, spendPerMonth: Math.max(0, b), startMonth: 1 });
