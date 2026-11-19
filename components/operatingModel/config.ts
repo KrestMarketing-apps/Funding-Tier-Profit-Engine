@@ -325,9 +325,13 @@ export const DEFAULT_INPUTS: ModelInputs = {
     // Level Debt is a settlement product: Funding Tier is paid once, after the
     // first payment clears, and is free of chargeback liability once the second
     // completed payment clears. Only months 1-2 matter.
-    LEVEL: { firstPayPct: 50, cancelPctByMonth: [15], steadyStateMonthlyCancelPct: 15 },
-    CS: { firstPayPct: 50, cancelPctByMonth: [15, 15, 15, 15, 15], steadyStateMonthlyCancelPct: 15 },
-    LEGACY: { firstPayPct: 50, cancelPctByMonth: [15, 15, 15, 15, 15], steadyStateMonthlyCancelPct: 15 },
+    // First-pay clear: 60% observed (Nathan, Nov 19 2026); expected to rise
+    // with tighter qualification (stated income / ability to pay) and the AI
+    // call-QC risk score. Monthly cancellation is still the engine's
+    // placeholder — replace with the reconciliation engine's measured rate.
+    LEVEL: { firstPayPct: 60, cancelPctByMonth: [15], steadyStateMonthlyCancelPct: 15 },
+    CS: { firstPayPct: 60, cancelPctByMonth: [15, 15, 15, 15, 15], steadyStateMonthlyCancelPct: 15 },
+    LEGACY: { firstPayPct: 60, cancelPctByMonth: [15, 15, 15, 15, 15], steadyStateMonthlyCancelPct: 15 },
   },
 };
 
