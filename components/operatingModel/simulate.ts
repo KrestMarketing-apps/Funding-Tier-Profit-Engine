@@ -188,7 +188,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
     const marketing = resolveMarketingMonth(inputs, m, rosterMonth.closerHours * 60);
     const capacity = computeCapacity(inputs, rosterMonth.closerHours, rosterMonth.openerHours, rampFactor, marketing);
     const transferDealsByBackend = allocate(capacity.targetDeals, inputs.volume.mixPct);
-    const marketingDealsByBackend = allocate(marketing.deals, inputs.volume.mixPct);
+    const marketingDealsByBackend = allocate(marketing.deals, inputs.marketing.mixPct ?? inputs.volume.mixPct);
     const dealsByBackend = {} as Record<BackendKey, number>;
     // Average enrolled debt this month blends transfer deals (base assumption)
     // with marketing deals (the channel's own, typically larger, debt load).

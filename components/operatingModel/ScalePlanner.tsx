@@ -1,7 +1,20 @@
 import React from 'react';
 import type { ModelInputs } from './types';
 import { Callout, Field, NumberInput, Panel, Row, T, fmtMoney, fmtMoney2, fmtNum, fmtPct, td, tdNum, th } from './ui';
-import { DEFAULT_SCALE_SETTINGS, planScale, type ScalePlanRow, type ScalePlanSettings } from './scalePlan';
+import { DEFAULT_SCALE_SETTINGS, planScale, planScaleRow, type ScalePlanRow, type ScalePlanSettings } from './scalePlan';
+import { BACKEND_KEYS } from './types';
+
+const RETENTION_CASES: { label: string; firstPay: number; cancel: number }[] = [
+  { label: '50% first pay · 15%/mo cancel', firstPay: 50, cancel: 15 },
+  { label: '65% · 10%/mo', firstPay: 65, cancel: 10 },
+  { label: '75% · 6%/mo', firstPay: 75, cancel: 6 },
+  { label: '80% · 4%/mo', firstPay: 80, cancel: 4 },
+];
+function withRetention(inputs: ModelInputs, firstPay: number, cancel: number): ModelInputs {
+  const curves = { ...inputs.survivalCurves };
+  for (const k of BACKEND_KEYS) curves[k] = { firstPayPct: firstPay, cancelPctByMonth: [cancel], steadyStateMonthlyCancelPct: cancel };
+  return { ...inputs, survivalCurves: curves };
+}
 
 /**
  * 2c · Scale Planner — works backwards from headcount.
@@ -156,6 +169,9 @@ export default function ScalePlanner({ inputs }: { inputs: ModelInputs }) {
         Click a row to illustrate it above. Monthly figures are the mature run-rate (average of the last six of 48 months) so Shield and ELP residuals are counted; "capital needed" is the deepest the cash position goes before the book carries itself.
       </div>
 
+      {/* ── Retention sensitivity ── */}
+      <RetentionStrip inputs={inputs} settings={s} closers={sel.closers} />
+
       {/* ── Profit by headcount — bars ── */}
       <ProfitBars rows={rows} transfersOnly={transfersOnly} />
 
@@ -180,6 +196,50 @@ export default function ScalePlanner({ inputs }: { inputs: ModelInputs }) {
         )}
       </div>
     </Panel>
+  );
+}
+
+function RetentionStrip({ inputs, settings, closers }: { inputs: ModelInputs; settings: ScalePlanSettings; closers: number }) {
+  const cur = inputs.survivalCurves.LEVEL;
+  const rows = React.useMemo(() => RETENTION_CASES.map((c) => ({
+    ...c,
+    mk: planScaleRow(withRetention(inputs, c.firstPay, c.cancel), closers, settings),
+    tx: planScaleRow(withRetention(inputs, c.firstPay, c.cancel), closers, { ...settings, transferCapPerMonth: 0 }),
+  })), [inputs, settings, closers]);
+  return (
+    <div style={{ marginTop: 14, border: `1px solid ${T.warnLine}`, background: T.warnBg, borderRadius: 10, padding: 12 }}>
+      <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>The assumption that decides this: first-payment clear and monthly cancellation (Risk &amp; Attrition, section 6)</div>
+      <div style={{ fontSize: 12, color: T.body, marginBottom: 8 }}>
+        The model currently runs at <strong>{cur.firstPayPct}% first pay</strong> and <strong>{cur.steadyStateMonthlyCancelPct}% cancellation a month</strong> for every program. A Level Debt file pays its 8% only if the first payment clears; every Shield and ELP monthly payment is multiplied by the share of files still active, which shrinks by the cancel rate every month. Same {closers} closers, same spend, four retention cases:
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+        <thead><tr>
+          <th style={th}>Retention case</th>
+          <th style={{ ...th, textAlign: 'right' }}>Mature revenue / deal</th>
+          <th style={{ ...th, textAlign: 'right' }}>Mail break-even response</th>
+          <th style={{ ...th, textAlign: 'right' }}>Net profit / mo (marketing-fed)</th>
+          <th style={{ ...th, textAlign: 'right' }}>Net profit / mo (transfers only)</th>
+          <th style={{ ...th, textAlign: 'right' }}>Capital needed</th>
+          <th style={{ ...th, textAlign: 'right' }}>Cash+ month</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label} style={{ background: r.firstPay === cur.firstPayPct && r.cancel === cur.steadyStateMonthlyCancelPct ? '#fff' : undefined }}>
+              <td style={{ ...td, fontWeight: 700 }}>{r.label}</td>
+              <td style={tdNum}>{fmtMoney(r.mk.revenuePerDeal)}</td>
+              <td style={tdNum}>{fmtNum(r.mk.breakEvenResponsePct, 2)}%</td>
+              <td style={{ ...tdNum, fontWeight: 800, color: r.mk.netProfit < 0 ? T.bad : T.good }}>{fmtMoney(r.mk.netProfit)}</td>
+              <td style={{ ...tdNum, color: r.tx.netProfit < 0 ? T.bad : T.good }}>{fmtMoney(r.tx.netProfit)}</td>
+              <td style={tdNum}>{fmtMoney(r.mk.peakCapital)}</td>
+              <td style={tdNum}>{r.mk.firstCashPositiveMonth ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 12, color: T.body, marginTop: 8 }}>
+        Set section 6 to the first-pay and cancellation rates the reconciliation engine actually measures and this whole planner moves with it. That number is worth more than any marketing assumption on this page.
+      </div>
+    </div>
   );
 }
 

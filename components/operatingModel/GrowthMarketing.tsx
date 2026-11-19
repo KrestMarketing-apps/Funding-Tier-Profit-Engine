@@ -1,5 +1,6 @@
 import React from 'react';
-import type { ModelInputs, ModelResults, MarketingChannelMonth } from './types';
+import type { BackendKey, ModelInputs, ModelResults, MarketingChannelMonth } from './types';
+import { BACKEND_KEYS } from './types';
 import { Callout, Field, NumberInput, Panel, Row, T, fmtMoney, fmtNum, td, tdNum, th } from './ui';
 import { marketingIsOn } from './marketing';
 import { runModel } from './simulate';
@@ -31,6 +32,11 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
     setInputs({ ...inputs, marketing: { ...mk, paidSocial: { ...mk.paidSocial, ...p } } });
   const setCreative = (v: number) =>
     setInputs({ ...inputs, marketing: { ...mk, creativeAndTrackingPerMonth: v } });
+  const mkMix = mk.mixPct ?? inputs.volume.mixPct;
+  const setMix = (k: BackendKey, v: number) =>
+    setInputs({ ...inputs, marketing: { ...mk, mixPct: { ...mkMix, [k]: v } } });
+  const mixTotal = BACKEND_KEYS.reduce((a, k) => a + (mkMix[k] ?? 0), 0);
+  const MIX_LABEL: Record<BackendKey, string> = { LEVEL: 'Level Debt (8% once)', CS: 'Shield (36-mo perpetuity)', LEGACY: 'ELP (residual to 48 mo)' };
 
   const row = results.months[Math.min(month, horizon) - 1];
   const det = row?.marketing;
@@ -175,6 +181,22 @@ export default function GrowthMarketing({ inputs, setInputs, results, month, set
             </div>
           </div>
         </Row>
+
+        {/* ── Where marketing deals enroll ── */}
+        <div style={{ marginTop: 14, border: `1px solid ${T.line}`, borderRadius: 10, padding: 12 }}>
+          <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>Where marketing deals enroll</div>
+          <div style={{ fontSize: 12, color: T.muted, marginBottom: 8 }}>
+            Debt load pays everywhere, differently: Level Debt pays 8% of enrolled debt once; Shield pays a 36-month perpetuity on a payment banded by debt ($320 at $15k, $420 at $25k) — 100% of the net payment for 4 months, then 35% — unless the file is bought out; ELP pays a residual on a banded draft for up to 48 months. Defaults to the transfer mix; change it if prescreen targeting routes differently.
+          </div>
+          <Row cols={3}>
+            {BACKEND_KEYS.map((k) => (
+              <Field key={k} label={MIX_LABEL[k]}>
+                <NumberInput value={mkMix[k]} min={0} max={100} step={5} suffix="%" onChange={(v) => setMix(k, v)} />
+              </Field>
+            ))}
+          </Row>
+          {Math.abs(mixTotal - 100) > 0.5 && <Callout tone="bad">Marketing mix totals {mixTotal.toFixed(0)}% — it must total 100%.</Callout>}
+        </div>
 
         {/* ── What it does this month ── */}
         <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
