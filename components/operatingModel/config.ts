@@ -254,9 +254,12 @@ export const DEFAULT_INPUTS: ModelInputs = {
     },
     paidSocial: {
       enabled: false, startMonth: 1, spendPerMonth: 4000, costPerLead: 35,
-      qualifiedPct: 30, closeRatePct: 12, avgDebt: 18000,
+      qualifiedPct: 30, closeRatePct: 15, avgDebt: 25000,
     },
     creativeAndTrackingPerMonth: 1500,
+    // Marketing deals follow the transfer mix unless prescreen targeting
+    // routes them differently (set in Growth Marketing).
+    mixPct: { LEVEL: 33, CS: 40, LEGACY: 27 },
   },
   bonusPolicy: {
     enabled: true,

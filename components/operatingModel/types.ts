@@ -566,6 +566,12 @@ export interface MarketingInputs {
   paidSocial: PaidSocialChannel;
   /** Creative, landing pages, call-tracking numbers, compliance review. */
   creativeAndTrackingPerMonth: number;
+  /**
+   * Where marketing deals enroll. Optional — falls back to the transfer mix.
+   * Matters because only Level Debt pays on enrolled debt (8%); Shield and ELP
+   * pay flat drafts, so a larger debt load earns more only on Level Debt.
+   */
+  mixPct?: Record<BackendKey, number>;
 }
 
 export interface MarketingChannelMonth {
