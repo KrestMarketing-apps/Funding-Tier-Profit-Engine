@@ -5,6 +5,7 @@ import { BACKEND_KEYS } from './types';
 import { BRANDS, cloneDefaults } from './config';
 import GrowthMarketing from './GrowthMarketing';
 import ScalePlanner from './ScalePlanner';
+import GrowthPlan from './GrowthPlan';
 import { runModel } from './simulate';
 import { blendedCreditPullPrice, blendedTransferCost, creditPullPolicy, CREDIT_PULL_UNCONFIRMED } from './costs';
 import { legacy, shield } from './backends';
@@ -61,7 +62,7 @@ const NAV: NavItem[] = [
   { id: 'volume',     label: 'Deal Volume',        hint: '1 · Ramp planner',        icon: 'trend',     math: ['capacity'] },
   { id: 'roster',     label: 'Staffing & Labor',   hint: 'Who is on the clock',     icon: 'users',     math: ['labor', 'capacity'] },
   { id: 'operations', label: 'Operations',         hint: '2 · Calls into deals',    icon: 'phone',     math: ['capacity'] },
-  { id: 'marketing',  label: 'Growth Marketing',   hint: '2b · Mail, data, social · 2c · Scale planner', icon: 'trend',     math: ['capacity', 'costs'] },
+  { id: 'marketing',  label: 'Growth Plan',   hint: 'Team · transfers, mail, social · profit', icon: 'trend',     math: ['capacity', 'costs'] },
   { id: 'backends',   label: 'Backend Terms',      hint: '3 · How partners pay',    icon: 'briefcase', math: ['revenue'] },
   { id: 'buyout',     label: 'Shield Buyout',      hint: '3b · Buyout vs perpetual', icon: 'card',     math: ['revenue'] },
   { id: 'accelerated', label: 'ELP Accelerated',   hint: '3c · Accelerated vs residual', icon: 'card', math: ['revenue'] },
@@ -592,7 +593,7 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
                   <td style={{ ...tdNum, borderBottom: 'none', padding: '2px 0' }}>{fmtNum(derivedCap?.talkTimeCapacityDeals ?? 0, 1)}</td></tr>
                 <tr><td style={{ ...td, borderTop: `1px solid ${T.line}`, borderBottom: 'none', padding: '4px 0', fontWeight: 800, color: T.ink }}>Binding</td>
                   <td style={{ ...tdNum, borderTop: `1px solid ${T.line}`, borderBottom: 'none', padding: '4px 0', fontWeight: 800, color: T.ink }}>
-                    {derivedCap?.bindingConstraint === 'rule' ? 'Rule' : derivedCap?.bindingConstraint === 'talk-time' ? 'Talk time' : 'Override'}
+                    {derivedCap?.bindingConstraint === 'rule' ? 'Rule' : derivedCap?.bindingConstraint === 'talk-time' ? 'Talk time' : derivedCap?.bindingConstraint === 'budget' ? 'Transfer budget' : 'Override'}
                   </td></tr>
               </tbody>
             </table>
@@ -760,11 +761,11 @@ export default function OperatingModel({ mode = "admin" }: { mode?: "admin" | "a
       </>)}
 
       {active === 'marketing' && (
-        <>
+        <GrowthPlan inputs={inputs} setInputs={setInputs}>
           <GrowthMarketing inputs={inputs} setInputs={setInputs} results={results}
             month={stmtMonth} setMonth={setStmtMonth} horizon={horizon} />
           <ScalePlanner inputs={inputs} />
-        </>
+        </GrowthPlan>
       )}
 
       {active === 'backends' && (<>

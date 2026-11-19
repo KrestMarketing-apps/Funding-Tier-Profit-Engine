@@ -112,7 +112,8 @@ export function buildTrace(inputs: ModelInputs, results: ModelResults, monthInde
         ? `override = ${num(inputs.volume.overrideTotalDealsPerMonth)}`
         : `min(${num(cap.ruleCapacityDeals)}, ${num(cap.talkTimeCapacityDeals)})`,
       result: cap.bindingConstraint === 'rule' ? 'Deals-per-hour rule'
-        : cap.bindingConstraint === 'talk-time' ? 'Talk time' : 'Manual override',
+        : cap.bindingConstraint === 'talk-time' ? 'Talk time'
+        : cap.bindingConstraint === 'budget' ? 'Transfer budget' : 'Manual override',
       note: cap.bindingConstraint === 'talk-time'
         ? `To hit ${inputs.volume.dealsPer8CloserHours} deals per 8 hrs, average handle time would need to fall to ${num((8 * 60 * closeRate) / inputs.volume.dealsPer8CloserHours, 0)} min.`
         : undefined,

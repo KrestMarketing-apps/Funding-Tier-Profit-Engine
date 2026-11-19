@@ -186,6 +186,12 @@ export interface OperationsInputs {
   emailMonthlyCap: number;
   /** When true, deals are capped by closer talk-time capacity. */
   capDealsAtCapacity: boolean;
+  /**
+   * Monthly budget for purchased transfers (billed price × transfers). 0 or
+   * undefined = buy whatever fills the closers. When the budget binds, closer
+   * time goes unused unless marketing fills it.
+   */
+  transferBudgetPerMonth?: number;
 }
 
 export interface BufferFunnel {
@@ -669,7 +675,7 @@ export interface CapacityDetail {
   ruleCapacityDeals: number;
   /** Deals the closer pool can produce under AHT x close-rate arithmetic. */
   talkTimeCapacityDeals: number;
-  bindingConstraint: 'rule' | 'talk-time' | 'override';
+  bindingConstraint: 'rule' | 'talk-time' | 'override' | 'budget';
   targetDeals: number;
   utilizationPct: number;
   /** Utilization implied by the deals-per-hour rule before any capacity cap. */

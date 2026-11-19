@@ -91,14 +91,29 @@ export function computeCapacity(
     bindingConstraint = 'rule';
   }
 
-  const targetDeals = fullTarget * rampFactor;
+  let targetDeals = fullTarget * rampFactor;
   const ruleDemandMinutes = closeRate > 0
     ? ((ruleCapacityDeals * rampFactor) / closeRate) * ops.avgHandleMinutes : 0;
-  const totalTransfers = closeRate > 0 ? targetDeals / closeRate : 0;
-  const requiredCallMinutes = totalTransfers * ops.avgHandleMinutes;
+  let totalTransfers = closeRate > 0 ? targetDeals / closeRate : 0;
   const openerRawSupply = openerHours * ops.openerTransfersPerHour;
-  const openerSuppliedTransfers = Math.min(totalTransfers, openerRawSupply);
-  const purchasedTransfers = Math.max(0, totalTransfers - openerSuppliedTransfers);
+  let openerSuppliedTransfers = Math.min(totalTransfers, openerRawSupply);
+  let purchasedTransfers = Math.max(0, totalTransfers - openerSuppliedTransfers);
+
+  // Transfer budget: when it binds, buy only what it affords and let the
+  // target fall with it. Opener-supplied transfers are free of the budget.
+  const budget = ops.transferBudgetPerMonth ?? 0;
+  if (budget > 0 && purchasedTransfers > 0) {
+    const mixTotal = ops.buffers.reduce((s, b) => s + b.mixPct, 0) || 100;
+    const blendedPrice = ops.buffers.reduce((s, b) => s + b.price * b.mixPct, 0) / mixTotal;
+    const affordable = blendedPrice > 0 ? budget / blendedPrice : purchasedTransfers;
+    if (affordable < purchasedTransfers) {
+      purchasedTransfers = affordable;
+      totalTransfers = openerSuppliedTransfers + purchasedTransfers;
+      targetDeals = totalTransfers * closeRate;
+      bindingConstraint = 'budget';
+    }
+  }
+  const requiredCallMinutes = totalTransfers * ops.avgHandleMinutes;
 
   const allMinutes = closerHoursAll * 60;
   return {
