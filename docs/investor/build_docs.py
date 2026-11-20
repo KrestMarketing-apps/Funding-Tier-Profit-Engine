@@ -285,21 +285,21 @@ Q.append(page('Funding Tier LLC · Operating Playbook','Sales Floor And File Qua
 <li>Stated employment, income and a monthly payment the client can show they can make — no file without an ability-to-pay check</li>
 <li>Unsecured debt above the program floor; state eligible for the program quoted (state map in the toolkit)</li>
 <li>No active bankruptcy; no recent NSF pattern the client cannot explain</li>
-<li>Every enrollment call transcribed and scored by the AI call-QC: risk flags (pressure, confusion, inability to pay) go to review before the first draft date</li>
+<li>Every enrollment call transcribed and scored by the AI call-QC; risk flags reviewed before the first draft date</li>
 </ul>
 <div class="sec">Program Routing</div>
 <table class="t sm">
 <tr><th>Program</th><th>Fits when</th><th>Company is paid</th><th>Risk window</th></tr>
 <tr><td>Debt Settlement (LD)</td><td>Larger balances, client wants lowest monthly, settlement-eligible state</td><td>8% of enrolled debt, once, at month 2</td><td>Ends after 2nd client payment</td></tr>
-<tr><td>Debt Validation (SS)</td><td>Disputable accounts, client values speed; buyout if we need cash now</td><td>Perpetuity 36 months, or one lump-sum buyout after the first payment clears</td><td>Buyout: 1 payment. Perpetual: month by month</td></tr>
-<tr><td>Debt Resolution (ELP)</td><td>Legal-backed resolution, longer term, higher lifetime</td><td>Residual to 48 months, or accelerated: 90% of net for months 1–7, then 25% to month 24</td><td>Accelerated: most value in months 1–7. Residual: month by month</td></tr>
+<tr><td>Debt Validation (SS)</td><td>Disputable accounts; buyout if we need cash now</td><td>36-month perpetuity, or one lump-sum buyout after the first payment clears</td><td>Buyout: 1 payment. Perpetual: month by month</td></tr>
+<tr><td>Debt Resolution (ELP)</td><td>Legal-backed, longer term, higher lifetime</td><td>Residual to 48 months, or accelerated (90% × 7 months, then 25% to month 24)</td><td>Month by month; accelerated front-loads it</td></tr>
 <tr><td>Tax resolution (Milestone)</td><td>Tax debt on the same call; Phase 1 investigation first</td><td>50% of the $500 Phase 1 fee; 40–60% of the Phase 2 case by volume tier, as payments clear</td><td>~15-day refund window; rate locked at funding</td></tr>
 </table>
-<div class="note">Buyout vs perpetual is a cash decision made monthly against the reserve: sell files when the bank is below reserve, hold perpetuities when it is above.</div>
+
 </div>
 <div>
 <div class="sec" style="margin-top:0">Targets</div>
-<table class="t sm">
+<table class="t sm" style="font-size:7.6pt">
 <tr><th>KPI</th><th class="num">Floor</th><th class="num">Target</th></tr>
 <tr><td>First payment clears</td><td class="num">55%</td><td class="num">60% → 70%</td></tr>
 <tr><td>Monthly cancellation, active files</td><td class="num">10%</td><td class="num">≤ 6%</td></tr>
@@ -310,7 +310,7 @@ Q.append(page('Funding Tier LLC · Operating Playbook','Sales Floor And File Qua
 <tr><td>QC flags resolved before first draft</td><td class="num">90%</td><td class="num">100%</td></tr>
 </table>
 <div class="sec">Rep Pay, In One Paragraph</div>
-<p style="font-size:8.8pt">Reps are paid per paid deal, by program: flat by debt band on Shield and ELP, a volume-tiered percentage of enrolled debt on Level Debt (final after the 2nd payment). Daily-deal, monthly-volume, balanced-book and Level Debt enrollment bonuses sit on top. An NSF never counts; a cancellation inside the chargeback window reverses. All of it is computed per rep, per deal, with an expected pay date, in the pay engine every rep can see on My Deals &amp; Pay — so there is never a dispute about what is owed or when.</p>
+<p style="font-size:8.3pt">Per paid deal, by program: flat by debt band on Shield and ELP, a volume-tiered percentage of enrolled debt on Level Debt (final after the 2nd payment). Daily-deal, monthly-volume, balanced-book and Level Debt enrollment bonuses sit on top. An NSF never counts; a cancellation inside the chargeback window reverses. Computed per rep, per deal, with an expected pay date, on My Deals &amp; Pay.</p>
 <div class="sec">Compliance On The Floor</div>
 <ul class="chk">
 <li>Scripts and disclosures per program; no outcome promises; TSR-compliant close</li>
@@ -318,7 +318,15 @@ Q.append(page('Funding Tier LLC · Operating Playbook','Sales Floor And File Qua
 <li>Coached or suspicious warm transfers tagged and disputed with the vendor the same week</li>
 <li>Prospect PII stays inside app.krestmarketing.com and the pay engine; no exports</li>
 </ul>
-</div></div>''', doc2,3,T2, alt=True))
+</div></div>
+<div class="sec" style="margin-top:8px">Buyout Or Perpetual — Net To Funding Tier Per Cleared File, After The Rep</div>
+<table class="t sm" style="font-size:7.6pt">
+<tr><th style="width:1.3in">Shield file</th><th class="num">Buyout net</th><th class="num">Perpetual net @15% cancel</th><th class="num">Perpetual net @6%</th><th class="num">Break-even cancel</th><th>Rule</th></tr>
+<tr><td>$15,000 (65% × 6)</td><td class="num">$817</td><td class="num">$956</td><td class="num">$1,847</td><td class="num">18.2%</td><td>Perpetual unless cancellation runs above 18%</td></tr>
+<tr><td>$25,000 (100% × 6)</td><td class="num">$1,880</td><td class="num">$1,271</td><td class="num">$2,480</td><td class="num">9.1%</td><td>Buyout above 9% cancellation; perpetual below it</td></tr>
+<tr><td>ELP $15,000</td><td class="num">accel. $490</td><td class="num">resid. $664</td><td class="num">resid. $1,570</td><td class="num">—</td><td>Residual always; accelerate only for cash</td></tr>
+</table>
+<div class="note" style="font-size:7.4pt;margin-top:3px">Cancellation decides which election is worth more; the reserve decides how much of the faster-cash one we take. Below reserve: sell highest-band files first. Near break-even: split 50/50. Live: Growth Plan → 4b.</div>''', doc2,3,T2, alt=True))
 
 Q.append(page('Funding Tier LLC · Operating Playbook','Marketing — Test Before You Scale',
 'Three ways to put a qualified caller in front of a closer. Transfers are the cheapest and vendor-limited; mail and social are ours to control and only earn budget once they have proven their cost per paid deal against what a deal earns.',
