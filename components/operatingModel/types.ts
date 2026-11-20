@@ -615,6 +615,8 @@ export interface MarketingMonthDetail {
 // ── Root ─────────────────────────────────────────────────────────────────────
 
 export interface ModelInputs {
+  /** Cash in the bank on day one (investor capital). Optional; 0 if unset. */
+  startingCash?: number;
   ramp: RampInputs;
   volume: VolumeInputs;
   operations: OperationsInputs;
@@ -720,6 +722,8 @@ export interface MonthRow {
   marketing: MarketingMonthDetail;
   netCashFlow: number;
   cashPosition: number;
+  /** Cumulative net cash flow (excludes starting capital). */
+  cumulativeNet: number;
   reserveTarget: number;
   reserveMet: boolean;
   seats: number;
@@ -765,6 +769,10 @@ export interface ModelResults {
     distributableAboveReserve: number;
     firstCashPositiveMonth: number | null;
     peakCapitalRequired: number;
+    /** First month the bank balance (starting cash + cumulative net) goes below zero, or null. */
+    cashOutMonth: number | null;
+    /** Lowest bank balance reached. */
+    lowestCash: number;
     reserveTargetFirstMet: number | null;
     finalSeatCount: number;
     startingSeatCount: number;

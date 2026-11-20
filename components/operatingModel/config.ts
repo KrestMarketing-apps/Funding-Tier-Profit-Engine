@@ -133,6 +133,8 @@ export function defaultRoster(): Employee[] {
 // ── Contract terms (verified against the production bundle) ──────────────────
 
 export const DEFAULT_INPUTS: ModelInputs = {
+  // Investor capital on day one (Paul Dillenback, $90,000 for 30%, Nov 2026).
+  startingCash: 90000,
   ramp: {
     rampMonths: 1,        // CHANGED: was 12
     horizonMonths: 24,    // CHANGED: was 36
