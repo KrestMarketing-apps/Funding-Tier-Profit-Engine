@@ -164,6 +164,9 @@ export function runModel(inputs: ModelInputs): ModelResults {
   let cash = 0;
   let peakCapital = 0;
   let firstCashPositive: number | null = null;
+  const startingCash = inputs.startingCash ?? 0;
+  let cashOutMonth: number | null = null;
+  let lowestCash = startingCash;
   let reserveFirstMet: number | null = null;
   let peakUtilization = 0;
   let sustainedHighUtil = 0;
@@ -406,6 +409,9 @@ export function runModel(inputs: ModelInputs): ModelResults {
     cash += netCashFlow;
     if (cash < peakCapital) peakCapital = cash;
     if (firstCashPositive == null && cash > 0) firstCashPositive = m;
+    const bank = startingCash + cash;
+    if (bank < lowestCash) lowestCash = bank;
+    if (cashOutMonth == null && bank < 0) cashOutMonth = m;
 
     // Reserve = months of overhead, plus a chargeback buffer sized off the
     // trailing 12 months of commission actually paid out. Matches the shared
@@ -414,7 +420,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
     if (trailingCommission12mo.length > 12) trailingCommission12mo.shift();
     const disputeBuffer = trailingCommission12mo.reduce((a, b) => a + b, 0) * disputeRate;
     const reserveTarget = overhead * inputs.reservePolicy.targetMonthsOfOverhead + disputeBuffer;
-    const reserveMet = cash >= reserveTarget;
+    const reserveMet = startingCash + cash >= reserveTarget;
     if (reserveMet && reserveFirstMet == null) reserveFirstMet = m;
 
     const seats = rosterMonth.headcount;
@@ -444,7 +450,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
       managerOverride, managerOverrideAccrued: overrideAccrued,
       bonuses, bonusPaid,
       overhead, transferCost, laborCost, marketingCost, marketing,
-      netCashFlow, cashPosition: cash,
+      netCashFlow, cashPosition: startingCash + cash, cumulativeNet: cash,
       reserveTarget, reserveMet,
       seats, utilizationPct: util,
       event,
@@ -467,10 +473,12 @@ export function runModel(inputs: ModelInputs): ModelResults {
     marketingCost: months.reduce((s, r) => s + r.marketingCost, 0),
     marketingDeals: months.reduce((s, r) => s + r.marketing.deals, 0),
     marketingEnrolledVolume: months.reduce((s, r) => s + r.marketing.enrolledVolume, 0),
-    finalCash: cash,
-    distributableAboveReserve: Math.max(0, cash - (months[months.length - 1]?.reserveTarget ?? 0)),
+    finalCash: startingCash + cash,
+    distributableAboveReserve: Math.max(0, startingCash + cash - (months[months.length - 1]?.reserveTarget ?? 0)),
     firstCashPositiveMonth: firstCashPositive,
     peakCapitalRequired: Math.abs(Math.min(0, peakCapital)),
+    cashOutMonth,
+    lowestCash,
     reserveTargetFirstMet: reserveFirstMet,
     finalSeatCount: months[months.length - 1]?.seats ?? 0,
     startingSeatCount,
