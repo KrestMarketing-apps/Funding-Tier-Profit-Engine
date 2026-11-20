@@ -5,6 +5,7 @@ import { Callout, Field, NumberInput, Panel, Row, T, fmtMoney, fmtMoney2, fmtNum
 import { makeEmployee } from './config';
 import { runModel } from './simulate';
 import { computeEmployeeCost } from './labor';
+import ElectionPlanner from './ElectionPlanner';
 import {
   agentCommissionForDeal, buildSurvivalCurve, maxRevenueMonth, revenueForDealMonth,
 } from './backends';
@@ -582,6 +583,8 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
           A deal is worth {fmtMoney(blendedNet)} to Funding Tier after the rep. It costs {fmtMoney(costPerDeal.transfers)} by transfer{costPerDeal.mail > 0 ? `, ${fmtMoney(costPerDeal.mail)} by mail` : ''}{costPerDeal.social > 0 ? `, ${fmtMoney(costPerDeal.social)} by social` : ''} to acquire. Every method whose cost per deal is below {fmtMoney(blendedNet)} adds profit; above it, it does not.
         </div>
       </Panel>
+
+      <ElectionPlanner inputs={inputs} />
 
       {/* ── Bottom line ── */}
       <Panel title="5 · The bottom line — mature month, every cost paid" accent={T.accent}
