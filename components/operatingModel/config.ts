@@ -135,6 +135,16 @@ export function defaultRoster(): Employee[] {
 export const DEFAULT_INPUTS: ModelInputs = {
   // Investor capital on day one (Paul Dillenback, $90,000 for 30%, Nov 2026).
   startingCash: 90000,
+  // Tax resolution (Milestone): conservative case from the affiliate terms —
+  // 50% of the $500 Phase 1 fee, 40% of a $5,000 Phase 2 case at the entry
+  // volume tier (50% / 60% at higher tiers), paid as client payments clear;
+  // 5% of debt enrollments buy Phase 1, half fund Phase 2 (Milestone reports
+  // 70%); reps get 35% of Funding Tier's tax earnings. OFF by default.
+  taxResolution: {
+    enabled: false, attachPct: 5, phase1Fee: 500, phase1SharePct: 50, phase1LagMonths: 1,
+    phase2ConversionPct: 50, phase2Fee: 5000, phase2SharePct: 40, phase2LagMonths: 2,
+    phase2InstallmentMonths: 3, refundPct: 5, repCommissionPct: 35,
+  },
   ramp: {
     rampMonths: 1,        // CHANGED: was 12
     horizonMonths: 24,    // CHANGED: was 36
@@ -229,7 +239,12 @@ export const DEFAULT_INPUTS: ModelInputs = {
   // Rates, tiers and per-user tools also come from the shared engine. The only
   // additions are stable row ids and the DID provisioning policy, which
   // replaces the old fixed activeDIDs count with agents x N + extra.
-  costs: sharedCosts(),
+  costs: (() => {
+    const c = sharedCosts();
+    // E&O policy purchased Nov 2026 (~$400–$500 / year).
+    c.fixedCosts = [...c.fixedCosts, { id: 'fixed-eo', label: 'E&O Insurance', amount: 40 }];
+    return c;
+  })(),
 
   reservePolicy: { targetMonthsOfOverhead: 6, disputeRatePct: 0.5 },
 

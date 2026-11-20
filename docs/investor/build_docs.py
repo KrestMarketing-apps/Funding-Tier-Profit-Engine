@@ -108,14 +108,15 @@ f'''<div class="grid2"><div>
 # p4 assumptions, unit economics
 P.append(page('Funding Tier LLC · Partnership Proposal · Update','Safe Assumptions, And The Three Numbers That Move Everything',
 'Every figure in this document comes from the same engine you will have live access to. These are the assumptions it is running on today, what each is based on, and which ones actually change the answer.',
-f'''<div class="sec">Assumptions In Force</div>
-<table class="t sm">
+f'''<div class="sec" style="margin-top:4px">Assumptions In Force</div>
+<table class="t sm" style="font-size:7.6pt">
 <tr><th style="width:1.7in">Assumption</th><th style="width:0.9in">Value</th><th>Basis</th><th style="width:1.1in">Moves the answer?</th></tr>
 <tr><td>First payment clears</td><td class="num" style="text-align:left">60%</td><td>Observed. Expected to rise with income/ability-to-pay qualification and the AI call-QC risk score on every enrollment call.</td><td><b>Yes — strongly</b></td></tr>
 <tr><td>Monthly cancellation (active files)</td><td class="num" style="text-align:left">15% / mo</td><td>Engine placeholder, deliberately harsh. To be replaced by the measured rate from the reconciliation data (active files this month ÷ last month).</td><td><b>Yes — the most</b></td></tr>
 <tr><td>Transfer close rate / price</td><td class="num" style="text-align:left">15% · $11.60</td><td>Current vendor performance at the buffer mix ($8 / $14 / $55 by buffer length).</td><td>Yes</td></tr>
 <tr><td>Deals per 8 closer hours</td><td class="num" style="text-align:left">1.25</td><td>Floor rule; talk-time capacity at 65-minute handle time is checked alongside it.</td><td>Yes</td></tr>
-<tr><td>Program mix</td><td class="num" style="text-align:left">33 / 40 / 27</td><td>Debt Settlement (LD) / Debt Validation (SS) / Debt Resolution (ELP). Tax resolution is excluded until its fee split, payout timing and commission are set.</td><td>Moderately</td></tr>
+<tr><td>Program mix</td><td class="num" style="text-align:left">33 / 40 / 27</td><td>Debt Settlement (LD) / Debt Validation (SS) / Debt Resolution (ELP). All figures in this document are debt programs only.</td><td>Moderately</td></tr>
+<tr><td>Tax resolution (Milestone)</td><td class="num" style="text-align:left">Off in these figures</td><td>Sold on the same calls: 50% of the $500 Phase 1 fee, then 40–60% of a ~$5,000 Phase 2 case by volume tier, paid as client payments clear; reps 35% of our earnings. Conservative 5% attach / 50% to Phase 2 adds about $2,000 net a month at one US closer; modeled as upside, not in the base.</td><td>Upside only</td></tr>
 <tr><td>Direct mail</td><td class="num" style="text-align:left">1.25% · 70% · 20%</td><td>Response, qualified share (prescreen list already excludes bankruptcies and sets the debt floor), close rate; $0.80 all-in per piece; $25k average debt.</td><td>Only once mail is on</td></tr>
 <tr><td>Paid social</td><td class="num" style="text-align:left">$35 CPL · 30% · 15%</td><td>Cost per lead, lead-to-qualified-call, close rate; $25k average debt. Planned as retargeting of mailed ZIPs.</td><td>Only once social is on</td></tr>
 <tr><td>Reserve policy</td><td class="num" style="text-align:left">6 months</td><td>Six months of overhead plus a chargeback buffer on trailing commission, held before distributions.</td><td>Timing of distributions</td></tr>
@@ -136,7 +137,7 @@ f'''<div class="sec">Assumptions In Force</div>
 <tr><td>Direct mail at planning rates</td><td class="num">$522</td><td><span class="tag m">Pays narrowly — the Tier 1 test must confirm ≥ 1.25% response</span></td></tr>
 <tr><td>Paid social at planning rates</td><td class="num">$778</td><td><span class="tag x">Does not pay stand-alone; use for retargeting at a lower CPL</span></td></tr>
 </table>
-<div class="callout" style="margin-top:8px;font-size:8.4pt"><b>Why cancellation is the number:</b> a $25k Shield file is worth $5,776 over its term if the client stays. At 15% monthly cancellation the engine books $836 of it; at 6% it books about $2,160. Same deal, same rep, same cost to acquire — the difference is retention, which is why qualification and call QC are funded before growth marketing is.</div>
+<div class="callout" style="margin-top:6px;font-size:7.9pt;padding:6px 10px"><b>Why cancellation is the number:</b> a $25k Shield file is worth $5,776 over its term if the client stays; at 15% monthly cancellation the engine books $836 of it, at 6% about $2,160. Same deal, same rep, same cost — the difference is retention, which is why qualification and call QC are funded before growth marketing.</div>
 </div></div>''', doc,4,TOT))
 
 # p5 how we decide + waterfall + controls
@@ -209,8 +210,8 @@ f'''<div class="grid2">
 <li><b>Death, disability, deadlock</b> — buy-sell at the same formula, key-person cover on me, a tie-break mechanism</li>
 <li><b>Leaver and non-solicit terms</b> — neither member solicits reps, vendors or program partners away; what happens to a member's interest on voluntary exit</li>
 <li><b>Chargeback liability</b> — clawbacks are company liabilities netted in the pay run; the reserve's chargeback buffer is sized off trailing commission and reviewed quarterly</li>
-<li><b>Insurance and licensing</b> — E&amp;O / cyber cover for prospect PII; state licensing and bonding reviewed before any back-end expansion</li>
-<li><b>Tax resolution</b> — added to the mix and the Compensation Schedule once the partner's fee split, payout timing and commission are fixed</li>
+<li><b>Insurance and licensing</b> — E&amp;O policy is in place (~$450 a year); add cyber cover for prospect PII; state licensing and bonding reviewed before any back-end expansion</li>
+<li><b>Buyout and accelerated definitions</b> — the exact remittance timing of the Shield lump-sum buyout and the ELP accelerated schedule, confirmed against the partner contracts and written into the Compensation Schedule</li>
 </ul>
 <div class="sig"><div>Nathan Pottish · Manager, Funding Tier LLC · Date</div><div>Paul Dillenback · Date</div></div>
 </div></div>''', doc,6,TOT))
@@ -290,9 +291,9 @@ Q.append(page('Funding Tier LLC · Operating Playbook','Sales Floor And File Qua
 <table class="t sm">
 <tr><th>Program</th><th>Fits when</th><th>Company is paid</th><th>Risk window</th></tr>
 <tr><td>Debt Settlement (LD)</td><td>Larger balances, client wants lowest monthly, settlement-eligible state</td><td>8% of enrolled debt, once, at month 2</td><td>Ends after 2nd client payment</td></tr>
-<tr><td>Debt Validation (SS)</td><td>Disputable accounts, client values speed; buyout if we need cash now</td><td>Perpetuity 36 months, or buyout paid over 6 months</td><td>Buyout: 1 payment. Perpetual: month by month</td></tr>
-<tr><td>Debt Resolution (ELP)</td><td>Legal-backed resolution, longer term, higher lifetime</td><td>Residual to 48 months, or accelerated front-load</td><td>Accelerated: short. Residual: month by month</td></tr>
-<tr><td>Tax resolution</td><td>Tax debt — once partner terms are fixed</td><td>To be set</td><td>To be set</td></tr>
+<tr><td>Debt Validation (SS)</td><td>Disputable accounts, client values speed; buyout if we need cash now</td><td>Perpetuity 36 months, or one lump-sum buyout after the first payment clears</td><td>Buyout: 1 payment. Perpetual: month by month</td></tr>
+<tr><td>Debt Resolution (ELP)</td><td>Legal-backed resolution, longer term, higher lifetime</td><td>Residual to 48 months, or accelerated: 90% of net for months 1–7, then 25% to month 24</td><td>Accelerated: most value in months 1–7. Residual: month by month</td></tr>
+<tr><td>Tax resolution (Milestone)</td><td>Tax debt on the same call; Phase 1 investigation first</td><td>50% of the $500 Phase 1 fee; 40–60% of the Phase 2 case by volume tier, as payments clear</td><td>~15-day refund window; rate locked at funding</td></tr>
 </table>
 <div class="note">Buyout vs perpetual is a cash decision made monthly against the reserve: sell files when the bank is below reserve, hold perpetuities when it is above.</div>
 </div>
@@ -381,7 +382,7 @@ Q.append(page('Funding Tier LLC · Operating Playbook','Money — Close, Reserve
 <li>NSF on a first draft: the deal never counted; nothing paid, nothing to recover</li>
 <li>Cancellation inside the program's window after commission was paid: reversed on the rep's next run, shown on My Deals &amp; Pay with the reason</li>
 <li>Company-level chargebacks from a program partner: booked against the reserve's buffer; buffer reviewed quarterly</li>
-<li>File buyouts: one cleared payment ends the chargeback exposure — that is their purpose</li>
+<li>File buyouts: one lump sum after the first cleared payment; exposure ends there — that is their purpose</li>
 </ul>
 <div class="sec">What Both Members See, Always</div>
 <ul class="chk">
@@ -427,7 +428,7 @@ Q.append(page('Funding Tier LLC · Operating Playbook','The Scaling Ladder, Risk
 <tr><td><b>Net per deal</b></td><td>Expected lifetime revenue of a deal less the rep's commission</td></tr>
 <tr><td><b>Reserve target</b></td><td>Six months of overhead plus the chargeback buffer</td></tr>
 <tr><td><b>Expansion event</b></td><td>Tier 3 marketing, an office, or any back-end build — both members, separate budget</td></tr>
-<tr><td><b>Buyout</b></td><td>Selling a Shield file back for a fixed sum paid over six months; one payment ends chargeback exposure</td></tr>
+<tr><td><b>Buyout</b></td><td>Selling a Shield file back for one lump sum — (payment − $40) × 65% × 6, or × 100% × 6 on $20k+ — once the first payment clears</td></tr>
 <tr><td><b>Perpetuity / residual</b></td><td>Monthly share of the client's payment for the program term</td></tr>
 </table>
 <div class="callout" style="margin-top:8px;font-size:8.6pt"><b>If we only remember one thing:</b> seats first, then transfers, then the reserve, then a measured test, then the next seat. Never pay for a call nobody can take, and never spend on an assumption the CRM has not confirmed.</div>

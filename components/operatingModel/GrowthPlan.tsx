@@ -111,6 +111,11 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
   const setCapital = (v: number) => setInputs({ ...inputs, startingCash: v });
 
   // Program knobs: buyout / accelerated share, first-pay and monthly cancel per program.
+  const taxIn = inputs.taxResolution ?? { enabled: false, attachPct: 5, phase1Fee: 500, phase1SharePct: 50, phase1LagMonths: 1, phase2ConversionPct: 50, phase2Fee: 5000, phase2SharePct: 40, phase2LagMonths: 2, phase2InstallmentMonths: 3, refundPct: 5, repCommissionPct: 35 };
+  const setTax = (p: Partial<typeof taxIn>) => setInputs({ ...inputs, taxResolution: { ...taxIn, ...p } });
+  const taxPerDebtDeal = (taxIn.attachPct / 100) * (1 - taxIn.refundPct / 100) * (
+    taxIn.phase1Fee * (taxIn.phase1SharePct / 100) + (taxIn.phase2ConversionPct / 100) * taxIn.phase2Fee * (taxIn.phase2SharePct / 100));
+  const taxNetPerDebtDeal = taxPerDebtDeal * (1 - taxIn.repCommissionPct / 100);
   const setBuyout = (v: number) => setInputs({ ...inputs, consumerShield: { ...inputs.consumerShield, buyoutSharePct: v } });
   const setAccel = (v: number) => setInputs({ ...inputs, legacy: { ...inputs.legacy, acceleratedSharePct: v } });
   const setSurvival = (k: BackendKey, firstPay: number, cancel: number) => setInputs({
@@ -180,6 +185,10 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
     closerHours: avg((r) => r.capacity.closerHours),
     openerHours: avg((r) => r.capacity.openerHours),
     budgetBinding: tail.some((r) => r.capacity.bindingConstraint === 'budget'),
+    taxRevenue: avg((r) => r.tax.revenue),
+    taxCommission: avg((r) => r.tax.repCommission),
+    taxP1: avg((r) => r.tax.phase1Deals),
+    taxP2: avg((r) => r.tax.phase2Deals),
   };
   const other = Math.max(0, m.overhead - m.labor - m.transfers - m.marketing);
   const idleMin = Math.max(0, m.availableMin - m.transferMin - m.mkMin);
@@ -498,7 +507,7 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
             </div>
             <div style={card}>
               <div style={{ fontWeight: 800, fontSize: 13 }}>Debt Validation (SS)</div>
-              <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 6 }}>File buyout: one payment, paid out in 6 months, liability ends. Perpetual: monthly for 36 months, month-by-month risk.</div>
+              <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 6 }}>File buyout: one lump sum once the first payment clears — (payment − $40) × 65% × 6 (× 100% × 6 on $20k+) — exposure ends there. Perpetual: 100% of net for payments 1–4, then 35% to month 36, month-by-month risk.</div>
               <Row cols={3}>
                 <Field label="Files sold as buyout"><NumberInput value={inputs.consumerShield.buyoutSharePct} min={0} max={100} step={5} suffix="%" onChange={setBuyout} /></Field>
                 <Field label="First payment clears"><NumberInput value={inputs.survivalCurves.CS.firstPayPct} min={0} max={100} step={1} suffix="%" onChange={(v) => setSurvival('CS', v, inputs.survivalCurves.CS.steadyStateMonthlyCancelPct)} /></Field>
@@ -507,7 +516,7 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
             </div>
             <div style={card}>
               <div style={{ fontWeight: 800, fontSize: 13 }}>Debt Resolution (ELP)</div>
-              <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 6 }}>Accelerated: front-loaded payout, short exposure. Residual: 60% of the net draft monthly to 48 months.</div>
+              <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 6 }}>Accelerated (Exhibit D Option 2): 90% of net for months 1–7, then 25% to month 24; under-24-month files fall back to residual. Residual: 60% of the net draft monthly to 48 months.</div>
               <Row cols={3}>
                 <Field label="Files on accelerated"><NumberInput value={inputs.legacy.acceleratedSharePct ?? 0} min={0} max={100} step={5} suffix="%" onChange={setAccel} /></Field>
                 <Field label="First payment clears"><NumberInput value={inputs.survivalCurves.LEGACY.firstPayPct} min={0} max={100} step={1} suffix="%" onChange={(v) => setSurvival('LEGACY', v, inputs.survivalCurves.LEGACY.steadyStateMonthlyCancelPct)} /></Field>
@@ -515,8 +524,33 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
               </Row>
             </div>
           </Row>
-          <div style={{ fontSize: 11.5, color: T.muted, marginTop: 6 }}>
-            Tax resolution (Milestone) is not in the mix yet — it needs the fee split, payout timing and rep commission before it can be modeled honestly. Buyout and accelerated terms themselves are in sections 3b and 3c.
+          <div style={{ ...card, marginTop: 10, borderLeft: `4px solid ${taxIn.enabled ? '#7c3aed' : T.line}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 13 }}>Tax resolution (Milestone) — sold on the same calls</div>
+                <div style={{ fontSize: 11.5, color: T.muted }}>Phase 1 investigation fee, then Phase 2 resolution. Funding Tier is paid a share of each as the client's payments clear; the rate locks at funding; ~15-day refund window. Reps are paid a share of what Funding Tier earns.</div>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 700 }}>
+                <input type="checkbox" checked={taxIn.enabled} onChange={(e) => setTax({ enabled: e.target.checked })} /> On
+              </label>
+            </div>
+            <Row cols={6} gap={10} style={{ marginTop: 8 }}>
+              <Field label="Debt deals that buy Phase 1" tooltip="Conservative 5%; Milestone's target is 10%."><NumberInput value={taxIn.attachPct} min={0} max={100} step={1} suffix="%" onChange={(v) => setTax({ attachPct: v })} /></Field>
+              <Field label="Phase 1 fee" tooltip="$500 standard; up to $1,500 depending on the case."><NumberInput value={taxIn.phase1Fee} min={0} step={50} prefix="$" onChange={(v) => setTax({ phase1Fee: v })} /></Field>
+              <Field label="Our share of Phase 1"><NumberInput value={taxIn.phase1SharePct} min={0} max={100} step={5} suffix="%" onChange={(v) => setTax({ phase1SharePct: v })} /></Field>
+              <Field label="Phase 1 → Phase 2" tooltip="Conservative 50%; Milestone reports 70%."><NumberInput value={taxIn.phase2ConversionPct} min={0} max={100} step={5} suffix="%" onChange={(v) => setTax({ phase2ConversionPct: v })} /></Field>
+              <Field label="Phase 2 average case"><NumberInput value={taxIn.phase2Fee} min={0} step={250} prefix="$" onChange={(v) => setTax({ phase2Fee: v })} /></Field>
+              <Field label="Our share of Phase 2" tooltip="40% / 50% / 60% by monthly volume tier."><NumberInput value={taxIn.phase2SharePct} min={0} max={100} step={5} suffix="%" onChange={(v) => setTax({ phase2SharePct: v })} /></Field>
+            </Row>
+            <Row cols={6} gap={10} style={{ marginTop: 6 }}>
+              <Field label="Phase 2 paid over (months)"><NumberInput value={taxIn.phase2InstallmentMonths} min={1} max={24} step={1} onChange={(v) => setTax({ phase2InstallmentMonths: v })} /></Field>
+              <Field label="Refunds / chargebacks"><NumberInput value={taxIn.refundPct} min={0} max={100} step={1} suffix="%" onChange={(v) => setTax({ refundPct: v })} /></Field>
+              <Field label="Rep share of our tax earnings"><NumberInput value={taxIn.repCommissionPct} min={0} max={100} step={5} suffix="%" onChange={(v) => setTax({ repCommissionPct: v })} /></Field>
+              <div style={{ gridColumn: 'span 3', fontSize: 12.5, paddingTop: 18 }}>
+                Adds <strong>{fmtMoney(taxNetPerDebtDeal)}</strong> net per debt deal after the rep ({fmtMoney(taxPerDebtDeal)} before).
+                {taxIn.enabled && <> At maturity: {fmtNum(m.taxP1, 1)} Phase 1 and {fmtNum(m.taxP2, 1)} Phase 2 cases a month, <strong>{fmtMoney(m.taxRevenue)}</strong> revenue, {fmtMoney(m.taxCommission)} rep commission.</>}
+              </div>
+            </Row>
           </div>
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, marginTop: 8 }}>
@@ -554,7 +588,7 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
         tooltip="Average of the last six months of a 48-month run, so every cohort that can be stacked is stacked and Shield / ELP residuals are counted. Capital needed is the deepest the cash position goes.">
         <Row cols={7} gap={10}>
           {tile('Deals / month', fmtNum(m.deals, 1), `${fmtMoney(enrolled)} enrolled debt`)}
-          {tile('Revenue', fmtMoney(m.revenue))}
+          {tile('Revenue', fmtMoney(m.revenue), m.taxRevenue > 0 ? `${fmtMoney(m.taxRevenue)} from tax resolution` : undefined)}
           {tile('Rep commission + bonuses', `−${fmtMoney(m.commission + m.bonuses)}`)}
           {tile('Labor', `−${fmtMoney(m.labor)}`)}
           {tile('Transfers + marketing', `−${fmtMoney(m.transfers + m.marketing)}`, `${fmtMoney(m.transfers)} transfers · ${fmtMoney(m.marketing)} mail/social`)}

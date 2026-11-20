@@ -141,9 +141,9 @@ table.t th.num{text-align:right}
 <table class="t sm">
 <tr><th>Program</th><th>Fits when</th><th>Company is paid</th><th>Risk window</th></tr>
 <tr><td>Debt Settlement (LD)</td><td>Larger balances, client wants lowest monthly, settlement-eligible state</td><td>8% of enrolled debt, once, at month 2</td><td>Ends after 2nd client payment</td></tr>
-<tr><td>Debt Validation (SS)</td><td>Disputable accounts, client values speed; buyout if we need cash now</td><td>Perpetuity 36 months, or buyout paid over 6 months</td><td>Buyout: 1 payment. Perpetual: month by month</td></tr>
-<tr><td>Debt Resolution (ELP)</td><td>Legal-backed resolution, longer term, higher lifetime</td><td>Residual to 48 months, or accelerated front-load</td><td>Accelerated: short. Residual: month by month</td></tr>
-<tr><td>Tax resolution</td><td>Tax debt — once partner terms are fixed</td><td>To be set</td><td>To be set</td></tr>
+<tr><td>Debt Validation (SS)</td><td>Disputable accounts, client values speed; buyout if we need cash now</td><td>Perpetuity 36 months, or one lump-sum buyout after the first payment clears</td><td>Buyout: 1 payment. Perpetual: month by month</td></tr>
+<tr><td>Debt Resolution (ELP)</td><td>Legal-backed resolution, longer term, higher lifetime</td><td>Residual to 48 months, or accelerated: 90% of net for months 1–7, then 25% to month 24</td><td>Accelerated: most value in months 1–7. Residual: month by month</td></tr>
+<tr><td>Tax resolution (Milestone)</td><td>Tax debt on the same call; Phase 1 investigation first</td><td>50% of the $500 Phase 1 fee; 40–60% of the Phase 2 case by volume tier, as payments clear</td><td>~15-day refund window; rate locked at funding</td></tr>
 </table>
 <div class="note">Buyout vs perpetual is a cash decision made monthly against the reserve: sell files when the bank is below reserve, hold perpetuities when it is above.</div>
 </div>
@@ -224,7 +224,7 @@ table.t th.num{text-align:right}
 <li>NSF on a first draft: the deal never counted; nothing paid, nothing to recover</li>
 <li>Cancellation inside the program's window after commission was paid: reversed on the rep's next run, shown on My Deals &amp; Pay with the reason</li>
 <li>Company-level chargebacks from a program partner: booked against the reserve's buffer; buffer reviewed quarterly</li>
-<li>File buyouts: one cleared payment ends the chargeback exposure — that is their purpose</li>
+<li>File buyouts: one lump sum after the first cleared payment; exposure ends there — that is their purpose</li>
 </ul>
 <div class="sec">What Both Members See, Always</div>
 <ul class="chk">
@@ -266,7 +266,7 @@ table.t th.num{text-align:right}
 <tr><td><b>Net per deal</b></td><td>Expected lifetime revenue of a deal less the rep's commission</td></tr>
 <tr><td><b>Reserve target</b></td><td>Six months of overhead plus the chargeback buffer</td></tr>
 <tr><td><b>Expansion event</b></td><td>Tier 3 marketing, an office, or any back-end build — both members, separate budget</td></tr>
-<tr><td><b>Buyout</b></td><td>Selling a Shield file back for a fixed sum paid over six months; one payment ends chargeback exposure</td></tr>
+<tr><td><b>Buyout</b></td><td>Selling a Shield file back for one lump sum — (payment − $40) × 65% × 6, or × 100% × 6 on $20k+ — once the first payment clears</td></tr>
 <tr><td><b>Perpetuity / residual</b></td><td>Monthly share of the client's payment for the program term</td></tr>
 </table>
 <div class="callout" style="margin-top:8px;font-size:8.6pt"><b>If we only remember one thing:</b> seats first, then transfers, then the reserve, then a measured test, then the next seat. Never pay for a call nobody can take, and never spend on an assumption the CRM has not confirmed.</div>
