@@ -165,6 +165,12 @@ export function runModel(inputs: ModelInputs): ModelResults {
   let peakCapital = 0;
   let firstCashPositive: number | null = null;
   const startingCash = inputs.startingCash ?? 0;
+  // Tax resolution: cash arriving per simulation month, scheduled as deals close.
+  const tax = inputs.taxResolution;
+  const taxOn = !!(tax && tax.enabled && tax.attachPct > 0);
+  const taxRevenueByMonth: number[] = new Array(horizon + 64).fill(0);
+  const taxP1ByMonth: number[] = new Array(horizon + 64).fill(0);
+  const taxP2ByMonth: number[] = new Array(horizon + 64).fill(0);
   let cashOutMonth: number | null = null;
   let lowestCash = startingCash;
   let reserveFirstMet: number | null = null;
@@ -345,6 +351,28 @@ export function runModel(inputs: ModelInputs): ModelResults {
       }
     }
 
+    // ── Tax resolution layer (sold on the same calls) ────────────────────────
+    let taxRow = { phase1Deals: 0, phase2Deals: 0, revenue: 0, repCommission: 0 };
+    if (taxOn && tax) {
+      const p1 = totalDeals * (tax.attachPct / 100);
+      const p2 = p1 * (tax.phase2ConversionPct / 100);
+      const keep = 1 - tax.refundPct / 100;
+      const p1Cash = p1 * tax.phase1Fee * (tax.phase1SharePct / 100) * keep;
+      const p2Cash = p2 * tax.phase2Fee * (tax.phase2SharePct / 100) * keep;
+      const m1 = m + Math.max(0, tax.phase1LagMonths);
+      if (m1 < taxRevenueByMonth.length) { taxRevenueByMonth[m1] += p1Cash; taxP1ByMonth[m1] += p1; }
+      const n = Math.max(1, Math.round(tax.phase2InstallmentMonths));
+      for (let i = 0; i < n; i++) {
+        const mi = m + Math.max(0, tax.phase1LagMonths) + Math.max(0, tax.phase2LagMonths) + i;
+        if (mi < taxRevenueByMonth.length) { taxRevenueByMonth[mi] += p2Cash / n; if (i === 0) taxP2ByMonth[mi] += p2; }
+      }
+      const taxRev = taxRevenueByMonth[m];
+      const taxComm = taxRev * (tax.repCommissionPct / 100);
+      taxRow = { phase1Deals: taxP1ByMonth[m], phase2Deals: taxP2ByMonth[m], revenue: taxRev, repCommission: taxComm };
+      revenue += taxRev;
+      commission += taxComm;
+    }
+
     // ── Transfer funnel ──────────────────────────────────────────────────────
     const funnel = computeFunnel(inputs, capacity.targetDeals, capacity.openerSuppliedTransfers);
 
@@ -447,6 +475,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
       deals: totalDeals,
       dealsByBackend,
       revenue, repCommission: commission,
+      tax: taxRow,
       managerOverride, managerOverrideAccrued: overrideAccrued,
       bonuses, bonusPaid,
       overhead, transferCost, laborCost, marketingCost, marketing,

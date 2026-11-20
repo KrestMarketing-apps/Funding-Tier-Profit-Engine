@@ -614,9 +614,41 @@ export interface MarketingMonthDetail {
 
 // ── Root ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Tax resolution (Milestone Tax Solutions) — a layer sold on the same calls.
+ * Phase 1 is a paid investigation; Phase 2 is the resolution engagement.
+ * Funding Tier is paid a share of each phase's fee as the client's payments
+ * clear; reps are paid a share of what Funding Tier earns.
+ */
+export interface TaxResolutionInputs {
+  enabled: boolean;
+  /** Share of debt deals (closed enrollments) that also buy a Phase 1 investigation, 0-100. */
+  attachPct: number;
+  phase1Fee: number;
+  /** Funding Tier's share of the Phase 1 fee, 0-100. */
+  phase1SharePct: number;
+  /** Months after the deal until the Phase 1 fee clears. */
+  phase1LagMonths: number;
+  /** Share of Phase 1 clients who fund Phase 2, 0-100. */
+  phase2ConversionPct: number;
+  phase2Fee: number;
+  /** Funding Tier's share of the Phase 2 fee by volume tier, 0-100 (40 / 50 / 60). */
+  phase2SharePct: number;
+  /** Months after Phase 1 until Phase 2 funding begins. */
+  phase2LagMonths: number;
+  /** Months the Phase 2 fee is paid over (1 = paid in full). */
+  phase2InstallmentMonths: number;
+  /** Refunds and chargebacks as a share of tax revenue, 0-100. */
+  refundPct: number;
+  /** Rep commission as a share of Funding Tier's tax earnings, 0-100. */
+  repCommissionPct: number;
+}
+
 export interface ModelInputs {
   /** Cash in the bank on day one (investor capital). Optional; 0 if unset. */
   startingCash?: number;
+  /** Tax resolution layer. Optional; off if unset. */
+  taxResolution?: TaxResolutionInputs;
   ramp: RampInputs;
   volume: VolumeInputs;
   operations: OperationsInputs;
@@ -705,8 +737,12 @@ export interface MonthRow {
   month: number;
   deals: number;
   dealsByBackend: Record<BackendKey, number>;
+  /** Includes tax-resolution revenue when that layer is on. */
   revenue: number;
+  /** Includes rep commission on tax-resolution earnings. */
   repCommission: number;
+  /** Tax resolution layer this month (zero when off). */
+  tax: { phase1Deals: number; phase2Deals: number; revenue: number; repCommission: number };
   /** Override paid out in cash this month (accrued payoutLagMonths earlier). */
   managerOverride: number;
   /** Override accrued on this month's production. */
