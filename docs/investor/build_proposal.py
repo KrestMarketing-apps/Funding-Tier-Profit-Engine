@@ -7,7 +7,7 @@ SH15, SH25 = DE['shield']['15000'], DE['shield']['25000']
 doc = 'Investment Proposal'; T = 16; P = []
 
 P.append(cover('Investment Proposal',
- 'A 30% membership interest in Funding Tier LLC for $90,000 — investor paid back first, formula buyback options, shared controls, and a plan that is profitable on safe assumptions.',
+ 'A 30% membership interest in Funding Tier LLC for $90,000 — the investor\'s $90,000 returned ahead of any 70 / 30 split, formula buyback options, shared controls, and a plan that is profitable on safe assumptions.',
  [('Prepared for', 'Paul Dillenback'), ('Prepared by', 'Nathan Pottish, Manager · Funding Tier LLC'), ('Date', DATE),
   ('Version', '2.0 — revised layout, four launch scenarios, state hiring data'), ('Exhibits', 'A Term Sheet · B Business Plan · C Compensation Schedule · D Operating Playbook'), ('Live model', 'ai.fundingtier.com → Admin → Operating Model → Growth Plan')]))
 
@@ -17,7 +17,7 @@ P.append(page('Investment Proposal · 1', 'Mission And Executive Summary',
  st('Our Mission', 'a win for everybody') +
  '<div class="callout" style="font-size:9pt"><b>Every file is a win for the client, the closer, the servicing partner and the owners.</b> The client gets a program they can afford and understand. The closer is paid fairly and quickly. The partner receives a qualified file that stays. The owners build a company that scales into a full front and back end — with proper marketing, proper capital and a system that already runs the business today.</div>' +
  kv([('The ask', '$90,000', '30% of Funding Tier LLC · tranches optional (page 9)'),
-     ('Investor payback', 'First', '100% of distributions until $90,000 is returned'),
+     ('Capital returned', 'Ahead of 70 / 30', 'after costs, reserve, tax and the Manager\'s draw, 100% of member distributions go to Paul until $90,000 is back'),
      ('Mature month, safe case', M(S1S['net']), 'owner + 3 Egypt closers · net after every cost', 'g'),
      ('Lowest the bank gets', M(S1S['low']), f'of $90,000 · cash-positive from month {S1S["cashPos"]}', 'g')]) +
  '<div class="cols c2">' +
@@ -30,7 +30,7 @@ P.append(page('Investment Proposal · 1', 'Mission And Executive Summary',
    'Hire three Egypt-based closers at $12/hour (CallBlade, referred by Shield Services) on a 1–2 week trial; Nathan closes alongside them.',
    f'Buy live transfers at $14 per call (2-minute buffer) to keep every seat busy; first 90 days all files go to Shield Services.',
    f'Reach the operating reserve ({M(S1S["months"][5]["res"])}) by about month {S1S["reserveMet"]}; then add mail and social to fill 25% of volume, never more than 50%.',
-   'Add closers and a team lead by the dollar rules on page 8; distributions start once the reserve is met and Paul is paid back first.']) +
+   'Add closers and a team lead by the dollar rules on page 8; distributions start once the reserve is met; after the Manager\'s draw, 100% of member distributions go to Paul until his $90,000 is back, then 70 / 30.']) +
  where('Business Plan (Exhibit B) §1–§3 · Operating Model → Growth Plan on ai.fundingtier.com') + '</div></div>', doc, 2, T))
 
 # 2 Already built
@@ -278,7 +278,7 @@ P.append(page('Investment Proposal · 11', 'Distribution Waterfall And Operator 
    ('Step 2', 'Operating reserve', '6 months of overhead + chargeback buffer, held in the high-yield account', 'var(--blue)'),
    ('Step 3', 'Tax distributions', 'Each member\'s share of taxable income × the CPA\'s assumed rate, quarterly', 'var(--amber)'),
    ('Step 4', 'Manager draw', '$10,000 / month, paid only in a profitable month; $12,500 after 3 straight profitable months', 'var(--purple)'),
-   ('Step 5', 'Investor payback', '100% of what is left to Paul until $90,000 is returned', 'var(--navy)'),
+   ('Step 5', 'Capital returned', 'After steps 1–4 (including the Manager\'s draw), 100% of member distributions to Paul until $90,000 is returned', 'var(--navy)'),
    ('Step 6', 'Accrued draw', 'Any Manager draw skipped in loss months, without interest', 'var(--mut)'),
    ('Step 7', '70 / 30', 'Remaining profit 70% Nathan, 30% Paul; Manager bonus 10% of profit above $20k / mo, quarterly, after payback', 'var(--green)')])) + '</div>' +
  '<div class="cols c2">' +
@@ -288,7 +288,7 @@ P.append(page('Investment Proposal · 11', 'Distribution Waterfall And Operator 
   ['Reserve top-up (step 2) — already at target', '$0'],
   ['Tax distributions (step 3), est. 30% of profit' + math(f'{M(S1S["months"][5]["net"])} × 30% → 70 / 30 to members'), '-' + M(S1S['months'][5]['net'] * 0.30)],
   ['Manager draw (step 4)', '-$10,000'],
-  ['To Paul — investor payback (step 5)', (M(S1S['months'][5]['net'] * 0.70 - 10000), 'n g')],
+  ['To Paul — capital returned (step 5), after the draw', (M(S1S['months'][5]['net'] * 0.70 - 10000), 'n g')],
  ], 'sm', ['5.2in', '1.3in'], tot=['Paul\'s cumulative payback after this month', (M(sum(max(0, m['net'] * 0.7 - 10000) for m in S1S['months'][S1S['reserveMet']-1:6])), 'n')]) + '</div>' +
  '<div>' + st('Worked Month B — A Mature Month After Payback', 'mature month, S1 safe case') +
  table([('Line', ''), ('Amount', 'n')], [
@@ -322,7 +322,7 @@ P.append(page('Investment Proposal · 12', 'Buyback Options, Liquidity And The M
  ], 'sm', ['3.3in', '1.6in', '1.6in']) + '</div>' +
  '<div>' + st('Liquidity — What "Private" Means') + ul([
    'There is no market for LLC units; Paul\'s ways out are the buyback options, a sale of the company (tag-along: he sells on the same terms as Nathan), or a private sale after Nathan\'s right of first refusal.',
-   'Distributions, not resale, are the return: payback first, then 30% of profit for as long as he holds.',
+   'Distributions, not resale, are the return: after the Manager\'s draw, 100% of member distributions until his $90,000 is back, then 30% of profit for as long as he holds.',
    'On death or permanent disability of either member, the other may buy the interest at the formula price; key-person insurance on the Manager funds it.'], 'b sm') +
  st('Minority Position — What 30% Gives And Does Not') + ul([
    '<b>Gives:</b> a vote on every both-member action, co-signature on every account, dual approval above $10,000, full information rights, pre-emptive rights on new issuance, and a seat in operations by agreement.',
