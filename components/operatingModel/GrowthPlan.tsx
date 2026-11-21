@@ -484,7 +484,7 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
       </Panel>
 
       {/* ── Program mix ── */}
-      <Panel title="4 · Where enrollments go — file type, buyout vs perpetual, attrition — and what each one earns after the rep" accent={T.accent}
+      <Panel title="4 · Where enrollments go — file type, buyout vs perpetual, attrition — and what each one pays" accent={T.accent}
         tooltip="Share of enrollments by program. Revenue per deal is the contract (full term) and what the model expects after first-pay and cancellation; the rep is paid only on files whose first payment clears.">
         <Row cols={3} gap={12}>
           {BACKEND_KEYS.map((k) => (
@@ -557,9 +557,9 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, marginTop: 8 }}>
           <thead><tr>
             <th style={th}>Program</th><th style={{ ...th, textAlign: 'right' }}>Share</th>
-            <th style={{ ...th, textAlign: 'right' }}>Full-term revenue / deal</th><th style={{ ...th, textAlign: 'right' }}>Rep commission</th>
+            <th style={{ ...th, textAlign: 'right' }}>Full payout / deal</th><th style={{ ...th, textAlign: 'right' }}>Rep commission (US / owner-closed)</th>
             <th style={{ ...th, textAlign: 'right' }}>Expected revenue / deal</th><th style={{ ...th, textAlign: 'right' }}>Expected commission</th>
-            <th style={{ ...th, textAlign: 'right' }}>Net to Funding Tier / deal</th>
+            <th style={{ ...th, textAlign: 'right' }}>Net / deal, US-closed</th><th style={{ ...th, textAlign: 'right' }}>Net / deal, offshore-closed</th>
           </tr></thead>
           <tbody>
             {programRows.map((r) => (
@@ -571,16 +571,17 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
                 <td style={tdNum}>{fmtMoney(r.exp)}</td>
                 <td style={tdNum}>{fmtMoney(r.expComm)}</td>
                 <td style={{ ...tdNum, fontWeight: 800 }}>{fmtMoney(r.net)}</td>
+                <td style={{ ...tdNum, fontWeight: 800, color: T.good }}>{fmtMoney(r.exp)}</td>
               </tr>
             ))}
             <tr style={{ fontWeight: 800, background: T.panel }}>
               <td style={td}>Blended at {fmtMoney(blendedDebt)} avg debt</td><td style={tdNum}>100%</td><td style={tdNum} /><td style={tdNum} />
-              <td style={tdNum}>{fmtMoney(blendedExp)}</td><td style={tdNum} /><td style={tdNum}>{fmtMoney(blendedNet)}</td>
+              <td style={tdNum}>{fmtMoney(blendedExp)}</td><td style={tdNum} /><td style={tdNum}>{fmtMoney(blendedNet)}</td><td style={{ ...tdNum, color: T.good }}>{fmtMoney(blendedExp)}</td>
             </tr>
           </tbody>
         </table>
         <div style={{ fontSize: 12, color: T.muted, marginTop: 6 }}>
-          A deal is worth {fmtMoney(blendedNet)} to Funding Tier after the rep. It costs {fmtMoney(costPerDeal.transfers)} by transfer{costPerDeal.mail > 0 ? `, ${fmtMoney(costPerDeal.mail)} by mail` : ''}{costPerDeal.social > 0 ? `, ${fmtMoney(costPerDeal.social)} by social` : ''} to acquire. Every method whose cost per deal is below {fmtMoney(blendedNet)} adds profit; above it, it does not.
+          Offshore and BPO closers are paid by the hour only — no percentage of enrolled debt, no per-deal commission, no bonuses — so a deal they close is worth the full expected payout ({fmtMoney(blendedExp)}) and only deals closed by the owner-operator or a US W-2 closer carry commission ({fmtMoney(blendedNet)} net). It costs {fmtMoney(costPerDeal.transfers)} by transfer{costPerDeal.mail > 0 ? `, ${fmtMoney(costPerDeal.mail)} by mail` : ''}{costPerDeal.social > 0 ? `, ${fmtMoney(costPerDeal.social)} by social` : ''} to acquire. Every method whose cost per deal is below {fmtMoney(blendedNet)} adds profit; above it, it does not.
         </div>
       </Panel>
 

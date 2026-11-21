@@ -2,6 +2,7 @@ import React from 'react';
 import type { ModelInputs } from './types';
 import { Callout, Field, NumberInput, Panel, Row, T, fmtMoney, fmtNum, td, tdNum, th } from './ui';
 import { buildSurvivalCurve, legacy, shield } from './backends';
+import { runModel } from './simulate';
 
 /**
  * Election Planner — file buyout vs perpetual (Shield), accelerated vs
@@ -61,6 +62,15 @@ export default function ElectionPlanner({ inputs }: { inputs: ModelInputs }) {
   const filesToSell = sel ? Math.ceil(cashNeeded / Math.max(1, sel.buyout)) : 0;
   const valueGivenUp = sel ? filesToSell * Math.max(0, sel.perp - sel.buyout) : 0;
 
+  // Whole-plan scenarios: every Shield file perpetual, half, or every file bought out.
+  const elections = React.useMemo(() => [0, 50, 100].map((pct) => {
+    const inp: ModelInputs = { ...inputs, ramp: { ...inputs.ramp, horizonMonths: Math.max(inputs.ramp.horizonMonths, 48) }, consumerShield: { ...inputs.consumerShield, buyoutSharePct: pct } };
+    const r = runModel(inp); const ms = r.months; const tail = ms.slice(-6);
+    const avg = (f: (m: typeof ms[number]) => number) => tail.reduce((a, m) => a + f(m), 0) / Math.max(1, tail.length);
+    return { pct, net: avg((m) => m.netCashFlow), rev: avg((m) => m.revenue), y1: ms.slice(0, 12).reduce((a, m) => a + m.netCashFlow, 0), y2: ms.slice(12, 24).reduce((a, m) => a + m.netCashFlow, 0), low: r.totals.lowestCash, cashPos: r.totals.firstCashPositiveMonth, bank24: ms[Math.min(23, ms.length - 1)].cashPosition, bank48: ms[ms.length - 1].cashPosition };
+  }), [inputs]);
+  const curPct = inputs.consumerShield.buyoutSharePct;
+
   const under = sRows.filter((r) => r.debt < 20000), over = sRows.filter((r) => r.debt >= 20000);
   const beUnder = under.length ? under[0].breakeven : 0, beOver = over.length ? over[0].breakeven : 0;
   const perpWinsUnder = cancel < beUnder, perpWinsOver = cancel < beOver;
@@ -81,15 +91,38 @@ export default function ElectionPlanner({ inputs }: { inputs: ModelInputs }) {
         <Field label="Perpetual wins at $20k+ when cancel is below"><div style={{ fontFamily: T.mono, fontWeight: 800, fontSize: 16, padding: '7px 0', color: perpWinsOver ? T.good : T.bad }}>{fmtNum(beOver, 1)}%</div></Field>
       </Row>
 
-      <div style={{ fontWeight: 800, fontSize: 13, margin: '12px 0 6px' }}>Debt Validation (SS) — per cleared file, after the rep</div>
+      <div style={{ fontWeight: 800, fontSize: 13, margin: '12px 0 6px' }}>The whole plan three ways — every Debt Validation file perpetual, half and half, or every file bought out</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead><tr>
+            <th style={th}>Election</th><th style={{ ...th, textAlign: 'right' }}>Revenue / mo, mature</th><th style={{ ...th, textAlign: 'right' }}>Net profit / mo, mature</th>
+            <th style={{ ...th, textAlign: 'right' }}>Year-1 net cash</th><th style={{ ...th, textAlign: 'right' }}>Year-2 net cash</th><th style={{ ...th, textAlign: 'right' }}>Lowest bank</th>
+            <th style={{ ...th, textAlign: 'right' }}>Cash-positive month</th><th style={{ ...th, textAlign: 'right' }}>Bank at month 24</th><th style={{ ...th, textAlign: 'right' }}>Bank at month 48</th><th style={th}>Pros / cons</th>
+          </tr></thead>
+          <tbody>
+            {elections.map((e) => (
+              <tr key={e.pct} style={{ background: e.pct === curPct ? T.brandSoft : undefined }}>
+                <td style={{ ...td, fontWeight: 800 }}>{e.pct === 0 ? '100% perpetual' : e.pct === 100 ? '100% buyout' : '50 / 50'}{e.pct === curPct ? ' (current plan)' : ''}</td>
+                <td style={tdNum}>{fmtMoney(e.rev)}</td><td style={{ ...tdNum, fontWeight: 800, color: e.net < 0 ? T.bad : T.good }}>{fmtMoney(e.net)}</td>
+                <td style={tdNum}>{fmtMoney(e.y1)}</td><td style={tdNum}>{fmtMoney(e.y2)}</td><td style={tdNum}>{fmtMoney(e.low)}</td>
+                <td style={tdNum}>{e.cashPos ?? '—'}</td><td style={tdNum}>{fmtMoney(e.bank24)}</td><td style={tdNum}>{fmtMoney(e.bank48)}</td>
+                <td style={{ ...td, whiteSpace: 'normal', fontSize: 11.5 }}>{e.pct === 0 ? 'Highest lifetime value and run-rate; slowest cash; every file carries month-by-month cancellation risk and chargeback exposure until it ages.' : e.pct === 100 ? 'Fastest cash and no chargeback tail; gives up the residual book, so the mature run-rate is lowest; the right default only when cancellation runs above break-even.' : 'Half the residual book, half the liquidity; the hedge when measured cancellation sits near break-even or the reserve is still being built.'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: 11.5, color: T.muted, marginTop: 4 }}>Set the election for the plan in section 3b (Shield buyout share); this table re-runs the full 48-month model at 0%, 50% and 100% on everything else as entered.</div>
+
+      <div style={{ fontWeight: 800, fontSize: 13, margin: '12px 0 6px' }}>Debt Validation (SS) — per cleared file, after the rep (rep applies to US / owner-closed deals only)</div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 1050 }}>
           <thead><tr>
             <th style={th}>Enrolled debt</th><th style={{ ...th, textAlign: 'right' }}>Client payment</th><th style={{ ...th, textAlign: 'right' }}>Rep</th>
             <th style={{ ...th, textAlign: 'right' }}>Buyout lump</th><th style={{ ...th, textAlign: 'right' }}>Buyout net</th>
-            <th style={{ ...th, textAlign: 'right' }}>Perpetual if never cancels</th><th style={{ ...th, textAlign: 'right' }}>Perpetual expected @ {fmtNum(cancel, 1)}%</th><th style={{ ...th, textAlign: 'right' }}>Perpetual net</th>
+            <th style={{ ...th, textAlign: 'right' }}>Perpetual payout if never cancels</th><th style={{ ...th, textAlign: 'right' }}>Perpetual expected @ {fmtNum(cancel, 1)}%</th><th style={{ ...th, textAlign: 'right' }}>Perpetual net</th>
             <th style={{ ...th, textAlign: 'right' }}>Downside @15%</th><th style={{ ...th, textAlign: 'right' }}>Upside @6%</th>
-            <th style={{ ...th, textAlign: 'right' }}>Break-even cancel</th><th style={{ ...th, textAlign: 'right' }}>Perpetual passes buyout in</th>
+            <th style={{ ...th, textAlign: 'right' }}>Break-even cancel</th><th style={{ ...th, textAlign: 'right' }}>Months for perpetual to pass buyout</th>
             <th style={{ ...th, textAlign: 'right' }}>Net per $100k enrolled — buyout / perpetual</th><th style={th}>Call</th>
           </tr></thead>
           <tbody>
@@ -117,7 +150,7 @@ export default function ElectionPlanner({ inputs }: { inputs: ModelInputs }) {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 900 }}>
           <thead><tr>
             <th style={th}>Enrolled debt</th><th style={{ ...th, textAlign: 'right' }}>Rep</th>
-            <th style={{ ...th, textAlign: 'right' }}>Accelerated if never cancels</th><th style={{ ...th, textAlign: 'right' }}>Residual if never cancels</th>
+            <th style={{ ...th, textAlign: 'right' }}>Accelerated payout if never cancels</th><th style={{ ...th, textAlign: 'right' }}>Residual payout if never cancels</th>
             <th style={{ ...th, textAlign: 'right' }}>Accelerated net @ {fmtNum(cancel, 1)}%</th><th style={{ ...th, textAlign: 'right' }}>Residual net @ {fmtNum(cancel, 1)}%</th>
             <th style={{ ...th, textAlign: 'right' }}>Cash in first 7 months — accel / resid</th><th style={{ ...th, textAlign: 'right' }}>Net per $100k — accel / resid</th><th style={th}>Call</th>
           </tr></thead>
