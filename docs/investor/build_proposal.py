@@ -2,6 +2,7 @@ import json
 from pkg_common import *
 DE = json.load(open(HERE + '/deal-economics.json'))
 S1S, S1T, S2S, S2T = sc('S1', 'SAFE'), sc('S1', 'TARGET'), sc('S2', 'SAFE'), sc('S2', 'TARGET')
+S1P, S2P = sc('S1', 'POSSIBLE'), sc('S2', 'POSSIBLE')
 R0S, R1S = sc('R0', 'SAFE'), sc('R1', 'SAFE')
 SH15, SH25 = DE['shield']['15000'], DE['shield']['25000']
 doc = 'Investment Proposal'; T = 16; P = []
@@ -24,11 +25,11 @@ P.append(page('Investment Proposal · 1', 'Mission And Executive Summary',
  '<div>' + st('What You Are Buying Into') + ul([
    '<b>A working system, not an idea.</b> ai.fundingtier.com is the company\'s custom operating system: deal router, scripts, training, hiring, pay engine and this model, all tied to the app.krestmarketing.com sub-account that runs marketing, communications and the data pushed to backends.',
    '<b>Four programs from one call.</b> Debt settlement, debt validation, debt resolution and tax resolution — each with a known payout schedule.',
-   '<b>Credit data already wired.</b> A TransUnion credit-data purchase gateway (for mail campaigns) and the Array soft-pull and offers engine (a lower-cost alternative to full credit pulls) are built and live.',
+   '<b>Credit data.</b> A TransUnion credit-data purchase gateway (for mail campaigns) is built. An Array integration is available to us — a tool that pings a credit report for a pass / fail on a range or specific credit parameters, which can cut the credit-pull costs charged by the backend providers; it is not built yet and carries a minimum-use commitment that is carried as an operating cost.',
    '<b>Transparent to the partner.</b> You see the same dashboards, bank view and model the operator sees, every day.']) + '</div>' +
  '<div>' + st('The Plan In One Breath') + ol([
    'Hire three Egypt-based closers at $12/hour (CallBlade, referred by Shield Services) on a 1–2 week trial; Nathan closes alongside them.',
-   f'Buy live transfers at $14 per call (2-minute buffer) to keep every seat busy; first 90 days all files go to Shield Services.',
+   f'Buy live transfers at $14 per call (2-minute buffer) to keep every seat busy; first 90 days at least 85% of files go to Shield Services, 80% of them as buyouts and 20% perpetual, so cash comes in from month 2 and Paul\'s capital is not at risk for long.',
    f'Reach the operating reserve ({M(S1S["months"][5]["res"])}) by about month {S1S["reserveMet"]}; then add mail and social to fill 25% of volume, never more than 50%.',
    'Add closers and a team lead by the dollar rules on page 8; distributions start once the reserve is met; after the Manager\'s draw, 100% of member distributions go to Paul until his $90,000 is back, then 70 / 30.']) +
  where('Business Plan (Exhibit B) §1–§3 · Operating Model → Growth Plan on ai.fundingtier.com') + '</div></div>', doc, 2, T))
@@ -47,18 +48,18 @@ P.append(page('Investment Proposal · 2', 'What Is Already Built',
    'Contacts, pipelines, workflows, call tracking and campaign attribution',
    'Universal do-not-call management and litigator scrub integrated into every campaign',
    'Dialer, SMS and ringless-voicemail campaigns on purchased data when we choose to run our own',
-   'Automations that push enrolled files to the servicing partners',
+   'Automations that push each prospect\'s general information to the backend partner, which then enrolls the client',
    'Recruiting pipeline for closers and BPOs'], 'b sm') + '</div>' +
  f'<div class="card" style="--c:var(--purple)"><h3>Data, QC and pay</h3><div class="sub">Built for cost control and clean files</div>' + ul([
    '<b>TransUnion credit-data purchase gateway</b> for prescreened mail-piece marketing',
-   '<b>Array soft credit pull and offers engine</b> — a reduced-cost alternative to full pulls on every call',
+   '<b>Array</b> (integration available, not yet built) — pings a credit report for a pass / fail on a range or specific credit parameters; not a full pull; can reduce the backend providers\' credit-pull costs; minimum-use commitment carried as overhead',
    'AI call-QC: every enrollment call transcribed and scored before the first draft',
    'Pay and reconciliation engine: matches every partner remittance to its deal, applies clawbacks, produces the commission run the CPA posts from',
    'E&amp;O insurance in place ($400–$500 / year)'], 'b sm') + '</div></div>' +
  st('What The Stack Means For The Investment') +
  '<div class="cols c2">' + ul([
    '<b>No build risk.</b> The $90,000 is spent on closers and calls that produce files from month one.',
-   '<b>Lower cost per file.</b> Soft pulls, DNC scrubbing and QC happen before money is spent on a bad call.',
+   '<b>Lower cost per file.</b> Credit-parameter checks, DNC scrubbing and QC happen before money is spent on a bad call.',
    '<b>Nothing lives in a spreadsheet or in anyone\'s head.</b> Every number in this proposal is produced by the same engine the business runs on.']) +
  ul(['<b>Full visibility.</b> AI-powered dashboards tell both members what to continue, cut or improve — daily briefing, weekly recap, monthly KPI review.',
    '<b>Scales without re-platforming.</b> Adding closers, a second transfer vendor or a mail program is configuration, not development.',
@@ -72,7 +73,7 @@ P.append(page('Investment Proposal · 3', 'How Funding Tier Is Paid',
  table([('Program', ''), ('Partner', ''), ('Payout to Funding Tier', ''), ('When it arrives', ''), ('Risk window', '')], [
   ['<b>Debt Settlement</b>', 'Level Debt', '8% of enrolled debt, once' + math('$15,000 × 8% = $1,200'), 'Month 2, after the first client payment clears', 'Clawed back if payment 2 is missed (NSF) — modelled at 15%'],
   ['<b>Debt Validation</b>', 'Shield Services', f'<b>Perpetual:</b> 100% of (payment − $40) for payments 1–4, then 35% to month 36' + math(f'$15k file: ${SH15["payment"]} − $40 = ${SH15["perpFirst"]} × 4, then ${round(SH15["perpLater"])} × 32 = {M(SH15["fullPerp"])}') + f'<b>Buyout:</b> one lump after the first payment clears' + math(f'(${SH15["payment"]} − $40) × 65% × 6 = {M(SH15["buyout"])}; × 100% × 6 on $20k+'), 'Perpetual: monthly. Buyout: once', 'Perpetual: cancellations. Buyout: ends at the lump'],
-  ['<b>Debt Resolution</b>', 'Elite Legal Practice', '<b>Residual:</b> payments 1–2 pass through less $4; from payment 3, 60% of (draft − $84) monthly for the term written (48 standard, up to 60)' + math(f'$15k file: {M(DE["elp"]["15000"]["m1"])} × 2, then {M(DE["elp"]["15000"]["m3"])} × 42 = {M(DE["elp"]["15000"]["full"])}') + '<b>Accelerated:</b> 90% of net for months 1–7, then 25% to month 24', 'Monthly', 'Cancellations; $250 minimum client draft caps the term at 44 months on $15k'],
+  ['<b>Debt Resolution</b>', 'Elite Legal Practice', '<b>Residual:</b> payments 1–2 pass through less $4; from payment 3, 60% of (draft − $84) monthly for the term written — standard terms run 36–42 months at $15k–$25k of debt up to 54–60 months at $50k+, and any file may be stretched to 60 months as long as the client\'s draft stays at or above $250 (the residual is earned on months 1–48)' + math(f'$15k file: {M(DE["elp"]["15000"]["m1"])} × 2, then {M(DE["elp"]["15000"]["m3"])} × 42 = {M(DE["elp"]["15000"]["full"])}') + '<b>Accelerated:</b> 90% of net for months 1–7, then 25% to month 24', 'Monthly', 'Cancellations; $250 minimum client draft caps the term at 44 months on $15k'],
   ['<b>Tax Resolution</b>', 'Milestone Tax Solutions', '50% of the $500 Phase 1 fee; 40–60% of the ~$5,000 Phase 2 fee by volume tier', 'As each client payment clears', '~15-day refund window'],
  ], 'sm', ['1.15in', '1.25in', '4.1in', '1.6in', '1.9in']) +
  '<div class="cols c32">' +
@@ -106,7 +107,7 @@ P.append(page('Investment Proposal · 4', 'The Team: Plan A, Plan B, Plan C',
    'Same trial, same KPIs, same bonus structure',
    'Only if Plan A fails its trial or cannot staff 3 seats',
    'Scripts, router and QC are identical — the vendor plugs into the same system',
-   'Risk: accent and debt-program knowledge; mitigated by Shield-only first 90 days'], 'b sm') + '</div>' +
+   'Risk: accent and debt-program knowledge; mitigated by the Shield-first 90 days'], 'b sm') + '</div>' +
  '<div class="card" style="--c:var(--purple)"><h3>Plan C — one US closer on a draw</h3><div class="sub">Well-vetted, virtual, any state · 30-day trial</div>' + ul([
    'W-2 inside sales must earn at least state minimum wage every week, so a draw against commission is required (Exhibit B §9 lists every state)',
    f'Seat cost {M(S2S["seatCost"])} / month before commission' + math('$16.90 × 40 × 4.333 + payroll taxes'),
@@ -127,7 +128,7 @@ P.append(page('Investment Proposal · 4', 'The Team: Plan A, Plan B, Plan C',
 # 5 Marketing mix
 sl = SLIDE['cases']['SAFE']; cpd = sl['costPerDeal']
 P.append(page('Investment Proposal · 5', 'Where The Calls Come From',
- 'Purchased live transfers fill the seats from day one. Mail and paid social are added only to replace part of the transfer volume with larger-debt files — a target of 25% of volume, never more than 50%.',
+ 'Purchased live transfers fill the seats from day one. Mail and paid social cost more per call because the caller is higher-intent: a mail response is a household choosing a loan swap or debt relief; a social call is someone who went looking. Both should carry larger debt, close more often and lean toward settlement — target 25% of volume, never more than 50%.',
  '<div class="cols c3">' +
  '<div class="card" style="--c:var(--teal)"><h3>Live transfers — the standard election</h3>' + ul([
    '<b>$14 per call, 2-minute buffer</b>: we pay only if the caller stays on 2 minutes',
@@ -163,15 +164,15 @@ def srow(o, label):
     return [f'<b>{label}</b>', N(o['deals']), M(o['rev']), M(o['labor']), M(o['mkt']), M(o['comm']), M(o['other']), (M(o['net']), 'n g' if o['net'] > 0 else 'n r'), M(o['y1']), M(o['low']), str(o['cashPos'] or '—'), str(o['reserveMet'] or '—')]
 hdr = [('Scenario', ''), ('Deals / mo', 'n'), ('Revenue', 'n'), ('Labor', 'n'), ('Transfers', 'n'), ('US commission', 'n'), ('Other overhead', 'n'), ('Net profit / mo', 'n'), ('Year-1 net', 'n'), ('Lowest bank', 'n'), ('Cash+ month', 'n'), ('Reserve met', 'n')]
 P.append(page('Investment Proposal · 6', 'Four Launch Scenarios',
- 'Two teams, two assumption sets. "Safe" is 15% close, 60% of first payments clear, 15% monthly cancel on perpetual files. "Target" is 16%, 70% and 10%. Both carry a 15% second-payment NSF on settlement files and push 100% of files to Shield Services for the first 90 days.',
+ 'Two teams, two assumption sets. "Safe" is 15% close, 60% of first payments clear, 15% monthly cancel on perpetual files. "Target" is 16%, 70% and 10%. All carry a 15% second-payment NSF on settlement files and send at least 85% of files to Shield Services for the first 90 days, 80% of them as buyouts. "Possible" adds the positive feedback loop: closers improve 5% a month from month 4 (capped at +40%, a 45-minute enrollment) and tax resolution is sold from month 6.',
  st('Mature Month (Average Of Months 43–48) And First-Year Results', 'owner-operator closes in every scenario · virtual office · $90,000 in the bank on day one') +
- table(hdr, [srow(S1S, 'S1 · Owner + 3 Egypt closers — Safe'), srow(S1T, 'S1 · Owner + 3 Egypt closers — Target'), srow(S2S, 'S2 · Owner + 3 US W-2 closers — Safe'), srow(S2T, 'S2 · Owner + 3 US W-2 closers — Target'), srow(R0S, 'Reference · Owner only — Safe'), srow(R1S, 'Reference · Owner + 1 US closer (Plan C) — Safe')], 'sm',
+ table(hdr, [srow(S1S, 'S1 · Owner + 3 Egypt closers — Safe'), srow(S1T, 'S1 · Owner + 3 Egypt closers — Target'), srow(S1P, 'S1 · Owner + 3 Egypt closers — Possible'), srow(S2S, 'S2 · Owner + 3 US W-2 closers — Safe'), srow(S2T, 'S2 · Owner + 3 US W-2 closers — Target'), srow(S2P, 'S2 · Owner + 3 US W-2 closers — Possible'), srow(R0S, 'Reference · Owner only — Safe'), srow(R1S, 'Reference · Owner + 1 US closer (Plan C) — Safe')], 'xs',
   ['2.5in', '0.6in', '0.8in', '0.7in', '0.75in', '0.85in', '0.85in', '0.9in', '0.85in', '0.8in', '0.6in', '0.6in']) +
  '<div class="cols c3">' +
  '<div>' + st('What Moves The Number') + ul([
    f'<b>Who closes.</b> Three Egypt closers cost {M(S1S["labor"])} / month and earn no commission; three US closers cost {M(S2S["labor"])} plus {M(S2S["comm"])} in commission — a {M(S1S["net"] - S2S["net"])} / month difference at maturity.',
    f'<b>Retention.</b> Moving from safe to target adds {M(S1T["net"] - S1S["net"])} / month on the same team — the single biggest lever, and it is operational: qualification, income verification, QC and service.',
-   '<b>Volume per seat.</b> Every scenario assumes 1.25 deals per 8 closer hours — the planning floor, not a stretch.'], 'b sm') + '</div>' +
+   '<b>Volume per seat.</b> Safe and target assume 1.25 deals per 8 closer hours — the planning floor. "Possible" lets closers improve as they learn (' + M(S1P['net']) + ' / month mature on S1) — a projection, not a promise.'], 'b sm') + '</div>' +
  '<div>' + st('How To Read "Lowest Bank"') + ul([
    f'The bank never drops below {M(S1S["low"])} in S1 — the first month costs {M(-S1S["months"][0]["net"])} before any payout arrives, and payouts start in month 2.',
    f'S2 dips to {M(S2S["low"])} because US seats cost more and commission is paid as files pay.',
@@ -187,13 +188,13 @@ def mrows(o, n=12):
     return [[f'Month {m["mo"]}', N(m['deals']), M(m['rev']), M(m['labor']), M(m['mkt']), M(m['comm']), (M(m['net']), 'n g' if m['net'] >= 0 else 'n r'), M(m['bank']), M(m['res']), P0(m['util'])] for m in o['months'][:n]]
 mh = [('', ''), ('Deals', 'n'), ('Revenue', 'n'), ('Labor', 'n'), ('Transfers', 'n'), ('US comm.', 'n'), ('Net', 'n'), ('Bank', 'n'), ('Reserve target', 'n'), ('Seats busy', 'n')]
 P.append(page('Investment Proposal · 7', 'Month By Month — Recommended Launch (S1, Safe Case)',
- 'Owner + 3 Egypt closers, virtual, transfers only, 100% Shield Services for 90 days. Revenue is low in month 1 because partners pay after the client\'s first payment clears; the bank is the proof the plan holds.',
+ 'Owner + 3 Egypt closers, virtual, transfers only, 85% Shield Services for 90 days with 80% buyouts. Revenue is low in month 1 because partners pay after the client\'s first payment clears; the buyouts bring most of it in by month 2 — the bank is the proof the plan holds.',
  '<div class="cols c32">' +
  '<div>' + table(mh, mrows(S1S), 'xs', ['0.7in', '0.5in', '0.75in', '0.65in', '0.7in', '0.65in', '0.75in', '0.8in', '0.8in', '0.6in']) + '</div>' +
  '<div>' + st('Signals On This Path') + ul([
    f'<b>Month 1:</b> {M(-S1S["months"][0]["net"])} out, nothing in yet. Bank {M(S1S["months"][0]["bank"])}.',
-   f'<b>Month 2:</b> first Shield payouts arrive; the month is nearly break-even.',
-   f'<b>Month 3–4:</b> profitable; the mix opens to all three programs after the 90-day Shield-only period.',
+   f'<b>Month 2:</b> Shield buyout lumps arrive on 80% of month-1 files; the month is profitable and the bank is back above $90,000.',
+   f'<b>Month 3–4:</b> the mix opens to all three programs after the 90-day Shield-first period; perpetual share rises as measured cancellation comes in.',
    f'<b>Month {S1S["reserveMet"]}:</b> operating reserve of {M(S1S["months"][S1S["reserveMet"]-1]["res"])} reached (6 months of overhead) — distributions begin and marketing tests may start.',
    f'<b>Month 12:</b> bank {M(S1S["m12bank"])}. Year-1 net {M(S1S["y1"])}.',
    f'<b>Month 24:</b> bank {M(S1S["m24bank"])} before distributions; year-2 net {M(S1S["y2"])}.'], 'b sm') +
@@ -229,7 +230,7 @@ P.append(page('Investment Proposal · 9', 'What The $90,000 Unlocks',
  table([('Line', ''), ('Amount', 'n')], [
   ['3 Egypt closers × 6 months' + math(f'{M(seat1)} × 3 × 6'), M(seat1 * 18)],
   ['Live transfers × 6 months' + math(f'{M(S1S["mkt"])} / mo × 6'), M(S1S['mkt'] * 6)],
-  ['Software, telephony, soft pulls, QC, insurance × 6' + math(f'{M(S1S["other"])} / mo × 6'), M(S1S['other'] * 6)],
+  ['Software, telephony, credit pulls, QC, insurance × 6' + math(f'{M(S1S["other"])} / mo × 6'), M(S1S['other'] * 6)],
   ['Legal and accounting for the transaction', '$6,000'],
   ['First direct-mail test (month 6+)', '$12,000'],
  ], 'sm', ['6in', '1.4in'], tot=['Total cash committed in the first 6 months', (M(seat1 * 18 + S1S['mkt'] * 6 + S1S['other'] * 6 + 18000), 'n')]) +
@@ -347,7 +348,7 @@ P.append(page('Investment Proposal · 13', 'Risk Factors And How Each Is Mitigat
   ('Client attrition and chargebacks', 'Files that stop paying stop paying us', [
     'Income verification on every file — payment propensity, not just willingness',
     'AI call-QC before the first draft; pressure or confusion goes to review',
-    'Shield-only first 90 days so closers master one program before three',
+    'Shield-first 90 days (≥85%, 80% buyouts) so closers master one program before three and early cash is locked in',
     'Settlement second-payment NSF (15%) and perpetual cancellations are in every number here',
     'Buyout election on validation files when cancellation runs above the break-even (page 12 of Exhibit B)'], 'var(--amber)'),
   ('Partner concentration', 'Four partners remit our revenue', [
@@ -383,10 +384,10 @@ P.append(page('Investment Proposal · 14', 'Market And SWOT In Brief',
    '<b>Profitability:</b> front-end enrollment carries no servicing cost and no client funds; margin is set by cost per file and retention — the two levers this plan measures weekly.',
    '<b>Tax resolution:</b> the IRS accepted only 14% of 38,797 offers in compromise in FY2025 — a large population of taxpayers who need professional help; Milestone prices every case before it is sold.'], 'b sm') + '</div>' +
  '<div class="swot">' +
- f'<div class="q" style="--c:var(--green)"><h3>Strengths</h3>{ul(["Integrated system already built and running", "Four programs from one call; partner-paid, no client funds", "Credit data and soft-pull engines lower cost per file", "Low fixed cost: virtual, offshore closers, no office"], "b sm")}</div>' +
+ f'<div class="q" style="--c:var(--green)"><h3>Strengths</h3>{ul(["Integrated system already built and running", "Four programs from one call; partner-paid, no client funds", "TransUnion data gateway built; Array credit-parameter check available", "Low fixed cost: virtual, offshore closers, no office"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--red)"><h3>Weaknesses</h3>{ul(["Single operator at launch; capacity caps at 3 closers until a lead is added", "Revenue arrives 1–2 months behind enrollment", "Retention is assumed, then measured — the safe case is deliberately conservative", "New brand; no mail history yet"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--blue)"><h3>Opportunities</h3>{ul(["Record consumer debt and rising delinquency", "$25k+ households reachable through TransUnion prescreen mail", "Tax resolution attached to the same call at no acquisition cost", "Build the back end later and keep the whole payout"], "b sm")}</div>' +
- f'<div class="q" style="--c:var(--amber)"><h3>Threats</h3>{ul(["TCPA litigators and state rule changes", "Partner terms can change at renewal", "Transfer vendor quality and price", "Larger competitors outbid on paid media"], "b sm")}</div>' +
+ f'<div class="q" style="--c:var(--amber)"><h3>Threats</h3>{ul(["TCPA litigators and state rule changes", "Partner terms can change at renewal", "Transfer vendor quality and price", "<b>Market saturation</b> — many respondents are already in a program and looking for faster settlements or lower payments; a threat to retention and an opportunity for the router, which can place them in a better-fit program"], "b sm")}</div>' +
  '</div></div>', doc, 15, T, where='Business Plan §4 (market, sources) and §5 (SWOT)'))
 
 # 15 Closing
@@ -399,7 +400,7 @@ P.append(page('Investment Proposal · 15', 'Closing Process And Acknowledgement'
    '<b>Accountant\'s tax review</b>: partnership classification, EIN and state filings, assumed tax-distribution rate.',
    '<b>Open the accounts</b>: operating account and high-yield reserve account with both members as signers and dual control above $10,000.',
    '<b>Sign and fund</b> the first tranche (or the full $90,000); investor access to dashboards, model and bank view is live the same day.',
-   '<b>Launch</b>: CallBlade trial begins; transfers switched on; Shield-only for 90 days; first daily briefing the next morning.']) + '</div>' +
+   '<b>Launch</b>: CallBlade trial begins; transfers switched on; Shield-first for 90 days (80% buyouts); first daily briefing the next morning.']) + '</div>' +
  '<div>' + st('Open Items To Confirm With Paul') + ul([
    'Investing personally or through an entity he controls',
    'Tranches or $90,000 at closing',
