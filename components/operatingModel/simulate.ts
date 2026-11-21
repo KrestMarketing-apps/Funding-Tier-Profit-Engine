@@ -51,6 +51,12 @@ interface Cohort {
    * change already-closed deals.
    */
   payoutDealMonthOverride?: number;
+  /**
+   * Deals closed by hourly offshore / BPO closers. They are paid by the hour
+   * only — no % of enrolled debt, no flat per-deal commission, no bonuses —
+   * so this slice of a cohort carries no rep commission at payout.
+   */
+  noCommission?: boolean;
 }
 
 export function computeCapacity(
@@ -291,16 +297,23 @@ export function runModel(inputs: ModelInputs): ModelResults {
           });
         }
         if (bpoDealCount > 0) {
-          // BPO/overseas share is never in draw mode — falls through to
-          // agentCommissionForDeal at payout time since repDrawRate is unset.
+          // Offshore / BPO closers are hourly only: no commission on their deals.
           cohorts.push({
             backendKey: k, startMonth: m, dealCount: bpoDealCount,
-            avgDebt: avgDebtM[k],
+            avgDebt: avgDebtM[k], noCommission: true,
           });
         }
       } else {
-        cohorts.push({
-          backendKey: k, startMonth: m, dealCount: dealsByBackend[k],
+        const usDealCount = dealsByBackend[k] * usShare;
+        const bpoDealCount = dealsByBackend[k] - usDealCount;
+        if (bpoDealCount > 0) {
+          cohorts.push({
+            backendKey: k, startMonth: m, dealCount: bpoDealCount,
+            avgDebt: avgDebtM[k], noCommission: true,
+          });
+        }
+        if (usDealCount > 0) cohorts.push({
+          backendKey: k, startMonth: m, dealCount: usDealCount,
           avgDebt: avgDebtM[k],
         });
       }
@@ -338,7 +351,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
       // of the following month"), so it is measured WITHOUT the remittance lag.
       const unlaggedDealMonth = m - cohort.startMonth + 1;
       const payoutDealMonth = cohort.payoutDealMonthOverride ?? agentPayoutMonth(cohort.backendKey, inputs);
-      if (unlaggedDealMonth === payoutDealMonth) {
+      if (unlaggedDealMonth === payoutDealMonth && !cohort.noCommission) {
         const survivingAtPayout = (survival[cohort.backendKey][unlaggedDealMonth] ?? 0) * cohort.dealCount;
         const monthlyEnrolled = cohort.dealCount * cohort.avgDebt;
         const perDealComm = cohort.repDrawRate != null
@@ -401,10 +414,12 @@ export function runModel(inputs: ModelInputs): ModelResults {
     }
 
     // ── Bonuses and spiffs ───────────────────────────────────────────────────
+    // Bonuses and SPIFFs apply to commission-eligible closers only (owner-
+    // operator and US W-2); offshore / BPO closers are hourly with no bonus.
     const bonuses = computeBonuses(inputs, {
-      dealsByBackend,
+      dealsByBackend: { LEVEL: dealsByBackend.LEVEL * usShare, CS: dealsByBackend.CS * usShare, LEGACY: dealsByBackend.LEGACY * usShare },
       avgDebt: inputs.volume.avgDebt,
-      closers: rosterMonth.closers,
+      closers: usClosers,
     });
 
     // Compensation is paid in arrears, exactly like backend-driven commission —
