@@ -15,6 +15,7 @@ S = None
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = '/home/claude/ftdocs/'
 logo = open(HERE + '/assets/logo.txt').read()
+logo_full = open(HERE + '/assets/logo-full.txt').read()  # official Funding Tier logo (mark + wordmark, white)
 DATA = json.load(open(HERE + '/launch-scenarios.json'))
 CURVES = json.load(open(HERE + '/election-curves.json'))
 SC = DATA['scenarios']; SLIDE = DATA['slide']; ASSUME = DATA['assumptions']
@@ -39,7 +40,8 @@ html,body{background:#fff;color:var(--ink);font-family:"DM Sans",Arial,sans-seri
 h1,h2,h3{font-family:"Poppins",sans-serif}
 .band{background:linear-gradient(135deg,var(--navy) 0%,var(--navy2) 55%,#0f3d3a 100%);color:#fff;padding:0.22in 0.5in 0.2in;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}
 .band .eyebrow{display:flex;align-items:center;gap:8px;font-size:7.8pt;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#9fd9d1}
-.band .eyebrow img{width:20px;height:20px;border-radius:50%;background:#fff}
+.band .eyebrow img{height:20px;width:auto}
+.band .eyebrow .sep{color:#5f7a76;margin:0 2px}
 .band h1{font-size:17pt;font-weight:900;margin-top:4px;line-height:1.12}
 .band p{font-size:8.8pt;color:#c9d6d3;margin-top:4px;max-width:9.6in;line-height:1.35}
 .band .where{font-size:7.4pt;color:#9fd9d1;text-align:right;white-space:nowrap;line-height:1.4;flex-shrink:0}
@@ -88,7 +90,7 @@ table.t td.g{color:var(--green)}table.t td.r{color:var(--red)}
 .tag.h{background:#dcfce7;color:#15803d}.tag.m{background:#f0fdfa;color:#0f766e}.tag.x{background:#fee2e2;color:#b91c1c}.tag.b{background:#f1f5f9;color:#475569}.tag.a{background:#fef3c7;color:#92400e}
 .cover{background:linear-gradient(160deg,var(--navy) 0%,var(--navy2) 50%,#0f3d3a 100%);color:#fff;height:8.5in;display:flex;flex-direction:column;justify-content:space-between;padding:0.7in 0.85in}
 .cover .eyebrow{display:flex;align-items:center;gap:10px;font-size:9pt;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#9fd9d1}
-.cover .eyebrow img{width:30px;height:30px;border-radius:50%;background:#fff}
+.cover .eyebrow img{height:68px;width:auto}
 .cover h1{font-size:32pt;font-weight:900;line-height:1.08;margin-top:20px;max-width:7.6in}
 .cover .sub{font-size:12pt;color:#c9d6d3;margin-top:12px;max-width:7.6in;line-height:1.45}
 .cover .meta{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 30px;font-size:9pt;color:#c9d6d3;border-top:1px solid rgba(255,255,255,.18);padding-top:14px}
@@ -124,16 +126,16 @@ def head(title):
     return f'<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>{title}</title>{FONTS}{CSS}</head><body>'
 
 def foot(doc, n, total):
-    return f'<div class="foot"><span><b>Funding Tier LLC</b> · {doc} · Confidential · {DATE}</span><span>Page {n} of {total}</span></div>'
+    return f'<div class="foot"><span><img src="{logo}" alt="" style="height:11px;width:auto;vertical-align:-2px;margin-right:4px"/><b>Funding Tier LLC</b> · {doc} · Confidential · {DATE}</span><span>Page {n} of {total}</span></div>'
 
 def page(section, h1, lede, body, doc, n, total, where=None):
     w = f'<div class="where"><b>Also illustrated in</b>{where}</div>' if where else ''
-    return f'''<div class="page"><div class="band"><div><div class="eyebrow"><img src="{logo}" alt=""/> {section}</div><h1>{h1}</h1><p>{lede}</p></div>{w}</div><div class="pad">{body}</div>{foot(doc, n, total)}</div>'''
+    return f'''<div class="page"><div class="band"><div><div class="eyebrow"><img src="{logo_full}" alt="Funding Tier"/><span class="sep">|</span> {section}</div><h1>{h1}</h1><p>{lede}</p></div>{w}</div><div class="pad">{body}</div>{foot(doc, n, total)}</div>'''
 
 def cover(title, sub, meta, conf=None):
     m = ''.join(f'<div><b>{k}</b>{v}</div>' for k, v in meta)
     conf = conf or 'This document is confidential and is provided to the named recipient solely to evaluate a proposed investment in Funding Tier LLC. It is not an offer to sell securities and is not binding on either party. Any investment will be made only under definitive agreements prepared by counsel. Financial figures are outputs of the company\'s operating model on stated assumptions and are illustrations, not forecasts or guarantees.'
-    return f'''<div class="page"><div class="cover"><div><div class="eyebrow"><img src="{logo}" alt=""/> Funding Tier LLC</div><h1>{title}</h1><div class="sub">{sub}</div></div><div><div class="meta">{m}</div><div class="conf">{conf}</div></div></div></div>'''
+    return f'''<div class="page"><div class="cover"><div><div class="eyebrow"><img src="{logo_full}" alt="Funding Tier"/></div><h1>{title}</h1><div class="sub">{sub}</div></div><div><div class="meta">{m}</div><div class="conf">{conf}</div></div></div></div>'''
 
 def st(title, note=None):
     return f'<div class="st">{title}{f"<small>{note}</small>" if note else ""}</div>'
