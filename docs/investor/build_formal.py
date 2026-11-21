@@ -121,9 +121,9 @@ f'''<div class="sec" style="margin-top:2px">Worked Example — One $15,000 Enrol
 <div class="r"><span>Payout: 8% × $15,000, once at month 2</span><b>$1,200</b></div>
 <div class="r"><span>Files still paying at month 2</span><b>51%</b></div>
 <div class="r"><span>Expected payout: $1,200 × 51%</span><b>$612</b></div>
-<div class="r"><span>Rep, if US / owner-closed: 1.25% × 51%</span><b>−$96</b></div>
-<div class="r tot"><span>Net, US / owner-closed</span><b>$516</b></div>
-<div class="r tot"><span>Net, offshore-closed</span><b>$612</b></div>
+<div class="r"><span>Rep, if US W-2 closed: 1.25% × 51%</span><b>−$96</b></div>
+<div class="r tot"><span>Net, US W-2 closed</span><b>$516</b></div>
+<div class="r tot"><span>Net, owner- or offshore-closed</span><b>$612</b></div>
 </div><div class="note" style="font-size:7.1pt;margin-top:4px">Exposure ends after the client's 2nd payment.</div></div>
 <div class="card" style="--c:var(--blue);padding:9px 11px;background:#f4f8fd"><h3>Debt Validation (SS)</h3><div class="wx">
 <div class="r"><span>Payment $320 − $40 servicing</span><b>$280 / mo</b></div>
@@ -131,9 +131,9 @@ f'''<div class="sec" style="margin-top:2px">Worked Example — One $15,000 Enrol
 <div class="r"><span>Payments 5–36 at 35%: 32 × $98</span><b>$3,136</b></div>
 <div class="r"><span>Full payout if the client stays</span><b>$4,256</b></div>
 <div class="r"><span>Expected: each payment × share paying</span><b>$739</b></div>
-<div class="r"><span>Rep, if US / owner-closed: $275 × 51%</span><b>−$140</b></div>
-<div class="r tot"><span>Net, US / owner-closed</span><b>$599</b></div>
-<div class="r tot"><span>Net, offshore-closed</span><b>$739</b></div>
+<div class="r"><span>Rep, if US W-2 closed: $275 × 51%</span><b>−$140</b></div>
+<div class="r tot"><span>Net, US W-2 closed</span><b>$599</b></div>
+<div class="r tot"><span>Net, owner- or offshore-closed</span><b>$739</b></div>
 </div><div class="note" style="font-size:7.1pt;margin-top:4px">Or buyout: $280 × 65% × 6 = $1,092 once, after payment 1 clears.</div></div>
 <div class="card" style="--c:var(--purple);padding:9px 11px;background:#f8f5fd"><h3>Debt Resolution (ELP)</h3><div class="wx">
 <div class="r"><span>Client draft, 44 months</span><b>$251 / mo</b></div>
@@ -141,12 +141,12 @@ f'''<div class="sec" style="margin-top:2px">Worked Example — One $15,000 Enrol
 <div class="r"><span>Payments 3–44: 42 × 60% × $167</span><b>$4,209</b></div>
 <div class="r"><span>Full payout if the client stays</span><b>$4,703</b></div>
 <div class="r"><span>Expected: each payment × share paying</span><b>$564</b></div>
-<div class="r"><span>Rep, if US / owner-closed: $275 × 51%</span><b>−$140</b></div>
-<div class="r tot"><span>Net, US / owner-closed</span><b>$423</b></div>
-<div class="r tot"><span>Net, offshore-closed</span><b>$564</b></div>
+<div class="r"><span>Rep, if US W-2 closed: $275 × 51%</span><b>−$140</b></div>
+<div class="r tot"><span>Net, US W-2 closed</span><b>$423</b></div>
+<div class="r tot"><span>Net, owner- or offshore-closed</span><b>$564</b></div>
 </div><div class="note" style="font-size:7.1pt;margin-top:4px">$167 = $251 − $80 maintenance − $4 processing. Or accelerated: 90% × 7 months, then 25% to month 24.</div></div>
 </div>
-<div class="callout" style="margin-top:8px;font-size:8.1pt;padding:7px 11px"><b>The survival weighting (safe case):</b> 60% of enrollments clear their first payment; of those, 15% cancel each month. So the share of files still paying is 60% in month 1, 51% in month 2, 43% in month 3, 37% in month 4, 10% by month 12 and about 1% by month 24. Every scheduled payout is multiplied by that share, which is why a $4,256 Validation payout books as $739. Rep commission and bonuses apply only to deals closed by the owner-operator or a US W-2 closer and carry the same weighting; offshore closers are paid by the hour, so their deals keep the full expected payout. <b>Blended at today's 33 / 40 / 27 mix, one $15,000 deal nets $524 when US-closed and $683 when offshore-closed.</b> At 6% monthly cancellation: $892 and $1,100.</div>
+<div class="callout" style="margin-top:8px;font-size:8.1pt;padding:7px 11px"><b>The survival weighting (safe case):</b> 60% of enrollments clear their first payment; of those, 15% cancel each month. So the share of files still paying is 60% in month 1, 51% in month 2, 43% in month 3, 37% in month 4, 10% by month 12 and about 1% by month 24. Every scheduled payout is multiplied by that share, which is why a $4,256 Validation payout books as $739. Rep commission and bonuses apply only to deals closed by US W-2 closers and carry the same weighting; the owner-operator is paid through the members' distribution agreement and offshore closers by the hour, so deals they close keep the full expected payout. <b>Blended at today's 33 / 40 / 27 mix, one $15,000 deal nets $524 when a US W-2 closer closes it and $683 when the owner or an offshore closer does.</b> At 6% monthly cancellation: $892 and $1,100.</div>
 <div class="sec">Faster Cash Or Larger Value — The Election On Each File (Full Analysis: Business Plan, Section 8)</div>
 <table class="t sm" style="font-size:7.6pt">
 <tr><th>Debt Validation file</th><th class="num">Buyout, net of rep</th><th class="num">Perpetual, net @15%</th><th class="num">Perpetual, net @6%</th><th class="num">Break-even cancellation</th><th>Rule</th></tr>
@@ -154,11 +154,11 @@ f'''<div class="sec" style="margin-top:2px">Worked Example — One $15,000 Enrol
 <tr><td>$25,000 (buyout rate 100% × 6)</td><td class="num">$1,880</td><td class="num">$1,271</td><td class="num">$2,480</td><td class="num">9.1%</td><td>Buy out above 9% cancellation; hold below it</td></tr>
 <tr><td>Debt Resolution $15,000</td><td class="num">accelerated $490</td><td class="num">residual $664</td><td class="num">residual $1,570</td><td class="num">—</td><td>Residual always; accelerate only for cash</td></tr>
 </table>
-<div class="sec">Cost To Acquire One Deal, By Call Source — Against $524 (US-Closed) / $683 (Offshore-Closed)</div>
+<div class="sec">Cost To Acquire One Deal, By Call Source — Against $524 (US W-2 Closed) / $683 (Owner- Or Offshore-Closed)</div>
 <table class="t sm" style="font-size:7.6pt">
 <tr><th>Source</th><th class="num">Cost per deal</th><th>Verdict</th></tr>
 <tr><td>Purchased live transfers ($11.60 blended per billed transfer, 15% close)</td><td class="num">$75</td><td><span class="tag h">Pays at any volume vendors supply</span></td></tr>
-<tr><td>Direct mail + prescreen data (1.25% response, 70% qualified, 20% close, $25k files)</td><td class="num">$522</td><td><span class="tag m">Break-even on US-closed, positive on offshore-closed — the Tier 1 test must confirm the response rate</span></td></tr>
+<tr><td>Direct mail + prescreen data (1.25% response, 70% qualified, 20% close, $25k files)</td><td class="num">$522</td><td><span class="tag m">Break-even on US W-2 closed, positive on owner- or offshore-closed — the Tier 1 test must confirm the response rate</span></td></tr>
 <tr><td>Paid social ($35 per lead, 30% to qualified call, 15% close)</td><td class="num">$778</td><td><span class="tag x">Retargeting of mailed ZIPs only, not stand-alone</span></td></tr>
 </table>
 ''', doc,4,T))
@@ -173,13 +173,13 @@ f'''<div class="sec">Assumptions In Force (Safe Case)</div>
 <tr><td>Transfer close rate and price</td><td class="num" style="text-align:left">15% · $11.60</td><td>Current vendor performance at the buffer mix ($8 / $14 / $55 by buffer length). Vendors can supply well beyond the launch roster.</td><td>Medium</td></tr>
 <tr><td>Deals per 8 closer hours; handle time</td><td class="num" style="text-align:left">1.25 · 65 min</td><td>Floor rule, checked against talk-time capacity.</td><td>Medium</td></tr>
 <tr><td>Program mix</td><td class="num" style="text-align:left">33 / 40 / 27</td><td>Settlement / Validation / Resolution. Tax resolution excluded from all base figures (upside).</td><td>Low–medium</td></tr>
-<tr><td>Labor and commission</td><td class="num" style="text-align:left">$18 · $7 · $5 / hr</td><td>US closer (W-2, California daily overtime) earns commission and bonuses; offshore closer and BPO opener are hourly only, no commission; owner-operator commission only. Each deal is charged one or the other.</td><td>High</td></tr>
+<tr><td>Labor and commission</td><td class="num" style="text-align:left">$18 · $7 · $5 / hr</td><td>US closer (W-2, California daily overtime) earns commission and bonuses; offshore closer and BPO opener are hourly only; the owner-operator takes no wage or commission and is paid through the distribution agreement. Each deal is charged one labor cost.</td><td>High</td></tr>
 <tr><td>Overhead</td><td class="num" style="text-align:left">Virtual</td><td>No rent; CRM, per-seat software, telecom, credit pulls, E&amp;O insurance (in place).</td><td>Low</td></tr>
 <tr><td>Reserve</td><td class="num" style="text-align:left">6 months</td><td>Six months of overhead plus a chargeback buffer on trailing commission, held before distributions.</td><td>Timing only</td></tr>
 </table>
 <div class="sec">What Moves The Answer</div>
 <table class="t sm">
-<tr><th>Case (Option C, owner + 3 offshore closers)</th><th class="num">Net per $15k deal, US / offshore-closed</th><th class="num">Net profit / month, mature</th><th class="num">Bank at month 24</th><th class="num">Cash-positive month</th></tr>
+<tr><th>Case (Option C, owner + 3 offshore closers)</th><th class="num">Net per $15k deal, W-2 / owner-or-offshore closed</th><th class="num">Net profit / month, mature</th><th class="num">Bank at month 24</th><th class="num">Cash-positive month</th></tr>
 <tr><td>60% first pay · 15% cancellation (base in this document)</td><td class="num">$524 / $683</td><td class="num">{M(C15['net'])}</td><td class="num">{M(C15['m24bank'])}</td><td class="num">{C15['cashPos']}</td></tr>
 <tr><td>60% first pay · 6% cancellation</td><td class="num">$892 / $1,100</td><td class="num">{M(C6['net'])}</td><td class="num">{M(C6['m24bank'])}</td><td class="num">{C6['cashPos']}</td></tr>
 </table>
@@ -210,7 +210,7 @@ f'''<div class="sec">Launch Configurations — Mature Month, Every Cost Paid (60
 <div class="sec" style="margin-top:0">Reading The Numbers</div>
 <p class="body">Revenue arrives behind the deals — Debt Settlement pays at month 2, Validation and Resolution build month over month — so the first two months are negative in every configuration. That gap, {M(C15['peak'])} at its deepest for Option C, is what the capital protects; the bank never falls below {M(C15['low'])}.</p>
 <p class="body">Reserve target (six months of overhead plus chargeback buffer) is met in month {C15['reserveMet']}; the first hire trigger fires in month {C15['hire']}. The month-24 bank figure is before the distribution waterfall is applied.</p>
-<p class="body">Three offshore closers (C) produce roughly twice the volume of one US closer (B), and their deals carry no commission or bonuses — only their hourly labor — which is why C's net is more than three times B's. An office (F) costs about {M(B15['net']-F15['net'])} a month of profit for the same output. Direct mail (D) adds deals but needs the Tier 1 test to prove its response rate before it earns a standing budget.</p>
+<p class="body">Three offshore closers (C) produce roughly twice the volume of one US closer (B), and their deals carry no commission or bonuses — only their hourly labor — which is why C's net is well over twice B's. An office (F) costs about {M(B15['net']-F15['net'])} a month of profit for the same output. Direct mail (D) adds deals but needs the Tier 1 test to prove its response rate before it earns a standing budget.</p>
 
 </div></div>''', doc,6,T))
 
