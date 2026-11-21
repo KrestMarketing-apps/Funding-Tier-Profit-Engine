@@ -162,7 +162,7 @@ export const BUILT_IN_PROFILES: StaffingProfile[] = [
   }),
   profile({
     id: 'bi_owner', label: 'Owner Operator — commission only', region: 'California', type: 'owner', role: 'closer',
-    hourlyRate: 0, unpaidBreakMinutes: 0, otEligible: false, commissionOnly: true, overridePct: 0.25,
+    hourlyRate: 0, unpaidBreakMinutes: 0, otEligible: false, commissionOnly: true, overridePct: 0,
     shifts: weekShifts({ start: 9, end: 18 }),
     notes: 'No hourly labor cost. Still occupies closing capacity and still earns the 0.25% override.',
   }),

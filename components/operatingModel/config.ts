@@ -89,7 +89,9 @@ export function typeDefaults(type: EmployeeType) {
   switch (type) {
     case 'owner':
       // Owner-operators take no hourly wage — they are paid by the business.
-      return { hourlyRate: 0, unpaidBreakMinutes: 0, otEligible: false, commissionOnly: true, overridePct: 0.25, role: 'closer' as const };
+      // Owner-operator: no wage, no commission, no bonus, no override — paid
+      // through the members' distribution agreement.
+      return { hourlyRate: 0, unpaidBreakMinutes: 0, otEligible: false, commissionOnly: true, overridePct: 0, role: 'closer' as const };
     case 'manager':
       return { hourlyRate: IN_HOUSE_MIN_WAGE, unpaidBreakMinutes: 60, otEligible: true, commissionOnly: false, overridePct: 0.15, role: 'closer' as const };
     case 'bpo':
