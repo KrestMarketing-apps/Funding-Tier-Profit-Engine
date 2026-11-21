@@ -2,7 +2,7 @@ import json
 S='/tmp/claude-0/-home-claude/c485d32b-5082-557b-96a4-114f513b0d74/scratchpad/pdf/'
 css=open(S+'base.css.html').read(); logo=open(S+'logo.txt').read()
 sc=json.load(open('/tmp/claude-0/-home-claude/c485d32b-5082-557b-96a4-114f513b0d74/scratchpad/scenarios.json'))
-def g(k,c): return next(o for o in sc if o['label'].startswith(k) and o['c']==c)
+def g(k,c): return next(o for o in sc if o['label'].startswith(k+'.') and o['c']==c and o.get('buyout') is None)
 M=lambda n: ('-' if n<0 else '')+'$'+format(int(round(abs(n))),',')
 N=lambda n: format(int(round(n)),',')
 DATE='November 20, 2026'
@@ -62,7 +62,7 @@ thead="<tr><th style='width:2.15in'>Launch configuration</th><th class='num'>Dea
 # ═══════════════ INVESTMENT PROPOSAL ═══════════════
 doc='Investment Proposal'; T=10; P=[]
 P.append(cover('Investment Proposal','A 30% membership interest in Funding Tier LLC for $90,000, with payback-first distributions, formula buyback options and member-level controls.',
- [('Prepared for','Paul Dillenback'),('Prepared by','Nathan Pottish, Manager · Funding Tier LLC'),('Date',DATE),('Version','1.0 — supersedes the Nov 13 and Nov 20 drafts'),('Exhibits','A Term Sheet · B Compensation Schedule · C Accounts Schedule · D Operating Playbook · E Growth Marketing Budget Plan')], doc))
+ [('Prepared for','Paul Dillenback'),('Prepared by','Nathan Pottish, Manager · Funding Tier LLC'),('Date',DATE),('Version','1.0 — supersedes the Nov 13 and Nov 20 drafts'),('Exhibits','A Term Sheet · B Business Plan · C Compensation Schedule · D Operating Playbook · E Growth Marketing Budget Plan · F Accounts Schedule')], doc))
 
 P.append(page('Investment Proposal · 1','Executive Summary',
 'Funding Tier is a front-end enrollment company in consumer debt relief. It qualifies callers, matches each one to the best-fit program, enrolls them, and is paid by the servicing partner as the client pays. This proposal asks for $90,000 for a 30% membership interest, on terms designed so the investor is repaid first and the company stays simple to run.',
@@ -70,7 +70,7 @@ f'''<div class="kv">
 <div><div class="k">The ask</div><div class="v">$90,000</div><div class="d">30% of Funding Tier LLC, three $30,000 tranches</div></div>
 <div><div class="k">Investor payback</div><div class="v">First</div><div class="d">100% of distributions until $90,000 returned</div></div>
 <div><div class="k">Recommended launch, mature month</div><div class="v g">{M(C15['net'])}</div><div class="d">net profit after every cost, safe case</div></div>
-<div><div class="k">Lowest bank balance</div><div class="v g">{M(C15['low'])}</div><div class="d">of $90,000 — capital is reserve and runway</div></div>
+<div><div class="k">Deepest draw on capital</div><div class="v g">{M(90000-C15['low'])}</div><div class="d">of $90,000 — the rest is reserve and runway</div></div>
 </div>
 <div class="sec">What The Company Does</div>
 <p class="body">Every call is qualified for ability to pay, soft-credit-pulled and routed to one of three debt programs — settlement, validation, resolution — with tax resolution available on the same call. Funding Tier never holds client funds; servicing partners run the programs and remit a contractual share of each client payment, so revenue arrives behind enrollment and compounds as cohorts stack.</p>
@@ -118,45 +118,47 @@ P.append(page('Investment Proposal · 3','How Funding Tier Is Paid',
 f'''<div class="sec" style="margin-top:2px">Worked Example — One $15,000 Enrollment, Each Program (Safe Case)</div>
 <div class="grid3">
 <div class="card" style="--c:var(--teal);padding:9px 11px;background:#f4fbfa"><h3>Debt Settlement (LD)</h3><div class="wx">
-<div class="r"><span>Contract: 8% × $15,000</span><b>$1,200</b></div>
-<div class="r"><span>Paid once, at month 2</span><b>—</b></div>
+<div class="r"><span>Payout: 8% × $15,000, once at month 2</span><b>$1,200</b></div>
 <div class="r"><span>Files still paying at month 2</span><b>51%</b></div>
-<div class="r"><span>Expected revenue: $1,200 × 51%</span><b>$612</b></div>
-<div class="r"><span>Rep: 1.25% × $15,000 × 51%</span><b>−$96</b></div>
-<div class="r tot"><span>Net to company</span><b>$516</b></div>
+<div class="r"><span>Expected payout: $1,200 × 51%</span><b>$612</b></div>
+<div class="r"><span>Rep, if US / owner-closed: 1.25% × 51%</span><b>−$96</b></div>
+<div class="r tot"><span>Net, US / owner-closed</span><b>$516</b></div>
+<div class="r tot"><span>Net, offshore-closed</span><b>$612</b></div>
 </div><div class="note" style="font-size:7.1pt;margin-top:4px">Exposure ends after the client's 2nd payment.</div></div>
 <div class="card" style="--c:var(--blue);padding:9px 11px;background:#f4f8fd"><h3>Debt Validation (SS)</h3><div class="wx">
 <div class="r"><span>Payment $320 − $40 servicing</span><b>$280 / mo</b></div>
 <div class="r"><span>Payments 1–4 at 100%: 4 × $280</span><b>$1,120</b></div>
 <div class="r"><span>Payments 5–36 at 35%: 32 × $98</span><b>$3,136</b></div>
-<div class="r"><span>Contract if client stays</span><b>$4,256</b></div>
+<div class="r"><span>Full payout if the client stays</span><b>$4,256</b></div>
 <div class="r"><span>Expected: each payment × share paying</span><b>$739</b></div>
-<div class="r"><span>Rep: $275 flat × 51%</span><b>−$140</b></div>
-<div class="r tot"><span>Net to company</span><b>$599</b></div>
+<div class="r"><span>Rep, if US / owner-closed: $275 × 51%</span><b>−$140</b></div>
+<div class="r tot"><span>Net, US / owner-closed</span><b>$599</b></div>
+<div class="r tot"><span>Net, offshore-closed</span><b>$739</b></div>
 </div><div class="note" style="font-size:7.1pt;margin-top:4px">Or buyout: $280 × 65% × 6 = $1,092 once, after payment 1 clears.</div></div>
 <div class="card" style="--c:var(--purple);padding:9px 11px;background:#f8f5fd"><h3>Debt Resolution (ELP)</h3><div class="wx">
 <div class="r"><span>Client draft, 44 months</span><b>$251 / mo</b></div>
 <div class="r"><span>Payments 1–2: 2 × ($251 − $4)</span><b>$494</b></div>
 <div class="r"><span>Payments 3–44: 42 × 60% × $167</span><b>$4,209</b></div>
-<div class="r"><span>Contract if client stays</span><b>$4,703</b></div>
+<div class="r"><span>Full payout if the client stays</span><b>$4,703</b></div>
 <div class="r"><span>Expected: each payment × share paying</span><b>$564</b></div>
-<div class="r"><span>Rep: $275 flat × 51%</span><b>−$140</b></div>
-<div class="r tot"><span>Net to company</span><b>$423</b></div>
+<div class="r"><span>Rep, if US / owner-closed: $275 × 51%</span><b>−$140</b></div>
+<div class="r tot"><span>Net, US / owner-closed</span><b>$423</b></div>
+<div class="r tot"><span>Net, offshore-closed</span><b>$564</b></div>
 </div><div class="note" style="font-size:7.1pt;margin-top:4px">$167 = $251 − $80 maintenance − $4 processing. Or accelerated: 90% × 7 months, then 25% to month 24.</div></div>
 </div>
-<div class="callout" style="margin-top:8px;font-size:8.1pt;padding:7px 11px"><b>The survival weighting (safe case):</b> 60% of enrollments clear their first payment; of those, 15% cancel each month. So the share of files still paying is 60% in month 1, 51% in month 2, 43% in month 3, 37% in month 4, 10% by month 12 and about 1% by month 24. Every contractual payment is multiplied by that share, which is why a $4,256 Validation contract books as $739. The rep is paid only on files whose first payment clears, so commission carries the same weighting. <b>Blended at today's 33 / 40 / 27 mix, one $15,000 deal nets the company $524 after the rep.</b> At 6% monthly cancellation the same three deals net $571 / $1,118 / $952 — a blended $892.</div>
-<div class="sec">Faster Cash Or Larger Value — The Election On Each File</div>
+<div class="callout" style="margin-top:8px;font-size:8.1pt;padding:7px 11px"><b>The survival weighting (safe case):</b> 60% of enrollments clear their first payment; of those, 15% cancel each month. So the share of files still paying is 60% in month 1, 51% in month 2, 43% in month 3, 37% in month 4, 10% by month 12 and about 1% by month 24. Every scheduled payout is multiplied by that share, which is why a $4,256 Validation payout books as $739. Rep commission and bonuses apply only to deals closed by the owner-operator or a US W-2 closer and carry the same weighting; offshore closers are paid by the hour, so their deals keep the full expected payout. <b>Blended at today's 33 / 40 / 27 mix, one $15,000 deal nets $524 when US-closed and $683 when offshore-closed.</b> At 6% monthly cancellation: $892 and $1,100.</div>
+<div class="sec">Faster Cash Or Larger Value — The Election On Each File (Full Analysis: Business Plan, Section 8)</div>
 <table class="t sm" style="font-size:7.6pt">
 <tr><th>Debt Validation file</th><th class="num">Buyout, net of rep</th><th class="num">Perpetual, net @15%</th><th class="num">Perpetual, net @6%</th><th class="num">Break-even cancellation</th><th>Rule</th></tr>
 <tr><td>$15,000 (buyout rate 65% × 6)</td><td class="num">$817</td><td class="num">$956</td><td class="num">$1,847</td><td class="num">18.2%</td><td>Hold the perpetual unless cancellation exceeds 18%</td></tr>
 <tr><td>$25,000 (buyout rate 100% × 6)</td><td class="num">$1,880</td><td class="num">$1,271</td><td class="num">$2,480</td><td class="num">9.1%</td><td>Buy out above 9% cancellation; hold below it</td></tr>
 <tr><td>Debt Resolution $15,000</td><td class="num">accelerated $490</td><td class="num">residual $664</td><td class="num">residual $1,570</td><td class="num">—</td><td>Residual always; accelerate only for cash</td></tr>
 </table>
-<div class="sec">Cost To Acquire One Deal, By Call Source — Against The $524 It Nets</div>
+<div class="sec">Cost To Acquire One Deal, By Call Source — Against $524 (US-Closed) / $683 (Offshore-Closed)</div>
 <table class="t sm" style="font-size:7.6pt">
 <tr><th>Source</th><th class="num">Cost per deal</th><th>Verdict</th></tr>
 <tr><td>Purchased live transfers ($11.60 blended per billed transfer, 15% close)</td><td class="num">$75</td><td><span class="tag h">Pays at any volume vendors supply</span></td></tr>
-<tr><td>Direct mail + prescreen data (1.25% response, 70% qualified, 20% close, $25k files)</td><td class="num">$522</td><td><span class="tag m">Break-even at the safe case — the Tier 1 test must confirm the response rate</span></td></tr>
+<tr><td>Direct mail + prescreen data (1.25% response, 70% qualified, 20% close, $25k files)</td><td class="num">$522</td><td><span class="tag m">Break-even on US-closed, positive on offshore-closed — the Tier 1 test must confirm the response rate</span></td></tr>
 <tr><td>Paid social ($35 per lead, 30% to qualified call, 15% close)</td><td class="num">$778</td><td><span class="tag x">Retargeting of mailed ZIPs only, not stand-alone</span></td></tr>
 </table>
 ''', doc,4,T))
@@ -171,15 +173,15 @@ f'''<div class="sec">Assumptions In Force (Safe Case)</div>
 <tr><td>Transfer close rate and price</td><td class="num" style="text-align:left">15% · $11.60</td><td>Current vendor performance at the buffer mix ($8 / $14 / $55 by buffer length). Vendors can supply well beyond the launch roster.</td><td>Medium</td></tr>
 <tr><td>Deals per 8 closer hours; handle time</td><td class="num" style="text-align:left">1.25 · 65 min</td><td>Floor rule, checked against talk-time capacity.</td><td>Medium</td></tr>
 <tr><td>Program mix</td><td class="num" style="text-align:left">33 / 40 / 27</td><td>Settlement / Validation / Resolution. Tax resolution excluded from all base figures (upside).</td><td>Low–medium</td></tr>
-<tr><td>Labor</td><td class="num" style="text-align:left">$18 · $7 · $5 / hr</td><td>US closer (W-2, California daily overtime), offshore closer, BPO opener; owner-operator commission only.</td><td>Medium</td></tr>
+<tr><td>Labor and commission</td><td class="num" style="text-align:left">$18 · $7 · $5 / hr</td><td>US closer (W-2, California daily overtime) earns commission and bonuses; offshore closer and BPO opener are hourly only, no commission; owner-operator commission only. Each deal is charged one or the other.</td><td>High</td></tr>
 <tr><td>Overhead</td><td class="num" style="text-align:left">Virtual</td><td>No rent; CRM, per-seat software, telecom, credit pulls, E&amp;O insurance (in place).</td><td>Low</td></tr>
 <tr><td>Reserve</td><td class="num" style="text-align:left">6 months</td><td>Six months of overhead plus a chargeback buffer on trailing commission, held before distributions.</td><td>Timing only</td></tr>
 </table>
 <div class="sec">What Moves The Answer</div>
 <table class="t sm">
-<tr><th>Case (Option C, owner + 3 offshore closers)</th><th class="num">Net per $15k deal after rep</th><th class="num">Net profit / month, mature</th><th class="num">Bank at month 24</th><th class="num">Cash-positive month</th></tr>
-<tr><td>60% first pay · 15% cancellation (base in this document)</td><td class="num">$524</td><td class="num">{M(C15['net'])}</td><td class="num">{M(C15['m24bank'])}</td><td class="num">{C15['cashPos']}</td></tr>
-<tr><td>60% first pay · 6% cancellation</td><td class="num">$892</td><td class="num">{M(C6['net'])}</td><td class="num">{M(C6['m24bank'])}</td><td class="num">{C6['cashPos']}</td></tr>
+<tr><th>Case (Option C, owner + 3 offshore closers)</th><th class="num">Net per $15k deal, US / offshore-closed</th><th class="num">Net profit / month, mature</th><th class="num">Bank at month 24</th><th class="num">Cash-positive month</th></tr>
+<tr><td>60% first pay · 15% cancellation (base in this document)</td><td class="num">$524 / $683</td><td class="num">{M(C15['net'])}</td><td class="num">{M(C15['m24bank'])}</td><td class="num">{C15['cashPos']}</td></tr>
+<tr><td>60% first pay · 6% cancellation</td><td class="num">$892 / $1,100</td><td class="num">{M(C6['net'])}</td><td class="num">{M(C6['m24bank'])}</td><td class="num">{C6['cashPos']}</td></tr>
 </table>
 <div class="sec">Decision Rules Built Into The Model</div>
 <table class="t sm">
@@ -208,7 +210,7 @@ f'''<div class="sec">Launch Configurations — Mature Month, Every Cost Paid (60
 <div class="sec" style="margin-top:0">Reading The Numbers</div>
 <p class="body">Revenue arrives behind the deals — Debt Settlement pays at month 2, Validation and Resolution build month over month — so the first two months are negative in every configuration. That gap, {M(C15['peak'])} at its deepest for Option C, is what the capital protects; the bank never falls below {M(C15['low'])}.</p>
 <p class="body">Reserve target (six months of overhead plus chargeback buffer) is met in month {C15['reserveMet']}; the first hire trigger fires in month {C15['hire']}. The month-24 bank figure is before the distribution waterfall is applied.</p>
-<p class="body">Three offshore closers (C) produce roughly twice the volume of one US closer (B) for similar labor cost. An office (F) costs about {M(B15['net']-F15['net'])} a month of profit for the same output. Direct mail (D) adds deals but needs the Tier 1 test to prove its response rate before it earns a standing budget.</p>
+<p class="body">Three offshore closers (C) produce roughly twice the volume of one US closer (B), and their deals carry no commission or bonuses — only their hourly labor — which is why C's net is more than three times B's. An office (F) costs about {M(B15['net']-F15['net'])} a month of profit for the same output. Direct mail (D) adds deals but needs the Tier 1 test to prove its response rate before it earns a standing budget.</p>
 
 </div></div>''', doc,6,T))
 
@@ -295,7 +297,7 @@ f'''<div class="sec">Closing Sequence</div>
 <div class="sec">Conditions To Closing</div>
 <ul class="chk">
 <li>Mutual NDA executed; counsel engaged for Funding Tier LLC</li>
-<li>Membership Interest Purchase Agreement and Amended &amp; Restated Operating Agreement executed, with Exhibits B–E attached</li>
+<li>Membership Interest Purchase Agreement and Amended &amp; Restated Operating Agreement executed, with Exhibits C–F attached</li>
 <li>CPA confirmation of partnership tax treatment, EIN and state filing; tax-distribution rate set</li>
 <li>Operating account opened with both members as sole signers and dual control above $10,000; Accounts Schedule completed</li>
 <li>Platform and hosting licence to the company executed; confidentiality agreements signed by CPA, HR provider and data vendors before access</li>
@@ -310,10 +312,11 @@ f'''<div class="sec">Closing Sequence</div>
 <div class="sec">Exhibits</div>
 <table class="t sm">
 <tr><td style="width:0.9in"><b>Exhibit A</b></td><td>Term Sheet (separate document, non-binding)</td></tr>
-<tr><td><b>Exhibit B</b></td><td>Compensation Schedule — every rep commission, bonus, SPIFF and clawback component with its accounting treatment (from the versioned pay rules)</td></tr>
-<tr><td><b>Exhibit C</b></td><td>Accounts Schedule — every bank, merchant, card and lending account; signers; dual-control threshold</td></tr>
+<tr><td><b>Exhibit B</b></td><td>Business Plan — company, programs and payouts, operations, organization and compensation, unit economics, election strategy, marketing, financial plan, KPIs and roadmap</td></tr>
+<tr><td><b>Exhibit C</b></td><td>Compensation Schedule — every rep commission, bonus, SPIFF and clawback component with its accounting treatment (from the versioned pay rules)</td></tr>
 <tr><td><b>Exhibit D</b></td><td>Operating Playbook (internal; provided for information)</td></tr>
 <tr><td><b>Exhibit E</b></td><td>Growth Marketing Budget Plan — tiers, staging, kill criteria, compliance</td></tr>
+<tr><td><b>Exhibit F</b></td><td>Accounts Schedule — every bank, merchant, card and lending account; signers; dual-control threshold</td></tr>
 </table>
 <div class="sig"><div>Nathan Pottish · Manager, Funding Tier LLC · Date</div><div>Paul Dillenback · Date</div></div>
 <div class="note">Signature indicates agreement to proceed to definitive documents on these terms and is not a binding commitment to invest or to issue interests.</div>''', doc,10,T))
@@ -349,7 +352,7 @@ f'''<table class="ts">
 <tr><th>Non-solicitation</th><td>During membership and for twelve months after, neither member will solicit the Company's enrollment reps, vendors or program partners for a competing enterprise.</td></tr>
 <tr><th>Confidentiality and intellectual property (binding)</th><td>Each party keeps the other's confidential information, including this Term Sheet and the Investment Proposal, confidential, and uses it only to evaluate and complete the transaction. All software, scripts, standard operating procedures, the pay engine, data, lists and creative used in the business are and remain the Company's property; neither member may use or disclose them outside the Company; these obligations survive withdrawal, repurchase or dissolution. The Company holds a written licence to its platform and hosting arrangements.</td></tr>
 <tr><th>Tax matters</th><td>Admission of the Investor converts the Company to partnership tax classification (Form 1065 and Schedules K-1). The Company's accountant will confirm the employer identification number, update state filings to list both members, and set the assumed rate for tax distributions.</td></tr>
-<tr><th>Conditions to closing</th><td>Execution of a Membership Interest Purchase Agreement and an Amended and Restated Operating Agreement reflecting these terms, with the Compensation Schedule, Accounts Schedule and Confidentiality / IP exhibits attached; completion of the accountant's tax review; opening of the operating account with dual control; execution of the platform and hosting licence; confidentiality agreements signed by the accounting and HR providers.</td></tr>
+<tr><th>Conditions to closing</th><td>Execution of a Membership Interest Purchase Agreement and an Amended and Restated Operating Agreement reflecting these terms, with the Business Plan, Compensation Schedule, Accounts Schedule and Confidentiality / IP exhibits attached; completion of the accountant's tax review; opening of the operating account with dual control; execution of the platform and hosting licence; confidentiality agreements signed by the accounting and HR providers.</td></tr>
 <tr><th>Expenses (binding)</th><td>Each party bears its own expenses. The Company's legal costs for the definitive documents are a Company expense and may be paid from the first tranche.</td></tr>
 <tr><th>Governing law</th><td>California.</td></tr>
 <tr><th>Non-binding effect; expiration</th><td>Except for Confidentiality and Intellectual Property and Expenses, this Term Sheet is a non-binding expression of intent and creates no obligation to complete the transaction. It expires if definitive agreements are not executed within sixty (60) days of the date above, unless extended in writing.</td></tr>
