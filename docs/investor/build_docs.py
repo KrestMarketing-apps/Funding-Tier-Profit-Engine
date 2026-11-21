@@ -289,7 +289,7 @@ Q.append(page('Funding Tier LLC · Operating Playbook','Sales Floor And File Qua
 </ul>
 <div class="sec">Program Routing</div>
 <table class="t sm">
-<tr><th>Program</th><th>Fits when</th><th>Company is paid</th><th>Risk window</th></tr>
+<tr><th>Program</th><th>Fits when</th><th>Payout to Funding Tier</th><th>Risk window</th></tr>
 <tr><td>Debt Settlement (LD)</td><td>Larger balances, client wants lowest monthly, settlement-eligible state</td><td>8% of enrolled debt, once, at month 2</td><td>Ends after 2nd client payment</td></tr>
 <tr><td>Debt Validation (SS)</td><td>Disputable accounts; buyout if we need cash now</td><td>36-month perpetuity, or one lump-sum buyout after the first payment clears</td><td>Buyout: 1 payment. Perpetual: month by month</td></tr>
 <tr><td>Debt Resolution (ELP)</td><td>Legal-backed, longer term, higher lifetime</td><td>Residual to 48 months, or accelerated (90% × 7 months, then 25% to month 24)</td><td>Month by month; accelerated front-loads it</td></tr>
