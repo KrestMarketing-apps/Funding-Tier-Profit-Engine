@@ -106,7 +106,7 @@ P.append(page('Playbook · 6', 'Money — Monthly Close, Waterfall And Decision 
    f'Operating reserve — 6 months of overhead + chargeback buffer ({M(res)} at launch), held in the high-yield account',
    'Tax distributions — each member\'s share of taxable income × the CPA\'s assumed rate, quarterly',
    'Manager draw — $10,000 in a profitable month; $12,500 after 3 consecutive profitable months',
-   'Investor payback — 100% of what is left to Paul until $90,000 is returned',
+   'Capital returned — after the draw, 100% of member distributions to Paul until $90,000 is returned',
    'Accrued draw — any draw skipped in loss months',
    '70 / 30 — remaining profit; Manager bonus 10% of profit above $20,000 / month, quarterly, after payback']) +
  st('Accounts') + ul(['<b>Operating account</b>: about one month of spend', '<b>High-yield interest-bearing account</b>: reserve and undistributed proceeds; interest belongs to the Company', 'Both members signers on both; dual control above $10,000 — per transaction, including one-time purchases; split payments to one payee within 7 days count as one', 'A/R (payouts owed on files that have paid) is shown beside the bank but never distributed'], 'b sm') + '</div>' +
