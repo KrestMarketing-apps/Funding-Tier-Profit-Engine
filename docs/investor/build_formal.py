@@ -38,6 +38,13 @@ p.body{font-size:9.3pt;margin:0 0 7px;line-height:1.45}
 .sig div{border-top:1px solid var(--ink);padding-top:6px;font-size:8.5pt;color:var(--mut)}
 .band h1{font-size:19pt}
 .note{font-size:8pt;color:var(--mut);margin-top:6px}
+.wx{margin-top:4px}
+.wx .r{display:flex;justify-content:space-between;gap:8px;padding:2.5px 0;border-bottom:1px dashed var(--line);font-size:7.3pt;line-height:1.25;align-items:baseline}
+.wx .r span{color:var(--mut)}
+.wx .r b{font-family:"Inconsolata",monospace;font-size:7.6pt;white-space:nowrap;text-align:right}
+.wx .r.tot{border-bottom:none;padding-top:4px}
+.wx .r.tot span{color:var(--ink);font-weight:700}
+.wx .r.tot b{font-size:9pt;color:var(--teal)}
 </style>'''
 def head(title): return f'<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>{title}</title><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;900&family=DM+Sans:wght@400;500;700&family=Inconsolata:wght@700&display=swap" rel="stylesheet"/>{css}{extra}</head><body>'
 def foot(doc,n,total): return f'<div class="foot"><span><b>Funding Tier LLC</b> · {doc} · Confidential</span><span>Page {n} of {total}</span></div>'
@@ -107,34 +114,52 @@ P.append(page('Investment Proposal · 2','The Company',
 <p class="body">Debt relief marketing is regulated at federal and state level (telemarketing sales rules, state licensing and fee rules, prescreen credit rules for mail). Funding Tier's position is deliberately narrow: it is paid by partners, never by consumers; scripts carry the required disclosures; the router enforces state exclusions before a quote; prescreen mail runs through a lender-partner firm-offer structure; and attorney review precedes any new creative. Spreading enrollments across four programs and partners limits how much any single rule or partner change can affect revenue.</p>''', doc,3,T))
 
 P.append(page('Investment Proposal · 3','How Funding Tier Is Paid',
-'Revenue per deal depends on three things the company controls or measures: which program the file enrolls in, whether a faster-cash election is taken, and how long the client stays. The table shows one deal at the blended $17,000 debt load, after the rep is paid.',
-f'''<div class="sec">One Deal, After The Rep (60% First-Pay Clear, 15% Monthly Cancellation — The Safe Case)</div>
-<table class="t sm">
-<tr><th>Program</th><th class="num">Contract value if client stays</th><th class="num">Rep commission</th><th class="num">Expected revenue</th><th class="num">Expected commission</th><th class="num">Net to company</th></tr>
-<tr><td>Debt Settlement — 8% once, month 2</td><td class="num">$1,365</td><td class="num">$213</td><td class="num">$696</td><td class="num">$109</td><td class="num"><b>$587</b></td></tr>
-<tr><td>Debt Validation — 36-month perpetuity</td><td class="num">$4,256</td><td class="num">$275</td><td class="num">$739</td><td class="num">$140</td><td class="num"><b>$599</b></td></tr>
-<tr><td>Debt Resolution — residual to 48 months</td><td class="num">$5,316</td><td class="num">$275</td><td class="num">$584</td><td class="num">$140</td><td class="num"><b>$444</b></td></tr>
-<tr><td><b>Blended at today's mix (33 / 40 / 27)</b></td><td></td><td></td><td class="num">$683</td><td></td><td class="num"><b>$553</b></td></tr>
-</table>
-<div class="note">The rep is paid only on files whose first payment clears, so commission is weighted the same way revenue is. Same deals at 6% monthly cancellation: $740 / $1,398 / $1,190 net — roughly double.</div>
+'Revenue per deal depends on which program the file enrolls in, whether a faster-cash election is taken, and how long the client stays. The worked example below follows one $15,000 enrollment through each program, from the contract to the cash the company keeps after the rep is paid.',
+f'''<div class="sec" style="margin-top:2px">Worked Example — One $15,000 Enrollment, Each Program (Safe Case)</div>
+<div class="grid3">
+<div class="card" style="--c:var(--teal);padding:9px 11px;background:#f4fbfa"><h3>Debt Settlement (LD)</h3><div class="wx">
+<div class="r"><span>Contract: 8% × $15,000</span><b>$1,200</b></div>
+<div class="r"><span>Paid once, at month 2</span><b>—</b></div>
+<div class="r"><span>Files still paying at month 2</span><b>51%</b></div>
+<div class="r"><span>Expected revenue: $1,200 × 51%</span><b>$612</b></div>
+<div class="r"><span>Rep: 1.25% × $15,000 × 51%</span><b>−$96</b></div>
+<div class="r tot"><span>Net to company</span><b>$516</b></div>
+</div><div class="note" style="font-size:7.1pt;margin-top:4px">Exposure ends after the client's 2nd payment.</div></div>
+<div class="card" style="--c:var(--blue);padding:9px 11px;background:#f4f8fd"><h3>Debt Validation (SS)</h3><div class="wx">
+<div class="r"><span>Payment $320 − $40 servicing</span><b>$280 / mo</b></div>
+<div class="r"><span>Payments 1–4 at 100%: 4 × $280</span><b>$1,120</b></div>
+<div class="r"><span>Payments 5–36 at 35%: 32 × $98</span><b>$3,136</b></div>
+<div class="r"><span>Contract if client stays</span><b>$4,256</b></div>
+<div class="r"><span>Expected: each payment × share paying</span><b>$739</b></div>
+<div class="r"><span>Rep: $275 flat × 51%</span><b>−$140</b></div>
+<div class="r tot"><span>Net to company</span><b>$599</b></div>
+</div><div class="note" style="font-size:7.1pt;margin-top:4px">Or buyout: $280 × 65% × 6 = $1,092 once, after payment 1 clears.</div></div>
+<div class="card" style="--c:var(--purple);padding:9px 11px;background:#f8f5fd"><h3>Debt Resolution (ELP)</h3><div class="wx">
+<div class="r"><span>Client draft, 44 months</span><b>$251 / mo</b></div>
+<div class="r"><span>Payments 1–2: 2 × ($251 − $4)</span><b>$494</b></div>
+<div class="r"><span>Payments 3–44: 42 × 60% × $167</span><b>$4,209</b></div>
+<div class="r"><span>Contract if client stays</span><b>$4,703</b></div>
+<div class="r"><span>Expected: each payment × share paying</span><b>$564</b></div>
+<div class="r"><span>Rep: $275 flat × 51%</span><b>−$140</b></div>
+<div class="r tot"><span>Net to company</span><b>$423</b></div>
+</div><div class="note" style="font-size:7.1pt;margin-top:4px">$167 = $251 − $80 maintenance − $4 processing. Or accelerated: 90% × 7 months, then 25% to month 24.</div></div>
+</div>
+<div class="callout" style="margin-top:8px;font-size:8.1pt;padding:7px 11px"><b>The survival weighting (safe case):</b> 60% of enrollments clear their first payment; of those, 15% cancel each month. So the share of files still paying is 60% in month 1, 51% in month 2, 43% in month 3, 37% in month 4, 10% by month 12 and about 1% by month 24. Every contractual payment is multiplied by that share, which is why a $4,256 Validation contract books as $739. The rep is paid only on files whose first payment clears, so commission carries the same weighting. <b>Blended at today's 33 / 40 / 27 mix, one $15,000 deal nets the company $524 after the rep.</b> At 6% monthly cancellation the same three deals net $571 / $1,118 / $952 — a blended $892.</div>
 <div class="sec">Faster Cash Or Larger Value — The Election On Each File</div>
-<table class="t sm">
-<tr><th>Debt Validation file</th><th class="num">Buyout, net</th><th class="num">Perpetual, net @15%</th><th class="num">Perpetual, net @6%</th><th class="num">Break-even cancellation</th><th>Rule</th></tr>
+<table class="t sm" style="font-size:7.6pt">
+<tr><th>Debt Validation file</th><th class="num">Buyout, net of rep</th><th class="num">Perpetual, net @15%</th><th class="num">Perpetual, net @6%</th><th class="num">Break-even cancellation</th><th>Rule</th></tr>
 <tr><td>$15,000 (buyout rate 65% × 6)</td><td class="num">$817</td><td class="num">$956</td><td class="num">$1,847</td><td class="num">18.2%</td><td>Hold the perpetual unless cancellation exceeds 18%</td></tr>
 <tr><td>$25,000 (buyout rate 100% × 6)</td><td class="num">$1,880</td><td class="num">$1,271</td><td class="num">$2,480</td><td class="num">9.1%</td><td>Buy out above 9% cancellation; hold below it</td></tr>
 <tr><td>Debt Resolution $15,000</td><td class="num">accelerated $490</td><td class="num">residual $664</td><td class="num">residual $1,570</td><td class="num">—</td><td>Residual always; accelerate only for cash</td></tr>
 </table>
-<div class="note">The buyout pays once and ends chargeback exposure; the perpetual pays more if the client stays. Measured cancellation decides which is worth more; the reserve decides how much of the faster-cash election is taken. The rule is applied monthly in the operating model.</div>
-<div class="sec">Cost To Acquire One Deal, By Call Source</div>
-<div class="grid2">
-<table class="t sm">
-<tr><th>Source</th><th class="num">Cost per deal</th><th>Against $553 net</th></tr>
-<tr><td>Purchased live transfers ($11.60 blended, 15% close)</td><td class="num">$75</td><td><span class="tag h">Pays at any volume vendors supply</span></td></tr>
-<tr><td>Direct mail + prescreen data (1.25% response, 70% qualified, 20% close)</td><td class="num">$522</td><td><span class="tag m">Pays narrowly — the Tier 1 test must confirm</span></td></tr>
-<tr><td>Paid social ($35 CPL, 30% qualified, 15% close)</td><td class="num">$778</td><td><span class="tag x">Retargeting only, not stand-alone</span></td></tr>
+<div class="sec">Cost To Acquire One Deal, By Call Source — Against The $524 It Nets</div>
+<table class="t sm" style="font-size:7.6pt">
+<tr><th>Source</th><th class="num">Cost per deal</th><th>Verdict</th></tr>
+<tr><td>Purchased live transfers ($11.60 blended per billed transfer, 15% close)</td><td class="num">$75</td><td><span class="tag h">Pays at any volume vendors supply</span></td></tr>
+<tr><td>Direct mail + prescreen data (1.25% response, 70% qualified, 20% close, $25k files)</td><td class="num">$522</td><td><span class="tag m">Break-even at the safe case — the Tier 1 test must confirm the response rate</span></td></tr>
+<tr><td>Paid social ($35 per lead, 30% to qualified call, 15% close)</td><td class="num">$778</td><td><span class="tag x">Retargeting of mailed ZIPs only, not stand-alone</span></td></tr>
 </table>
-<div class="callout" style="font-size:8.4pt"><b>Why retention is the first investment.</b> A $25,000 Debt Validation file is worth $5,776 over its term if the client stays. At 15% monthly cancellation the model books $836 of it; at 6%, about $2,160. Qualification for ability to pay and AI call-QC are funded before growth marketing because they move every deal's value, not just the next one's.</div>
-</div>''', doc,4,T))
+''', doc,4,T))
 
 P.append(page('Investment Proposal · 4','Operating Model And Unit Economics',
 'Every number in this proposal is produced by the company\'s operating model, which the investor will use live. It simulates the roster, the calls each source produces, closer occupancy, program mix and election, attrition by cohort, every cost line, and cash month by month for 48 months.',
@@ -152,9 +177,9 @@ f'''<div class="sec">Assumptions In Force (Safe Case)</div>
 </table>
 <div class="sec">What Moves The Answer</div>
 <table class="t sm">
-<tr><th>Case (Option C, owner + 3 offshore closers)</th><th class="num">Net per deal after rep</th><th class="num">Net profit / month, mature</th><th class="num">Bank at month 24</th><th class="num">Cash-positive month</th></tr>
-<tr><td>60% first pay · 15% cancellation (base in this document)</td><td class="num">$553</td><td class="num">{M(C15['net'])}</td><td class="num">{M(C15['m24bank'])}</td><td class="num">{C15['cashPos']}</td></tr>
-<tr><td>60% first pay · 6% cancellation</td><td class="num">~$1,160</td><td class="num">{M(C6['net'])}</td><td class="num">{M(C6['m24bank'])}</td><td class="num">{C6['cashPos']}</td></tr>
+<tr><th>Case (Option C, owner + 3 offshore closers)</th><th class="num">Net per $15k deal after rep</th><th class="num">Net profit / month, mature</th><th class="num">Bank at month 24</th><th class="num">Cash-positive month</th></tr>
+<tr><td>60% first pay · 15% cancellation (base in this document)</td><td class="num">$524</td><td class="num">{M(C15['net'])}</td><td class="num">{M(C15['m24bank'])}</td><td class="num">{C15['cashPos']}</td></tr>
+<tr><td>60% first pay · 6% cancellation</td><td class="num">$892</td><td class="num">{M(C6['net'])}</td><td class="num">{M(C6['m24bank'])}</td><td class="num">{C6['cashPos']}</td></tr>
 </table>
 <div class="sec">Decision Rules Built Into The Model</div>
 <table class="t sm">
