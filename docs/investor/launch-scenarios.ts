@@ -33,7 +33,9 @@ function roster(us: number, off: number) {
   return r;
 }
 function virtual(inp: any) { inp.costs.fixedCosts = inp.costs.fixedCosts.filter((c: any) => !/office|team lunch|rent/i.test(c.label)); }
-function assumptions(inp: any, close: number, fp: number, c: number) {
+function assumptions(inp: any, close: number, fp: number, c: number, learn = false, tax = false) {
+  inp.volume.learningCurve = { enabled: learn, startMonth: 4, gainPctPerMonth: 5, maxGainPct: 40 };
+  inp.taxResolution.enabled = tax; inp.taxResolution.startMonth = 6;
   for (const b of inp.operations.buffers) b.closeRatePct = close;
   inp.marketing.directMail.closeRatePct = Math.max(close, inp.marketing.directMail.closeRatePct);
   inp.marketing.paidSocial.closeRatePct = close;
@@ -45,8 +47,11 @@ function assumptions(inp: any, close: number, fp: number, c: number) {
 }
 
 const CASES = [
-  { key: 'SAFE', label: 'Safe: 15% close · 60% first pay · 15%/mo cancel', close: 15, fp: 60, c: 15 },
-  { key: 'TARGET', label: 'Target: 16% close · 70% first pay · 10%/mo cancel', close: 16, fp: 70, c: 10 },
+  { key: 'SAFE', label: 'Safe: 15% close · 60% first pay · 15%/mo cancel', close: 15, fp: 60, c: 15, learn: false, tax: false },
+  { key: 'TARGET', label: 'Target: 16% close · 70% first pay · 10%/mo cancel', close: 16, fp: 70, c: 10, learn: false, tax: false },
+  // Positive feedback loop: closers improve (deals per 8 hours +5%/mo from month 4, capped at +40%,
+  // i.e. 1.25 → 1.75 ≈ a 45-minute enrollment) and tax resolution is sold from month 6.
+  { key: 'POSSIBLE', label: 'Possible: target + learning curve + tax from month 6', close: 16, fp: 70, c: 10, learn: true, tax: true },
 ];
 const SCEN = [
   { id: 'S1', label: 'Owner + 3 Egypt BPO closers ($12/hr), virtual, transfers', us: 0, off: 3 },
@@ -59,11 +64,11 @@ const f = (n: number) => Math.round(n);
 const out: any[] = [];
 const runs: any[] = [];
 for (const s of SCEN) for (const cs of CASES) runs.push({ ...s, ...cs, caseKey: cs.key, buyout: null });
-for (const s of SCEN.slice(0, 2)) for (const cs of CASES) for (const bo of [0, 50, 100]) runs.push({ ...s, ...cs, caseKey: cs.key, buyout: bo });
+for (const s of SCEN.slice(0, 2)) for (const cs of CASES.slice(0, 2)) for (const bo of [0, 50, 100]) runs.push({ ...s, ...cs, caseKey: cs.key, buyout: bo });
 
 for (const r of runs) {
   const inp: any = JSON.parse(JSON.stringify(base));
-  inp.roster = roster(r.us, r.off); virtual(inp); assumptions(inp, r.close, r.fp, r.c);
+  inp.roster = roster(r.us, r.off); virtual(inp); assumptions(inp, r.close, r.fp, r.c, r.learn, r.tax);
   if (r.buyout != null) inp.consumerShield.buyoutSharePct = r.buyout;
   const res = runModel(inp); const ms = res.months; const tail = ms.slice(-6);
   const avg = (k: (m: any) => number) => tail.reduce((a, m) => a + k(m), 0) / 6;
@@ -76,13 +81,13 @@ for (const r of runs) {
   out.push({
     id: r.id, label: r.label, caseKey: r.caseKey, caseLabel: r.label, close: r.close, fp: r.fp, c: r.c, buyout: r.buyout,
     seats: 1 + r.us + r.off, seatCost: seat,
-    deals: avg((m) => m.deals), rev: avg((m) => m.revenue), labor: avg((m) => m.laborCost),
+    deals: avg((m) => m.deals), rev: avg((m) => m.revenue), taxRev: avg((m) => m.tax?.revenue ?? 0), labor: avg((m) => m.laborCost),
     mkt: avg((m) => m.transferCost + m.marketingCost), comm: avg((m) => m.repCommission + m.bonusPaid + m.managerOverride),
     other: avg((m) => Math.max(0, m.overhead - m.laborCost - m.transferCost - m.marketingCost)), net: avg((m) => m.netCashFlow),
     y1, y2, low: res.totals.lowestCash, cashOut: res.totals.cashOutMonth, cashPos: res.totals.firstCashPositiveMonth,
     peak: res.totals.peakCapitalRequired, reserveMet: res.totals.reserveTargetFirstMet, hire,
     m12bank: ms[11].cashPosition, m24bank: ms[23].cashPosition, warnings: res.warnings,
-    months: ms.slice(0, 24).map((m) => ({ mo: m.month, deals: m.deals, rev: m.revenue, labor: m.laborCost, mkt: m.transferCost + m.marketingCost, comm: m.repCommission + m.bonusPaid, net: m.netCashFlow, bank: m.cashPosition, res: m.reserveTarget, util: m.utilizationPct })),
+    months: ms.slice(0, 24).map((m) => ({ mo: m.month, deals: m.deals, rev: m.revenue, tax: m.tax?.revenue ?? 0, labor: m.laborCost, mkt: m.transferCost + m.marketingCost, comm: m.repCommission + m.bonusPaid, net: m.netCashFlow, bank: m.cashPosition, res: m.reserveTarget, util: m.utilizationPct })),
   });
 }
 
@@ -125,7 +130,7 @@ for (const cs of CASES) {
   slide.cases[cs.key] = { costPerDeal: cpd, rows: slide.debts.map((d: number) => ({ debt: d, netUs: perDealNet(d, cs.fp, cs.c, true), netNoComm: perDealNet(d, cs.fp, cs.c, false) })) };
 }
 
-require('fs').writeFileSync('' + __dirname + '/launch-scenarios.json', JSON.stringify({ scenarios: out, slide, assumptions: { offshoreRate: OFFSHORE_RATE, usRate: US_RATE, nsfSecondPaymentPct: NSF_2ND_PAYMENT_PCT, offshoreBonusPct: base.laborPolicy.offshoreBonusPct, transfer: { price: 14, buffer: 2 }, launchMix: base.volume.launchMix, mixPct: base.volume.mixPct } }));
+require('fs').writeFileSync('' + __dirname + '/launch-scenarios.json', JSON.stringify({ scenarios: out, slide, assumptions: { offshoreRate: OFFSHORE_RATE, usRate: US_RATE, nsfSecondPaymentPct: NSF_2ND_PAYMENT_PCT, offshoreBonusPct: base.laborPolicy.offshoreBonusPct, transfer: { price: 14, buffer: 2 }, launchMix: base.volume.launchMix, learningCurve: { startMonth: 4, gainPctPerMonth: 5, maxGainPct: 40 }, taxStartMonth: 6, mixPct: base.volume.mixPct } }));
 for (const o of out) console.log([o.id, o.caseKey, o.buyout == null ? '' : `${o.buyout}% buyout`, 'deals', o.deals.toFixed(0), 'rev', f(o.rev), 'labor', f(o.labor), 'mkt', f(o.mkt), 'comm', f(o.comm), 'other', f(o.other), 'net', f(o.net), 'y1', f(o.y1), 'y2', f(o.y2), 'low', f(o.low), 'out', o.cashOut, 'cash+', o.cashPos, 'resMet', o.reserveMet, 'hire', o.hire, 'bank12', f(o.m12bank), 'bank24', f(o.m24bank)].join('\t'));
 console.log('\nSliding scale (per-deal expected net, US-closed / no-commission) vs cost per deal');
 for (const k of Object.keys(slide.cases)) { const c = slide.cases[k]; console.log(k, 'cost/deal', JSON.stringify(Object.fromEntries(Object.entries(c.costPerDeal).map(([a, b]: any) => [a, f(b)])))); for (const r of c.rows) console.log('  ', r.debt, f(r.netUs), f(r.netNoComm)); }

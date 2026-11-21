@@ -143,7 +143,18 @@ export interface VolumeInputs {
    * backend (Shield Services, 100%) before settling into `mixPct`. Outliers
    * still enroll elsewhere in practice; the model keeps it simple.
    */
-  launchMix?: { months: number; mixPct: Record<BackendKey, number> };
+  launchMix?: {
+    months: number;
+    mixPct: Record<BackendKey, number>;
+    /** Shield buyout share during the launch months (80 = 80% buyouts, 20% perpetual). */
+    buyoutSharePct?: number;
+  };
+  /**
+   * Learning curve: closers get better at qualifying and enrolling, so deals
+   * per 8 closer hours rise over time on the same calls (handle time falls from
+   * ~65 to ~45 minutes). Off by default — the "possible" case switches it on.
+   */
+  learningCurve?: { enabled: boolean; startMonth: number; gainPctPerMonth: number; maxGainPct: number };
 }
 
 export interface RampInputs {
@@ -634,6 +645,8 @@ export interface MarketingMonthDetail {
  */
 export interface TaxResolutionInputs {
   enabled: boolean;
+  /** First month tax resolution is sold on the calls (1 = from launch). */
+  startMonth?: number;
   /** Share of debt deals (closed enrollments) that also buy a Phase 1 investigation, 0-100. */
   attachPct: number;
   phase1Fee: number;

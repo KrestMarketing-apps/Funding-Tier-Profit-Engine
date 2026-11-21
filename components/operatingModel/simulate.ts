@@ -7,7 +7,7 @@ import { BRANDS, makeEmployee } from './config';
 import { computeEmployeeCost, summariseRosterForMonth } from './labor';
 import {
   agentCommissionForDeal, agentPayoutMonth, buildSurvivalCurve, isPerpetuity,
-  maxRevenueMonth, revenueForDealMonth, revenueModelLabel, tierRate,
+  maxRevenueMonth, revenueForDealMonth, revenueModelLabel, tierRate, shield,
 } from './backends';
 import { resolveMarketingMonth } from './marketing';
 import { buildMonthlyCosts } from './costs';
@@ -58,6 +58,8 @@ interface Cohort {
    * cohort carries no rep commission at payout.
    */
   noCommission?: boolean;
+  /** Shield files only: buyout share for this cohort (launch-period election). */
+  buyoutSharePct?: number;
 }
 
 export function computeCapacity(
@@ -222,6 +224,12 @@ export function runModel(inputs: ModelInputs): ModelResults {
     // Growth marketing: inbound calls take closer time first, then transfers.
     const marketing = resolveMarketingMonth(inputs, m, rosterMonth.closerHours * 60);
     const capacity = computeCapacity(inputs, rosterMonth.closerHours, rosterMonth.openerHours, rampFactor, marketing);
+    // Learning curve: more deals from the same calls as closers improve.
+    const lc = inputs.volume.learningCurve;
+    if (lc && lc.enabled && m >= lc.startMonth) {
+      const gain = Math.min(lc.maxGainPct, lc.gainPctPerMonth * (m - lc.startMonth + 1)) / 100;
+      capacity.targetDeals *= 1 + gain;
+    }
     const launch = inputs.volume.launchMix;
     const inLaunch = !!launch && launch.months > 0 && m <= launch.months;
     const monthMix = inLaunch ? launch!.mixPct : inputs.volume.mixPct;
@@ -331,6 +339,9 @@ export function runModel(inputs: ModelInputs): ModelResults {
           avgDebt: avgDebtM[k],
         });
       }
+      if (k === 'CS' && inLaunch && launch!.buyoutSharePct != null) {
+        for (const c of cohorts) if (c.backendKey === 'CS' && c.startMonth === m) c.buyoutSharePct = launch!.buyoutSharePct;
+      }
       rollup[k].dealsSubmitted += dealsByBackend[k];
       rollup[k].enrolledVolume += dealsByBackend[k] * avgDebtM[k];
     });
@@ -351,7 +362,10 @@ export function runModel(inputs: ModelInputs): ModelResults {
       const dealMonth = m - cohort.startMonth + 1 - lag;
 
       const surviving = dealMonth >= 1 ? (survival[cohort.backendKey][dealMonth] ?? 0) * cohort.dealCount : 0;
-      const perDeal = dealMonth >= 1 ? revenueForDealMonth(cohort.backendKey, cohort.avgDebt, dealMonth, inputs) : 0;
+      const perDeal = dealMonth < 1 ? 0
+        : cohort.backendKey === 'CS' && cohort.buyoutSharePct != null
+          ? shield.revenueForDealMonth(cohort.avgDebt, dealMonth, { ...inputs.consumerShield, buyoutSharePct: cohort.buyoutSharePct })
+          : revenueForDealMonth(cohort.backendKey, cohort.avgDebt, dealMonth, inputs);
       if (perDeal > 0) {
         const gross = surviving * perDeal;
         revenue += gross;
@@ -380,7 +394,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
 
     // ── Tax resolution layer (sold on the same calls) ────────────────────────
     let taxRow = { phase1Deals: 0, phase2Deals: 0, revenue: 0, repCommission: 0 };
-    if (taxOn && tax) {
+    if (taxOn && tax && m >= (tax.startMonth ?? 1)) {
       const p1 = totalDeals * (tax.attachPct / 100);
       const p2 = p1 * (tax.phase2ConversionPct / 100);
       const keep = 1 - tax.refundPct / 100;
@@ -394,7 +408,8 @@ export function runModel(inputs: ModelInputs): ModelResults {
         if (mi < taxRevenueByMonth.length) { taxRevenueByMonth[mi] += p2Cash / n; if (i === 0) taxP2ByMonth[mi] += p2; }
       }
       const taxRev = taxRevenueByMonth[m];
-      const taxComm = taxRev * (tax.repCommissionPct / 100);
+      // Tax commission is owed only on the US W-2 closers' share of calls (owner / offshore earn none).
+      const taxComm = taxRev * (tax.repCommissionPct / 100) * usShare;
       taxRow = { phase1Deals: taxP1ByMonth[m], phase2Deals: taxP2ByMonth[m], revenue: taxRev, repCommission: taxComm };
       revenue += taxRev;
       commission += taxComm;

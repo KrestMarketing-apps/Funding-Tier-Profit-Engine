@@ -143,7 +143,8 @@ export const DEFAULT_INPUTS: ModelInputs = {
   // 5% of debt enrollments buy Phase 1, half fund Phase 2 (Milestone reports
   // 70%); reps get 35% of Funding Tier's tax earnings. OFF by default.
   taxResolution: {
-    enabled: false, attachPct: 5, phase1Fee: 500, phase1SharePct: 50, phase1LagMonths: 1,
+    enabled: false,
+    startMonth: 6, attachPct: 5, phase1Fee: 500, phase1SharePct: 50, phase1LagMonths: 1,
     phase2ConversionPct: 50, phase2Fee: 5000, phase2SharePct: 40, phase2LagMonths: 2,
     phase2InstallmentMonths: 3, refundPct: 5, repCommissionPct: 35,
   },
@@ -157,8 +158,11 @@ export const DEFAULT_INPUTS: ModelInputs = {
     dealsPer8CloserHours: 1.25,
     overrideTotalDealsPerMonth: 75,
     mixPct: { LEVEL: 33, CS: 40, LEGACY: 27 },
-    // First 90 days: 100% Shield Services while the team learns one program.
-    launchMix: { months: 3, mixPct: { LEVEL: 0, CS: 100, LEGACY: 0 } },
+    // First 90 days: at least 85% Shield Services while the team learns one
+    // program, with 80% of those files taken as buyouts to offset early risk.
+    launchMix: { months: 3, mixPct: { LEVEL: 10, CS: 85, LEGACY: 5 }, buyoutSharePct: 80 },
+    // Off by default (safe case). The "possible" case turns it on.
+    learningCurve: { enabled: false, startMonth: 4, gainPctPerMonth: 5, maxGainPct: 40 },
     avgDebt: { LEVEL: 16000, CS: 15000, LEGACY: 14000 },
   },
 
@@ -285,7 +289,8 @@ export const DEFAULT_INPUTS: ModelInputs = {
     creativeAndTrackingPerMonth: 1500,
     // Marketing deals follow the transfer mix unless prescreen targeting
     // routes them differently (set in Growth Marketing).
-    mixPct: { LEVEL: 33, CS: 40, LEGACY: 27 },
+    // Mail and social respondents are higher-intent, larger-debt households who lean toward settlement.
+    mixPct: { LEVEL: 50, CS: 30, LEGACY: 20 },
   },
   bonusPolicy: {
     enabled: true,

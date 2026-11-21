@@ -3,6 +3,7 @@ from pkg_common import *
 from states import sorted_states, EMPLOYER_COSTS
 DE = json.load(open(HERE + '/deal-economics.json'))
 S1S, S1T, S2S, S2T = sc('S1', 'SAFE'), sc('S1', 'TARGET'), sc('S2', 'SAFE'), sc('S2', 'TARGET')
+S1P, S2P = sc('S1', 'POSSIBLE'), sc('S2', 'POSSIBLE')
 R0S, R1S = sc('R0', 'SAFE'), sc('R1', 'SAFE')
 SH = DE['shield']; ELP = DE['elp']
 cpdS = SLIDE['cases']['SAFE']['costPerDeal']; cpdT = SLIDE['cases']['TARGET']['costPerDeal']
@@ -19,7 +20,7 @@ P.append(page('Business Plan · 1', 'Executive Summary And Mission',
  kv([('Mature month, safe case', M(S1S['net']), 'owner + 3 Egypt closers, after every cost', 'g'), ('Year-1 net, safe case', M(S1S['y1']), f'cash-positive month {S1S["cashPos"]}; reserve met month {S1S["reserveMet"]}', 'g'), ('Mature month, target case', M(S1T['net']), '16% close · 70% first pay · 10% cancel', 'g'), ('Capital at risk', M(90000 - S1S['low']), f'deepest draw on $90,000 (lowest bank {M(S1S["low"])})')]) +
  '<div class="cols c3">' +
  '<div>' + st('Business Model') + ul(['Four programs from one call: settlement, validation, resolution, tax', 'Partner-paid; Funding Tier never holds client funds', 'Revenue arrives 1–2 months after enrollment and compounds as monthly cohorts stack', 'Fixed cost stays low: virtual, offshore closers, software already built'], 'b sm') + '</div>' +
- '<div>' + st('Launch Plan') + ul(['Owner + 3 Egypt closers at $12 / hour (CallBlade, referred by Shield Services)', 'Live transfers at $14 per call, 2-minute buffer, fill every seat', '100% Shield Services for the first 90 days, then the standing mix', 'Mail and social added after the reserve is met, capped at 50% of volume'], 'b sm') + '</div>' +
+ '<div>' + st('Launch Plan') + ul(['Owner + 3 Egypt closers at $12 / hour (CallBlade, referred by Shield Services)', 'Live transfers at $14 per call, 2-minute buffer, fill every seat', 'At least 85% Shield Services for the first 90 days, 80% of them as buyouts — cash from month 2, then the standing mix', 'Mail and social added after the reserve is met, capped at 50% of volume'], 'b sm') + '</div>' +
  '<div>' + st('What Decides The Outcome') + ul(['<b>Close rate</b> (15% safe, 16% target)', '<b>First-payment rate</b> (60% safe, 70% target)', '<b>Monthly cancellation</b> on perpetual files (15% safe, 10% target)', 'Each is measured weekly and the model re-run with actuals'], 'b sm') + '</div></div>' +
  st('Contents') + '<ul class="toc">' + ''.join(f'<li><span>{t}</span><span>{n}</span></li>' for t, n in [
    ('1 Executive Summary And Mission', 2), ('2 The Company And Its System', 3), ('3 Programs, Partners And Payouts', 4), ('4 Market Assessment', 5), ('5 SWOT', 6), ('6 Customers And Compliance', 7), ('7 Operations', 8),
@@ -106,7 +107,7 @@ P.append(page('Business Plan · 5', 'SWOT Analysis',
  f'<div class="q" style="--c:var(--green)"><h3>Strengths</h3>{ul(["<b>System already built</b> — router, scripts, QC, pay engine, model; no development spend in the plan", "<b>Partner-paid, four programs</b> — no client funds, broad state coverage, a lead rarely wasted", "<b>Credit data</b> — TransUnion gateway built; Array credit-parameter check available to cut backend pull costs", "<b>Low fixed cost</b> — virtual, $12 / hour closers, E&amp;O in place", "<b>Operator who closes</b> — the founder sells, trains and builds"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--red)"><h3>Weaknesses</h3>{ul(["<b>Single operator at launch</b> — capacity caps at 3 closers until a team lead is added (rule: 4th closer)", "<b>Revenue lag</b> — month 1 is paid before any payout; reserve target takes ~" + str(S1S["reserveMet"]) + " months", "<b>Retention is assumed until measured</b> — hence a deliberately safe case and weekly measurement", "<b>No mail history</b> — the first drop is a test, sized to the reserve", "<b>Partner terms</b> are contractual and can change at renewal"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--blue)"><h3>Opportunities</h3>{ul(["<b>Record consumer debt</b> and delinquency at a 10-year high", "<b>$25k+ households</b> reachable through prescreen mail and social retargeting", "<b>Tax resolution</b> attached to the same call — zero acquisition cost, modelled at zero", "<b>Own data campaigns</b> (dialing, SMS, RVM) on coreg data through app.krestmarketing.com", "<b>Back end later</b> — servicing in-house keeps the whole payout; treated as a separate financing"], "b sm")}</div>' +
- f'<div class="q" style="--c:var(--amber)"><h3>Threats</h3>{ul(["<b>TCPA litigators</b> — mitigated by pre-scrubbed lists, Blacklist Alliance and DNC in the system (§6)", "<b>State rule changes</b> — router enforces exclusions; partners hold the licences", "<b>Transfer vendor quality and price</b> — second vendor, weekly disputes, buffer mix by close rate", "<b>Larger competitors</b> outbid on paid media — we buy transfers and mail $25k+ households instead", "<b>Economic shift</b> that lowers first-pay rates — hold rule pauses hiring under 50%"], "b sm")}</div>' +
+ f'<div class="q" style="--c:var(--amber)"><h3>Threats</h3>{ul(["<b>TCPA litigators</b> — mitigated by pre-scrubbed lists, Blacklist Alliance and DNC in the system (§6)", "<b>State rule changes</b> — router enforces exclusions; partners hold the licences", "<b>Transfer vendor quality and price</b> — second vendor, weekly disputes, buffer mix by close rate", "<b>Larger competitors</b> outbid on paid media — we buy transfers and mail $25k+ households instead", "<b>Economic shift</b> that lowers first-pay rates — hold rule pauses hiring under 50%", "<b>Market saturation</b> — people already enrolled elsewhere keep answering calls and ads looking for faster settlements or lower payments; a retention threat if they churn again, an opportunity when the router places them in a program that actually fits"], "b sm")}</div>' +
  '</div>', doc, 6, T))
 
 # 6 Customers & compliance
@@ -287,14 +288,14 @@ P.append(page('Business Plan · 11', 'Election Strategy — Buyout Or Perpetual'
   ['<b>100% buyout</b>', 'Fastest cash and payback; no chargeback tail; highest lowest-bank', 'Lower mature income once retention is proven'],
  ], 'xs', ['0.9in', '2.1in', '2in']) +
  st('The Rule We Will Run') + ol([
-   'Months 1–3: <b>buyout on every validation file</b> — cash first, 100% Shield mix, retention unmeasured.',
+   'Months 1–3: <b>at least 85% Shield Services, 80% buyouts / 20% perpetual</b> — cash first while retention is unmeasured; the 20% perpetual cohort is the measured sample that sets the rule from month 4.',
    'From month 4: <b>perpetual on files under $20k while measured cancellation is under 15%</b>; buyout on $20k+ files unless cancellation is under 8%.',
    'Review the measured rate at every monthly KPI meeting and move 25 points at a time, never all at once.']) + '</div></div>', doc, 13, T, where='Election Planner on ai.fundingtier.com · Investment Proposal p.4'))
 
 # 12 Marketing plan
 slS = SLIDE['cases']['SAFE']['rows']; slT = SLIDE['cases']['TARGET']['rows']
 P.append(page('Business Plan · 12', 'Marketing Plan',
- 'Transfers fill the seats; mail and social replace part of that volume with larger-debt files. Goal: 25% of volume from mail and social once the reserve is met; hard cap 50%. Every channel is tested at Tier 1 and scaled only on measured cost per enrolled file.',
+ 'Transfers fill the seats; mail and social replace part of that volume with higher-intent, larger-debt files — a mail response is a household choosing a loan swap or debt relief, a social call is someone who went looking — so close rates and debt loads should run higher and lean toward settlement (marketing mix 50 / 30 / 20). Goal: 25% of volume from mail and social once the reserve is met; hard cap 50%. Every channel is tested at Tier 1 and scaled only on measured cost per enrolled file.',
  '<div class="cols c3">' +
  '<div class="card" style="--c:var(--teal)"><h3>Live transfers — standard election</h3>' + ul([f'<b>$14 per call, 2-minute buffer</b>; billed only if the caller stays 2 minutes', f'Cost per deal {M(cpdS["transfer"])} safe / {M(cpdT["transfer"])} target' + math('$14 ÷ 15% · $14 ÷ 16%'), 'Typical debt $15,000; vendors fill well beyond the launch roster', 'Two vendors by stage 3; weekly dispute of coached or suspicious transfers'], 'b sm') + '</div>' +
  '<div class="card" style="--c:var(--blue)"><h3>Direct mail on TransUnion prescreen data</h3>' + ul(['<b>$25,000 maxed-out revolving debt is the floor</b>; target band $25,000–$250,000', f'Cost per deal {M(cpdS["mail"])}' + math('$0.80 ÷ 1.25% response ÷ 70% qualified ÷ 20% close'), 'Firm-offer-of-credit through the lender partner; declines route to debt programs', 'Tier 1: $12,000 / month (~13,000 pieces) after the reserve is met'], 'b sm') + '</div>' +
@@ -317,8 +318,8 @@ def srow(o, label):
     return [f'<b>{label}</b>', N(o['deals']), M(o['rev']), M(o['labor']), M(o['mkt']), M(o['comm']), M(o['other']), (M(o['net']), 'n g'), M(o['y1']), M(o['y2']), M(o['low']), str(o['cashPos'] or '—'), str(o['reserveMet'] or '—')]
 hdr = [('Scenario', ''), ('Deals / mo', 'n'), ('Revenue', 'n'), ('Labor', 'n'), ('Transfers', 'n'), ('US comm.', 'n'), ('Other', 'n'), ('Net / mo', 'n'), ('Year-1 net', 'n'), ('Year-2 net', 'n'), ('Lowest bank', 'n'), ('Cash+', 'n'), ('Reserve met', 'n')]
 P.append(page('Business Plan · 13', 'Financial Plan — Four Scenarios',
- 'Two teams (owner + 3 Egypt closers; owner + 3 US W-2 closers) at two assumption sets, plus two references. Virtual office, $90,000 in the bank on day one, 100% Shield for 90 days, settlement NSF 15%, 48-month horizon.',
- table(hdr, [srow(S1S, 'S1 · Owner + 3 Egypt closers — Safe'), srow(S1T, 'S1 · Owner + 3 Egypt closers — Target'), srow(S2S, 'S2 · Owner + 3 US W-2 closers — Safe'), srow(S2T, 'S2 · Owner + 3 US W-2 closers — Target'), srow(R0S, 'Reference · Owner only — Safe'), srow(R1S, 'Reference · Owner + 1 US closer — Safe')], 'xs',
+ 'Two teams (owner + 3 Egypt closers; owner + 3 US W-2 closers) at three assumption sets, plus two references. Virtual office, $90,000 in the bank on day one, 85% Shield for 90 days with 80% buyouts, settlement NSF 15%, 48-month horizon. "Possible" is the positive feedback loop: closers improve 5% a month from month 4 (capped at +40% — a 45-minute enrollment) and tax resolution is sold from month 6; it is a projection, not the plan.',
+ table(hdr, [srow(S1S, 'S1 · Owner + 3 Egypt closers — Safe'), srow(S1T, 'S1 · Owner + 3 Egypt closers — Target'), srow(S1P, 'S1 · Owner + 3 Egypt closers — Possible'), srow(S2S, 'S2 · Owner + 3 US W-2 closers — Safe'), srow(S2T, 'S2 · Owner + 3 US W-2 closers — Target'), srow(S2P, 'S2 · Owner + 3 US W-2 closers — Possible'), srow(R0S, 'Reference · Owner only — Safe'), srow(R1S, 'Reference · Owner + 1 US closer — Safe')], 'xs',
   ['2.3in', '0.55in', '0.75in', '0.65in', '0.7in', '0.7in', '0.65in', '0.8in', '0.8in', '0.8in', '0.75in', '0.5in', '0.6in']) +
  '<div class="cols c3">' +
  '<div>' + st('Assumptions Behind Every Scenario') + ul(['1.25 deals per 8 closer hours; 65-minute handle time; 40-hour weeks inside the operating window', 'Program mix after month 3: settlement 33% · validation 40% · resolution 27%; validation 100% perpetual in the base run', 'Average debt $15,000 on transfers', 'Offshore closers $12 / hour + 4.5% KPI bonus; US closers $16.90 / hour + commission', 'Overhead: software, telephony, credit pulls, QC, insurance ≈ ' + M(S1S['other']) + ' / month', 'Tax resolution at zero'], 'b sm') + '</div>' +
@@ -338,7 +339,7 @@ P.append(mpage(S2S, S2T, 'S2 Safe — Owner + 3 US W-2 Closers', 'S2 Target — 
 
 # 14 Retention
 P.append(page('Business Plan · 14', 'Retention Through Service',
- 'Retention is the biggest lever in the plan — the difference between the safe and target cases is worth ' + M(S1T['net'] - S1S['net']) + ' a month on the same team. It rises with customer service, trust, a program the client understands, and partners who do their job.',
+ 'Retention and learning are the two levers that compound. Retention is the biggest lever in the plan — the difference between the safe and target cases is worth ' + M(S1T['net'] - S1S['net']) + ' a month on the same team. It rises with customer service, trust, a program the client understands, and partners who do their job.',
  '<div class="cols c4">' +
  ''.join(f'<div class="card" style="--c:{c}"><h3>{t}</h3>{ul(b, "b sm")}</div>' for t, b, c in [
   ('Qualify for ability to pay', ['Income verification on every file', 'Payment date set against the client\'s pay cycle', 'Disqualify fast and kindly — a file that will NSF costs more than no file'], 'var(--teal)'),
@@ -349,7 +350,8 @@ P.append(page('Business Plan · 14', 'Retention Through Service',
  '<div>' + st('What Retention Is Worth — One $15,000 Validation File') +
  table([('Monthly cancel', 'n'), ('Expected perpetual payout', 'n'), ('vs buyout ' + M(c15['buyout']), '')], [
   ['0%', M(c15['curves']['0'][36]), ('<span class="tag h">perpetual wins</span>', '')], ['6%', M(c15['curves']['6'][36]), ('<span class="tag h">perpetual wins</span>', '')], ['10%', M(c15['curves']['10'][36]), ('<span class="tag m">perpetual wins</span>', '')], ['15%', M(c15['curves']['15'][36]), ('<span class="tag a">close call</span>', '')]], 'sm', ['1in', '1.6in', '1.4in']) + '</div>' +
- '<div>' + st('How It Is Measured') + ul(['First-pay rate by closer, by source and by partner — weekly', 'Month-2 NSF rate on settlement files; monthly cancellation on perpetual files — monthly, by cohort', 'QC comprehension score on every enrollment call', 'The model is re-run with the measured rates; the election rule (§11) and the hold rule move with them'], 'b sm') + '</div></div>', doc, 18, T, where='Playbook §4 and §7'))
+ '<div>' + st('How It Is Measured') + ul(['First-pay rate by closer, by source and by partner — weekly', 'Month-2 NSF rate on settlement files; monthly cancellation on perpetual files — monthly, by cohort', 'QC comprehension score on every enrollment call', 'The model is re-run with the measured rates; the election rule (§11) and the hold rule move with them'], 'b sm') +
+ st('The Positive Feedback Loop — Why "Possible" Exists') + ul([f'Every call is scored, every closer is coached on it, and the scripts and router improve with what works; closers who learn the program can enroll a qualified caller in about 45 minutes, not 65', 'The "possible" case models that: deals per 8 closer hours rise 5% a month from month 4, capped at +40%, and tax resolution is sold on the same calls from month 6', f'On the launch team that is {M(S1P["net"])} a month mature and {M(S1P["y1"])} in year one — shown as a projection the KPIs can earn, never as the plan Paul is asked to fund'], 'b sm') + '</div></div>', doc, 18, T, where='Playbook §4 and §7'))
 
 # 15 KPIs, controls, roadmap
 P.append(page('Business Plan · 15', 'KPIs, Controls And Roadmap',
@@ -369,7 +371,7 @@ P.append(page('Business Plan · 15', 'KPIs, Controls And Roadmap',
  ], 'xs', ['1.6in', '0.6in', '0.6in', '2.1in']) + '</div>' +
  '<div>' + st('Roadmap') +
  table([('When', ''), ('Milestone', '')], [
-  ['Month 0', 'Close; accounts opened with dual control; CallBlade trial starts; transfers on; Shield-only'],
+  ['Month 0', 'Close; accounts opened with dual control; CallBlade trial starts; transfers on; Shield-first (≥85%, 80% buyouts)'],
   [f'Month {S1S["cashPos"]}', 'Bank back above $90,000; program mix opens to all three'],
   [f'Month {S1S["reserveMet"]}', f'Reserve target {M(res)} met; member distributions begin (100% to Paul after the Manager\'s draw until $90,000 is back); Tier 1 mail test approved'],
   ['Month 6–8', '4th closer and team lead by the dollar rule; second transfer vendor; measured cancellation replaces the placeholder'],
