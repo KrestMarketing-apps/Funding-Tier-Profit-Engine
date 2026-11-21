@@ -52,9 +52,10 @@ interface Cohort {
    */
   payoutDealMonthOverride?: number;
   /**
-   * Deals closed by hourly offshore / BPO closers. They are paid by the hour
-   * only — no % of enrolled debt, no flat per-deal commission, no bonuses —
-   * so this slice of a cohort carries no rep commission at payout.
+   * Deals closed by the owner-operator (paid through the distribution
+   * agreement) or by hourly offshore / BPO closers (hourly only). No % of
+   * enrolled debt, no flat per-deal commission, no bonuses — this slice of a
+   * cohort carries no rep commission at payout.
    */
   noCommission?: boolean;
 }
@@ -243,8 +244,12 @@ export function runModel(inputs: ModelInputs): ModelResults {
     // and always price on the contract schedule; their share of each
     // backend's deals is split off by closer-hour share, the same technique
     // used for manager overrides below.
-    const usClosers = rosterMonth.closers.filter((c) => c.employee.type !== 'bpo');
-    const bpoClosers = rosterMonth.closers.filter((c) => c.employee.type === 'bpo');
+    // Commission-eligible closers are US W-2 staff only (in-house closers and
+    // managers who close). The owner-operator is paid through the members'
+    // distribution agreement — no commission, no bonus — and offshore / BPO
+    // closers are hourly only, so both groups' deals carry no rep commission.
+    const usClosers = rosterMonth.closers.filter((c) => c.employee.type === 'inhouse' || c.employee.type === 'manager');
+    const bpoClosers = rosterMonth.closers.filter((c) => c.employee.type === 'bpo' || c.employee.type === 'owner');
     const usCloserHours = usClosers.reduce((s, c) => s + c.monthlyCloserHours, 0);
     const bpoCloserHours = bpoClosers.reduce((s, c) => s + c.monthlyCloserHours, 0);
     const totalDrawEligibleHours = usCloserHours + bpoCloserHours;
@@ -414,8 +419,8 @@ export function runModel(inputs: ModelInputs): ModelResults {
     }
 
     // ── Bonuses and spiffs ───────────────────────────────────────────────────
-    // Bonuses and SPIFFs apply to commission-eligible closers only (owner-
-    // operator and US W-2); offshore / BPO closers are hourly with no bonus.
+    // Bonuses and SPIFFs apply to US W-2 closers only; the owner-operator is
+    // on the distribution agreement and offshore / BPO closers are hourly.
     const bonuses = computeBonuses(inputs, {
       dealsByBackend: { LEVEL: dealsByBackend.LEVEL * usShare, CS: dealsByBackend.CS * usShare, LEGACY: dealsByBackend.LEGACY * usShare },
       avgDebt: inputs.volume.avgDebt,
