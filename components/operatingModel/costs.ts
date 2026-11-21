@@ -348,6 +348,19 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
       : `${e.regularHoursPerWeek.toFixed(1)} x ${money2(e.employee.commissionOnly ? 0 : e.employee.hourlyRate)} x ${inputs.laborPolicy.weeksPerMonth.toFixed(4)}`,
     amount: e.monthlyCost,
   }));
+  const offshoreBonusPct = inputs.laborPolicy.offshoreBonusPct ?? 0;
+  const offshoreBase = ctx.roster.active
+    .filter((e) => e.employee.type === 'bpo' && e.monthlyCost > 0)
+    .reduce((s, e) => s + e.monthlyCost, 0);
+  if (offshoreBonusPct > 0 && offshoreBase > 0) {
+    laborLines.push({
+      id: 'labor-offshore-bonus',
+      label: `Offshore / BPO performance bonus (${offshoreBonusPct}% of hourly pay)`,
+      detail: `Earned on monthly KPIs — deal quality, hours, attentiveness · paid as a % of revenue generated`,
+      formula: `${money2(offshoreBase)} x ${offshoreBonusPct}%`,
+      amount: offshoreBase * offshoreBonusPct / 100,
+    });
+  }
   groups.push({
     id: 'labor', label: 'Labor',
     note: 'Per person: paid hours x rate, with 1.5x above 40 hrs/wk for In-House/CA staff',

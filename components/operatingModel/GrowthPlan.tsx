@@ -48,7 +48,7 @@ function countTeam(roster: Employee[]) {
     offshore: roster.filter(isOffshore).length,
     bpo: roster.filter(isOpener).length,
     usRate: rate(isUs, 18),
-    offshoreRate: rate(isOffshore, 7),
+    offshoreRate: rate(isOffshore, 12),
     bpoRate: rate(isOpener, 5),
   };
 }

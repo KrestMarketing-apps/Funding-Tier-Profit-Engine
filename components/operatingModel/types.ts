@@ -99,6 +99,12 @@ export interface LaborPolicy {
   inHouseMinWage: number;
   bpoRateMin: number;
   bpoRateMax: number;
+  /**
+   * Performance bonus for offshore / BPO closers, as a flat % of their monthly
+   * hourly pay (business rule: 3–6%). Earned on monthly KPIs — deal quality,
+   * hours, attentiveness — and paid as a % of the revenue they generate.
+   */
+  offshoreBonusPct?: number;
   weeksPerMonth: number;
   /** Allowed clock-in window, enforced by the UI. */
   windowWeekday: { start: number; end: number };
@@ -132,6 +138,12 @@ export interface VolumeInputs {
   /** Percentage split of total volume across the three backends. Sums to 100. */
   mixPct: Record<BackendKey, number>;
   avgDebt: Record<BackendKey, number>;
+  /**
+   * Launch routing: for the first `months` the model pushes files to one
+   * backend (Shield Services, 100%) before settling into `mixPct`. Outliers
+   * still enroll elsewhere in practice; the model keeps it simple.
+   */
+  launchMix?: { months: number; mixPct: Record<BackendKey, number> };
 }
 
 export interface RampInputs {
