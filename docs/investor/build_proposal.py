@@ -24,7 +24,7 @@ P.append(page('Investment Proposal · 1', 'Mission And Executive Summary',
  '<div>' + st('What You Are Buying Into') + ul([
    '<b>A working system, not an idea.</b> ai.fundingtier.com is the company\'s custom operating system: deal router, scripts, training, hiring, pay engine and this model, all tied to the app.krestmarketing.com sub-account that runs marketing, communications and the data pushed to backends.',
    '<b>Four programs from one call.</b> Debt settlement, debt validation, debt resolution and tax resolution — each with a known payout schedule.',
-   '<b>Credit data already wired.</b> A TransUnion credit-data purchase gateway (for mail campaigns) and the Array soft-pull and offers engine (a lower-cost alternative to full credit pulls) are built and live.',
+   '<b>Credit data.</b> A TransUnion credit-data purchase gateway (for mail campaigns) is built. An Array integration is available to us — a tool that pings a credit report for a pass / fail on a range or specific credit parameters, which can cut the credit-pull costs charged by the backend providers; it is not built yet and carries a minimum-use commitment that is carried as an operating cost.',
    '<b>Transparent to the partner.</b> You see the same dashboards, bank view and model the operator sees, every day.']) + '</div>' +
  '<div>' + st('The Plan In One Breath') + ol([
    'Hire three Egypt-based closers at $12/hour (CallBlade, referred by Shield Services) on a 1–2 week trial; Nathan closes alongside them.',
@@ -47,18 +47,18 @@ P.append(page('Investment Proposal · 2', 'What Is Already Built',
    'Contacts, pipelines, workflows, call tracking and campaign attribution',
    'Universal do-not-call management and litigator scrub integrated into every campaign',
    'Dialer, SMS and ringless-voicemail campaigns on purchased data when we choose to run our own',
-   'Automations that push enrolled files to the servicing partners',
+   'Automations that push each prospect\'s general information to the backend partner, which then enrolls the client',
    'Recruiting pipeline for closers and BPOs'], 'b sm') + '</div>' +
  f'<div class="card" style="--c:var(--purple)"><h3>Data, QC and pay</h3><div class="sub">Built for cost control and clean files</div>' + ul([
    '<b>TransUnion credit-data purchase gateway</b> for prescreened mail-piece marketing',
-   '<b>Array soft credit pull and offers engine</b> — a reduced-cost alternative to full pulls on every call',
+   '<b>Array</b> (integration available, not yet built) — pings a credit report for a pass / fail on a range or specific credit parameters; not a full pull; can reduce the backend providers\' credit-pull costs; minimum-use commitment carried as overhead',
    'AI call-QC: every enrollment call transcribed and scored before the first draft',
    'Pay and reconciliation engine: matches every partner remittance to its deal, applies clawbacks, produces the commission run the CPA posts from',
    'E&amp;O insurance in place ($400–$500 / year)'], 'b sm') + '</div></div>' +
  st('What The Stack Means For The Investment') +
  '<div class="cols c2">' + ul([
    '<b>No build risk.</b> The $90,000 is spent on closers and calls that produce files from month one.',
-   '<b>Lower cost per file.</b> Soft pulls, DNC scrubbing and QC happen before money is spent on a bad call.',
+   '<b>Lower cost per file.</b> Credit-parameter checks, DNC scrubbing and QC happen before money is spent on a bad call.',
    '<b>Nothing lives in a spreadsheet or in anyone\'s head.</b> Every number in this proposal is produced by the same engine the business runs on.']) +
  ul(['<b>Full visibility.</b> AI-powered dashboards tell both members what to continue, cut or improve — daily briefing, weekly recap, monthly KPI review.',
    '<b>Scales without re-platforming.</b> Adding closers, a second transfer vendor or a mail program is configuration, not development.',
@@ -229,7 +229,7 @@ P.append(page('Investment Proposal · 9', 'What The $90,000 Unlocks',
  table([('Line', ''), ('Amount', 'n')], [
   ['3 Egypt closers × 6 months' + math(f'{M(seat1)} × 3 × 6'), M(seat1 * 18)],
   ['Live transfers × 6 months' + math(f'{M(S1S["mkt"])} / mo × 6'), M(S1S['mkt'] * 6)],
-  ['Software, telephony, soft pulls, QC, insurance × 6' + math(f'{M(S1S["other"])} / mo × 6'), M(S1S['other'] * 6)],
+  ['Software, telephony, credit pulls, QC, insurance × 6' + math(f'{M(S1S["other"])} / mo × 6'), M(S1S['other'] * 6)],
   ['Legal and accounting for the transaction', '$6,000'],
   ['First direct-mail test (month 6+)', '$12,000'],
  ], 'sm', ['6in', '1.4in'], tot=['Total cash committed in the first 6 months', (M(seat1 * 18 + S1S['mkt'] * 6 + S1S['other'] * 6 + 18000), 'n')]) +
@@ -383,7 +383,7 @@ P.append(page('Investment Proposal · 14', 'Market And SWOT In Brief',
    '<b>Profitability:</b> front-end enrollment carries no servicing cost and no client funds; margin is set by cost per file and retention — the two levers this plan measures weekly.',
    '<b>Tax resolution:</b> the IRS accepted only 14% of 38,797 offers in compromise in FY2025 — a large population of taxpayers who need professional help; Milestone prices every case before it is sold.'], 'b sm') + '</div>' +
  '<div class="swot">' +
- f'<div class="q" style="--c:var(--green)"><h3>Strengths</h3>{ul(["Integrated system already built and running", "Four programs from one call; partner-paid, no client funds", "Credit data and soft-pull engines lower cost per file", "Low fixed cost: virtual, offshore closers, no office"], "b sm")}</div>' +
+ f'<div class="q" style="--c:var(--green)"><h3>Strengths</h3>{ul(["Integrated system already built and running", "Four programs from one call; partner-paid, no client funds", "TransUnion data gateway built; Array credit-parameter check available", "Low fixed cost: virtual, offshore closers, no office"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--red)"><h3>Weaknesses</h3>{ul(["Single operator at launch; capacity caps at 3 closers until a lead is added", "Revenue arrives 1–2 months behind enrollment", "Retention is assumed, then measured — the safe case is deliberately conservative", "New brand; no mail history yet"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--blue)"><h3>Opportunities</h3>{ul(["Record consumer debt and rising delinquency", "$25k+ households reachable through TransUnion prescreen mail", "Tax resolution attached to the same call at no acquisition cost", "Build the back end later and keep the whole payout"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--amber)"><h3>Threats</h3>{ul(["TCPA litigators and state rule changes", "Partner terms can change at renewal", "Transfer vendor quality and price", "Larger competitors outbid on paid media"], "b sm")}</div>' +

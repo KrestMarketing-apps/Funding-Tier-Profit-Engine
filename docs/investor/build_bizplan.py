@@ -42,15 +42,15 @@ P.append(page('Business Plan · 2', 'The Company And Its System',
    'Contacts, pipelines, workflows, call tracking and campaign attribution for every lead source',
    'Marketing and communications: dialer, SMS, ringless voicemail, email, social posting',
    'Universal do-not-call management and litigator scrubbing on every list and campaign',
-   'Automations that push enrolled files and documents to the servicing partners',
+   'Automations that push each prospect\'s general information to the backend partner, which then enrolls the client',
    'Recruiting pipeline for closers, BPOs and vendors'], 'b sm') +
  st('Data Engines Already Wired') + ul([
    '<b>TransUnion credit-data purchase gateway</b> — prescreened lists for mail-piece marketing at $25,000+ of revolving debt',
-   '<b>Array soft credit pull and offers engine</b> — a reduced-cost alternative to full credit pulls on every call'], 'b sm') + '</div></div>' +
+   '<b>Array</b> — integration available, not yet built: pings a credit report for a pass / fail on a range or specific credit parameters (not a full pull); can reduce the credit-pull costs charged by the backend providers; carries a minimum-use commitment that is budgeted as overhead'], 'b sm') + '</div></div>' +
  st('How The Pieces Fit') +
  '<div class="wf">' + ''.join(f'<div class="nd" style="--c:{c}"><div class="k">{k}</div><div class="t">{t}</div><div class="d">{d}</div></div>' + ('<div class="a">›</div>' if i < 4 else '') for i, (k, t, d, c) in enumerate([
    ('Source', 'Calls arrive', 'Transfers, mail, social, website, AI receptionist — stamped with source and campaign in app.krestmarketing.com', 'var(--teal)'),
-   ('Qualify', 'Router + soft pull', 'Ability to pay, income verified, state checked, program chosen, payout shown', 'var(--blue)'),
+   ('Qualify', 'Router + credit check', 'Ability to pay, income verified, state checked, program chosen, payout shown', 'var(--blue)'),
    ('Enroll', 'Script + SOP', 'Agreement signed, first-draft date set, opportunity created with campaign code', 'var(--amber)'),
    ('Quality', 'AI call-QC', 'Recording scored; pressure or confusion goes to review before the draft', 'var(--purple)'),
    ('Pay', 'Reconcile', 'Remittance matched to the deal; election applied; commission run; dashboards update', 'var(--navy)')])) + '</div>', doc, 3, T,
@@ -103,7 +103,7 @@ P.append(page('Business Plan · 4', 'Market Assessment — Growth And Profitabil
 P.append(page('Business Plan · 5', 'SWOT Analysis',
  'An honest reading of where Funding Tier is strong, where it is thin, what the market offers and what could hurt. Each item is paired with what the plan does about it.',
  '<div class="swot">' +
- f'<div class="q" style="--c:var(--green)"><h3>Strengths</h3>{ul(["<b>System already built</b> — router, scripts, QC, pay engine, model; no development spend in the plan", "<b>Partner-paid, four programs</b> — no client funds, broad state coverage, a lead rarely wasted", "<b>Credit data engines wired</b> — TransUnion gateway and Array soft pulls lower cost per file", "<b>Low fixed cost</b> — virtual, $12 / hour closers, E&amp;O in place", "<b>Operator who closes</b> — the founder sells, trains and builds"], "b sm")}</div>' +
+ f'<div class="q" style="--c:var(--green)"><h3>Strengths</h3>{ul(["<b>System already built</b> — router, scripts, QC, pay engine, model; no development spend in the plan", "<b>Partner-paid, four programs</b> — no client funds, broad state coverage, a lead rarely wasted", "<b>Credit data</b> — TransUnion gateway built; Array credit-parameter check available to cut backend pull costs", "<b>Low fixed cost</b> — virtual, $12 / hour closers, E&amp;O in place", "<b>Operator who closes</b> — the founder sells, trains and builds"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--red)"><h3>Weaknesses</h3>{ul(["<b>Single operator at launch</b> — capacity caps at 3 closers until a team lead is added (rule: 4th closer)", "<b>Revenue lag</b> — month 1 is paid before any payout; reserve target takes ~" + str(S1S["reserveMet"]) + " months", "<b>Retention is assumed until measured</b> — hence a deliberately safe case and weekly measurement", "<b>No mail history</b> — the first drop is a test, sized to the reserve", "<b>Partner terms</b> are contractual and can change at renewal"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--blue)"><h3>Opportunities</h3>{ul(["<b>Record consumer debt</b> and delinquency at a 10-year high", "<b>$25k+ households</b> reachable through prescreen mail and social retargeting", "<b>Tax resolution</b> attached to the same call — zero acquisition cost, modelled at zero", "<b>Own data campaigns</b> (dialing, SMS, RVM) on coreg data through app.krestmarketing.com", "<b>Back end later</b> — servicing in-house keeps the whole payout; treated as a separate financing"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--amber)"><h3>Threats</h3>{ul(["<b>TCPA litigators</b> — mitigated by pre-scrubbed lists, Blacklist Alliance and DNC in the system (§6)", "<b>State rule changes</b> — router enforces exclusions; partners hold the licences", "<b>Transfer vendor quality and price</b> — second vendor, weekly disputes, buffer mix by close rate", "<b>Larger competitors</b> outbid on paid media — we buy transfers and mail $25k+ households instead", "<b>Economic shift</b> that lowers first-pay rates — hold rule pauses hiring under 50%"], "b sm")}</div>' +
@@ -162,7 +162,7 @@ P.append(page('Business Plan · 7', 'Operations',
   ['<b>Pay engine</b>', 'Remittance matching, commission run, clawbacks, expected pay dates, reserve and waterfall'],
   ['<b>Operating model</b>', 'Growth Plan, Scale Planner, Election Planner; 48-month simulation; live for both members'],
   ['<b>Telephony</b>', 'DIDs and tracking numbers per campaign; recordings feed call-QC'],
-  ['<b>Data</b>', 'TransUnion gateway (mail), Array soft pulls (calls)'],
+  ['<b>Data</b>', 'TransUnion gateway (mail); Array credit-parameter check (available, not yet built)'],
  ], 'sm', ['1in', '3in']) +
  st('Backend Servicing Oversight') + ul(['Every partner\'s first-draft and cancellation data is reconciled weekly; a partner whose cancellations run 5 points above the others is reviewed', 'Client complaints route to the partner and are tracked to close — the partner doing its job is part of our retention'], 'b sm') + '</div></div>', doc, 8, T, where='Playbook §2 and §5'))
 
@@ -321,7 +321,7 @@ P.append(page('Business Plan · 13', 'Financial Plan — Four Scenarios',
  table(hdr, [srow(S1S, 'S1 · Owner + 3 Egypt closers — Safe'), srow(S1T, 'S1 · Owner + 3 Egypt closers — Target'), srow(S2S, 'S2 · Owner + 3 US W-2 closers — Safe'), srow(S2T, 'S2 · Owner + 3 US W-2 closers — Target'), srow(R0S, 'Reference · Owner only — Safe'), srow(R1S, 'Reference · Owner + 1 US closer — Safe')], 'xs',
   ['2.3in', '0.55in', '0.75in', '0.65in', '0.7in', '0.7in', '0.65in', '0.8in', '0.8in', '0.8in', '0.75in', '0.5in', '0.6in']) +
  '<div class="cols c3">' +
- '<div>' + st('Assumptions Behind Every Scenario') + ul(['1.25 deals per 8 closer hours; 65-minute handle time; 40-hour weeks inside the operating window', 'Program mix after month 3: settlement 33% · validation 40% · resolution 27%; validation 100% perpetual in the base run', 'Average debt $15,000 on transfers', 'Offshore closers $12 / hour + 4.5% KPI bonus; US closers $16.90 / hour + commission', 'Overhead: software, telephony, soft pulls, QC, insurance ≈ ' + M(S1S['other']) + ' / month', 'Tax resolution at zero'], 'b sm') + '</div>' +
+ '<div>' + st('Assumptions Behind Every Scenario') + ul(['1.25 deals per 8 closer hours; 65-minute handle time; 40-hour weeks inside the operating window', 'Program mix after month 3: settlement 33% · validation 40% · resolution 27%; validation 100% perpetual in the base run', 'Average debt $15,000 on transfers', 'Offshore closers $12 / hour + 4.5% KPI bonus; US closers $16.90 / hour + commission', 'Overhead: software, telephony, credit pulls, QC, insurance ≈ ' + M(S1S['other']) + ' / month', 'Tax resolution at zero'], 'b sm') + '</div>' +
  '<div>' + st('Reading The Four') + ul([f'<b>S1 safe</b> is the recommendation: {M(S1S["net"])} / month mature, {M(S1S["y1"])} in year one, bank never under {M(S1S["low"])}', f'<b>S2</b> costs {M(S2S["labor"] + S2S["comm"] - S1S["labor"])} / month more at maturity for the same seats and dips to {M(S2S["low"])}', f'<b>Target</b> adds {M(S1T["net"] - S1S["net"])} / month on S1 — retention is the lever', 'The references show the floor (owner alone) and the Plan C trial'], 'b sm') + '</div>' +
  '<div>' + st('Sensitivity, S1 Safe') + table([('Change', ''), ('Mature net / mo', 'n')], [
    ['Base', M(S1S['net'])], ['100% buyout election', M(sc('S1', 'SAFE', 100)['net'])], ['50 / 50 election', M(sc('S1', 'SAFE', 50)['net'])], ['Target retention', M(S1T['net'])], ['US closers instead', M(S2S['net'])]], 'xs', ['1.6in', '1in']) + '</div></div>', doc, 15, T, where='Growth Plan → Bottom Line; Scale Planner for other rosters'))
