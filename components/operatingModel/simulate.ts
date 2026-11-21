@@ -191,6 +191,10 @@ export function runModel(inputs: ModelInputs): ModelResults {
   const overrideDue = new Map<number, number>();
   const bonusDue = new Map<number, number>();
 
+  // Mail/social are meant to fill occupancy: target 25% of volume, never above 50%.
+
+  let maxMarketingShare = 0;
+
   for (let m = 1; m <= horizon; m++) {
     // ── Materialise an auto-hire that came due this month ────────────────────
     if (pendingHireMonth != null && m >= pendingHireMonth) {
@@ -218,8 +222,13 @@ export function runModel(inputs: ModelInputs): ModelResults {
     // Growth marketing: inbound calls take closer time first, then transfers.
     const marketing = resolveMarketingMonth(inputs, m, rosterMonth.closerHours * 60);
     const capacity = computeCapacity(inputs, rosterMonth.closerHours, rosterMonth.openerHours, rampFactor, marketing);
-    const transferDealsByBackend = allocate(capacity.targetDeals, inputs.volume.mixPct);
-    const marketingDealsByBackend = allocate(marketing.deals, inputs.marketing.mixPct ?? inputs.volume.mixPct);
+    const launch = inputs.volume.launchMix;
+    const inLaunch = !!launch && launch.months > 0 && m <= launch.months;
+    const monthMix = inLaunch ? launch!.mixPct : inputs.volume.mixPct;
+    const transferDealsByBackend = allocate(capacity.targetDeals, monthMix);
+    const marketingDealsByBackend = allocate(marketing.deals, inLaunch ? monthMix : (inputs.marketing.mixPct ?? inputs.volume.mixPct));
+    const totalDealsM = capacity.targetDeals + marketing.deals;
+    if (totalDealsM > 0) maxMarketingShare = Math.max(maxMarketingShare, marketing.deals / totalDealsM);
     const dealsByBackend = {} as Record<BackendKey, number>;
     // Average enrolled debt this month blends transfer deals (base assumption)
     // with marketing deals (the channel's own, typically larger, debt load).
@@ -542,6 +551,9 @@ export function runModel(inputs: ModelInputs): ModelResults {
   const mixTotal = inputs.operations.buffers.reduce((s, b) => s + b.mixPct, 0);
   if (Math.abs(mixTotal - 100) > 0.01) {
     warnings.push(`Transfer buffer mix totals ${mixTotal.toFixed(2)}% — it must total 100%.`);
+  }
+  if (maxMarketingShare > 0.5) {
+    warnings.push(`Mail/social reach ${(maxMarketingShare * 100).toFixed(0)}% of monthly deals — keep them at 25% of volume (target) and never above 50%; add transfers or closers instead.`);
   }
   const mixPctTotal = BACKEND_KEYS.reduce((s, k) => s + inputs.volume.mixPct[k], 0);
   if (Math.abs(mixPctTotal - 100) > 0.01) {

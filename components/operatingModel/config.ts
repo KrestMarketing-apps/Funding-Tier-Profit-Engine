@@ -59,7 +59,7 @@ export const DAY_LABELS: Record<DayKey, string> = {
 
 export const IN_HOUSE_MIN_WAGE = 16.9;
 export const BPO_RATE_MIN = 3;
-export const BPO_RATE_MAX = 8;
+export const BPO_RATE_MAX = 15;
 
 export const EMPLOYEE_TYPE_LABEL: Record<EmployeeType, string> = {
   inhouse: 'In-House / CA',
@@ -157,6 +157,8 @@ export const DEFAULT_INPUTS: ModelInputs = {
     dealsPer8CloserHours: 1.25,
     overrideTotalDealsPerMonth: 75,
     mixPct: { LEVEL: 33, CS: 40, LEGACY: 27 },
+    // First 90 days: 100% Shield Services while the team learns one program.
+    launchMix: { months: 3, mixPct: { LEVEL: 0, CS: 100, LEGACY: 0 } },
     avgDebt: { LEVEL: 16000, CS: 15000, LEGACY: 14000 },
   },
 
@@ -171,8 +173,8 @@ export const DEFAULT_INPUTS: ModelInputs = {
       // passRatePct: share of raw transfers that survive the buffer and get
       // billed. ESTIMATES — the longer the buffer, the fewer survive, which is
       // exactly what the higher price buys. Calibrate from vendor invoices.
-      { key: 'buffer1min', label: '1-minute buffer', bufferMinutes: 1, price: 8, mixPct: 40, passRatePct: 85, closeRatePct: 15 },
-      { key: 'buffer2min', label: '2-minute buffer', bufferMinutes: 2, price: 14, mixPct: 60, passRatePct: 70, closeRatePct: 15 },
+      { key: 'buffer1min', label: '1-minute buffer', bufferMinutes: 1, price: 8, mixPct: 0, passRatePct: 85, closeRatePct: 15 },
+      { key: 'buffer2min', label: '2-minute buffer', bufferMinutes: 2, price: 14, mixPct: 100, passRatePct: 70, closeRatePct: 15 },
       { key: 'buffer5min', label: '5-minute buffer', bufferMinutes: 5, price: 55, mixPct: 0, passRatePct: 40, closeRatePct: 15 },
     ],
     avgHandleMinutes: 65,
@@ -197,6 +199,7 @@ export const DEFAULT_INPUTS: ModelInputs = {
     inHouseMinWage: IN_HOUSE_MIN_WAGE,
     bpoRateMin: BPO_RATE_MIN,
     bpoRateMax: BPO_RATE_MAX,
+    offshoreBonusPct: 4.5,
     weeksPerMonth: WEEKS_PER_MONTH,
     windowWeekday: WINDOW_WEEKDAY,
     windowSaturday: WINDOW_SATURDAY,
