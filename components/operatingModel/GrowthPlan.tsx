@@ -336,7 +336,7 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
 
       {/* ── Team ── */}
       <Panel title="2 · Team — who is on the phones, and what each seat costs" accent={T.accent}
-        tooltip="Owner-operators close on commission only. US closers are W-2 at the hourly rate with California overtime rules. Offshore closers (Egypt) are hourly contractors with no overtime. BPO openers generate transfers at the opener rate instead of buying them.">
+        tooltip="Owner-operators draw no wage and no commission; they are paid through the members' distribution agreement. US closers are W-2 at the hourly rate with California overtime rules. Offshore closers (Egypt) are hourly contractors with no overtime. BPO openers generate transfers at the opener rate instead of buying them.">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10, fontSize: 12.5 }}>
           <span style={{ color: T.muted, fontWeight: 700 }}>Launch options:</span>
           {[
@@ -358,7 +358,7 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
         <Row cols={4} gap={12}>
           <div style={card}>
             <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>Owner-operators / partners</div>
-            <Field label="Count (commission only)"><NumberInput value={team.owner} min={0} max={10} onChange={setOwner} /></Field>
+            <Field label="Count (no wage, no commission — distribution agreement)"><NumberInput value={team.owner} min={0} max={10} onChange={setOwner} /></Field>
           </div>
           <div style={card}>
             <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 6 }}>US-based closers (W-2)</div>
@@ -517,8 +517,9 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
             </div>
             <div style={card}>
               <div style={{ fontWeight: 800, fontSize: 13 }}>Debt Resolution (ELP)</div>
-              <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 6 }}>Accelerated (Exhibit D Option 2): 90% of net for months 1–7, then 25% to month 24; under-24-month files fall back to residual. Residual: 60% of the net draft monthly to 48 months.</div>
-              <Row cols={3}>
+              <div style={{ fontSize: 11.5, color: T.muted, marginBottom: 6 }}>Residual: 60% of the net draft monthly for the term written (up to 60 months; the $250 draft floor caps it). Accelerated (Exhibit D Option 2): 90% of net for months 1–7, then 25% to month 24; under-24-month files fall back to residual.</div>
+              <Row cols={4}>
+                <Field label="Term written (months)" tooltip="Up to 60 months. The $250 client-draft floor always applies, so the engine caps the term at what the fee can carry: 44 months at $15k of debt at the 49% fee, 60 from about $20,300. Longer terms raise the full payout and delay it."><NumberInput value={inputs.legacy.targetTerm} min={12} max={60} step={1} onChange={(v) => setInputs({ ...inputs, legacy: { ...inputs.legacy, targetTerm: v } })} /></Field>
                 <Field label="Files on accelerated"><NumberInput value={inputs.legacy.acceleratedSharePct ?? 0} min={0} max={100} step={5} suffix="%" onChange={setAccel} /></Field>
                 <Field label="First payment clears"><NumberInput value={inputs.survivalCurves.LEGACY.firstPayPct} min={0} max={100} step={1} suffix="%" onChange={(v) => setSurvival('LEGACY', v, inputs.survivalCurves.LEGACY.steadyStateMonthlyCancelPct)} /></Field>
                 <Field label="Cancel / month"><NumberInput value={inputs.survivalCurves.LEGACY.steadyStateMonthlyCancelPct} min={0} max={100} step={0.5} suffix="%" onChange={(v) => setSurvival('LEGACY', inputs.survivalCurves.LEGACY.firstPayPct, v)} /></Field>
@@ -557,9 +558,9 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, marginTop: 8 }}>
           <thead><tr>
             <th style={th}>Program</th><th style={{ ...th, textAlign: 'right' }}>Share</th>
-            <th style={{ ...th, textAlign: 'right' }}>Full payout / deal</th><th style={{ ...th, textAlign: 'right' }}>Rep commission (US / owner-closed)</th>
+            <th style={{ ...th, textAlign: 'right' }}>Full payout / deal</th><th style={{ ...th, textAlign: 'right' }}>Rep commission (US W-2 closed)</th>
             <th style={{ ...th, textAlign: 'right' }}>Expected revenue / deal</th><th style={{ ...th, textAlign: 'right' }}>Expected commission</th>
-            <th style={{ ...th, textAlign: 'right' }}>Net / deal, US-closed</th><th style={{ ...th, textAlign: 'right' }}>Net / deal, offshore-closed</th>
+            <th style={{ ...th, textAlign: 'right' }}>Net / deal, US W-2 closed</th><th style={{ ...th, textAlign: 'right' }}>Net / deal, owner- or offshore-closed</th>
           </tr></thead>
           <tbody>
             {programRows.map((r) => (
@@ -581,7 +582,7 @@ export default function GrowthPlan({ inputs, setInputs, children }: {
           </tbody>
         </table>
         <div style={{ fontSize: 12, color: T.muted, marginTop: 6 }}>
-          Offshore and BPO closers are paid by the hour only — no percentage of enrolled debt, no per-deal commission, no bonuses — so a deal they close is worth the full expected payout ({fmtMoney(blendedExp)}) and only deals closed by the owner-operator or a US W-2 closer carry commission ({fmtMoney(blendedNet)} net). It costs {fmtMoney(costPerDeal.transfers)} by transfer{costPerDeal.mail > 0 ? `, ${fmtMoney(costPerDeal.mail)} by mail` : ''}{costPerDeal.social > 0 ? `, ${fmtMoney(costPerDeal.social)} by social` : ''} to acquire. Every method whose cost per deal is below {fmtMoney(blendedNet)} adds profit; above it, it does not.
+          Only US W-2 closers earn commission and bonuses ({fmtMoney(blendedNet)} net per deal). The owner-operator is paid through the members' distribution agreement and offshore / BPO closers are hourly only, so a deal any of them closes keeps the full expected payout ({fmtMoney(blendedExp)}). It costs {fmtMoney(costPerDeal.transfers)} by transfer{costPerDeal.mail > 0 ? `, ${fmtMoney(costPerDeal.mail)} by mail` : ''}{costPerDeal.social > 0 ? `, ${fmtMoney(costPerDeal.social)} by social` : ''} to acquire. Every method whose cost per deal is below {fmtMoney(blendedNet)} adds profit; above it, it does not.
         </div>
       </Panel>
 

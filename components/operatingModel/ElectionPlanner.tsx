@@ -114,7 +114,7 @@ export default function ElectionPlanner({ inputs }: { inputs: ModelInputs }) {
       </div>
       <div style={{ fontSize: 11.5, color: T.muted, marginTop: 4 }}>Set the election for the plan in section 3b (Shield buyout share); this table re-runs the full 48-month model at 0%, 50% and 100% on everything else as entered.</div>
 
-      <div style={{ fontWeight: 800, fontSize: 13, margin: '12px 0 6px' }}>Debt Validation (SS) — per cleared file, after the rep (rep applies to US / owner-closed deals only)</div>
+      <div style={{ fontWeight: 800, fontSize: 13, margin: '12px 0 6px' }}>Debt Validation (SS) — per cleared file, after the rep (rep commission applies to US W-2 closed deals only)</div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 1050 }}>
           <thead><tr>
