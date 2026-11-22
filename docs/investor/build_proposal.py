@@ -25,7 +25,7 @@ P.append(page('Investment Proposal · 1', 'Mission And Executive Summary',
  '<div>' + st('What You Are Buying Into') + ul([
    '<b>A working system, not an idea.</b> ai.fundingtier.com is the company\'s custom operating system: deal router, scripts, training, hiring, pay engine and this model, all tied to the app.krestmarketing.com sub-account that runs marketing, communications and the data pushed to backends.',
    '<b>Four programs from one call.</b> Debt settlement, debt validation, debt resolution and tax resolution — each with a known payout schedule.',
-   '<b>Credit data.</b> A TransUnion credit-data purchase gateway (for mail campaigns) is built. An Array integration is available to us — a tool that pings a credit report for a pass / fail on a range or specific credit parameters, which can cut the credit-pull costs charged by the backend providers; it is not built yet and carries a minimum-use commitment that is carried as an operating cost.',
+   '<b>Credit data.</b> A TransUnion credit-data purchase gateway (for mail campaigns) is built. An Array integration is available to us — a tool that pings a credit report for a pass / fail on a range or specific credit parameters, which can cut the credit-pull costs charged by the backend providers; it is not built yet. The service order (12 months from November 1, 2026) carries a usage minimum of $0 through February 2027, then $500, $750 and $1,000 a month — budgeted as overhead in every scenario until usage exceeds it.',
    '<b>Transparent to the partner.</b> You see the same dashboards, bank view and model the operator sees, every day.']) + '</div>' +
  '<div>' + st('The Plan In One Breath') + ol([
    'Hire three Egypt-based closers at $12/hour (CallBlade, referred by Shield Services) on a 1–2 week trial; Nathan closes alongside them.',
@@ -52,7 +52,7 @@ P.append(page('Investment Proposal · 2', 'What Is Already Built',
    'Recruiting pipeline for closers and BPOs'], 'b sm') + '</div>' +
  f'<div class="card" style="--c:var(--purple)"><h3>Data, QC and pay</h3><div class="sub">Built for cost control and clean files</div>' + ul([
    '<b>TransUnion credit-data purchase gateway</b> for prescreened mail-piece marketing',
-   '<b>Array</b> (integration available, not yet built) — pings a credit report for a pass / fail on a range or specific credit parameters; not a full pull; can reduce the backend providers\' credit-pull costs; minimum-use commitment carried as overhead',
+   '<b>Array</b> (integration available, not yet built) — pings a credit report for a pass / fail on a range or specific credit parameters; not a full pull; can reduce the backend providers\' credit-pull costs; usage minimum $0 → $500 → $750 → $1,000 / month over the 12-month order, carried as overhead; per check when live: report + score $1.70–$1.80, authentication $0.30, Offers Engine $0.55–$0.65',
    'AI call-QC: every enrollment call transcribed and scored before the first draft',
    'Pay and reconciliation engine: matches every partner remittance to its deal, applies clawbacks, produces the commission run the CPA posts from',
    'E&amp;O insurance in place ($400–$500 / year)'], 'b sm') + '</div></div>' +

@@ -409,7 +409,13 @@ export interface RemittanceLag {
 
 // ── Costs ────────────────────────────────────────────────────────────────────
 
-export interface FixedCost { id: string; label: string; amount: number }
+export interface FixedCost {
+  id: string; label: string; amount: number;
+  /** Optional step schedule: amount in force from each model month (first matching, highest fromMonth wins). */
+  schedule?: { fromMonth: number; amount: number }[];
+  /** Shown under the line in the cost breakdown. */
+  note?: string;
+}
 export interface PerUserCost {
   id: string; label: string; amountPerUser: number; enabled: boolean;
   /**

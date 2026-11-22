@@ -24,6 +24,6 @@ node docs/investor/render_pkg.cjs            # Playwright → PDFs in /home/clau
 
 `pkg_common.py` holds the shared CSS and helpers; `states.py` holds the 2026 state minimum-wage, classification-test and talent data used in Business Plan §9. Numbers in every document are read from the JSON files so nothing is hand-typed.
 
-Engine assumptions behind v2.0 (components/operatingModel/config.ts): offshore closers $12/hr (BPO band $3–$15) with a 4.5% KPI bonus (`laborPolicy.offshoreBonusPct`), transfers 100% at the $14 two-minute buffer, `volume.launchMix` sends 100% of files to Shield Services for months 1–3, Level Debt carries a 15% second-payment NSF, and the model warns when mail/social exceed 50% of monthly deals.
+Engine assumptions behind v2.0 (components/operatingModel/config.ts): offshore closers $12/hr (BPO band $3–$15) with a 4.5% KPI bonus (`laborPolicy.offshoreBonusPct`), transfers 100% at the $14 two-minute buffer, `volume.launchMix` sends 100% of files to Shield Services for months 1–3, Level Debt carries a 15% second-payment NSF, the model warns when mail/social exceed 50% of monthly deals, and the Array service-order minimum ($0 → $500 → $750 → $1,000 / month on the 12-month order from Nov 1, 2026) is a stepped fixed cost (`FixedCost.schedule`).
 
 The live model is the Operating Model → Growth Plan section on ai.fundingtier.com (admin). The term-sheet record and the growth marketing budget plan live in the FUNDING TIER project.
