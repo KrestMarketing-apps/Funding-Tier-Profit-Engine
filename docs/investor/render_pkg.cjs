@@ -6,6 +6,7 @@ const DOCS = {
   termsheet: ['term-sheet.html', 'Funding-Tier-Term-Sheet-Exhibit-A.pdf'],
   bizplan: ['business-plan.html', 'Funding-Tier-Business-Plan.pdf'],
   playbook: ['playbook.html', 'Funding-Tier-Operating-Playbook.pdf'],
+  goals: ['goals.html', 'Funding-Tier-Goals-One-Pager.pdf'],
 };
 const DIR = '/home/claude/ftdocs/';
 (async () => {

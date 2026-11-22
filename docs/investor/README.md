@@ -8,6 +8,7 @@ Source of record for the Paul Dillenback partnership package and the internal op
 | `Funding-Tier-Term-Sheet-Exhibit-A.pdf` | Term Sheet, Exhibit A (6 pp incl. Exhibit C Compensation Schedule): securities, price (lump sum or three tranches), waterfall, high-yield account, Manager compensation, repurchase options, continuity (FMV purchase of the founder's interest, proceeds to Samuel, Sophia and Daniel Pottish in three shares), management, investor operating role, both-member actions, dual control above $10,000, cadence, rights, services, confidentiality, closing |
 | `Funding-Tier-Business-Plan.pdf` | Business Plan, Exhibit B (21 pp): executive summary and mission, company and system, programs and payouts, market assessment with sources, SWOT, customers and compliance (TCPA / Blacklist Alliance / DNC), operations and hours, organization and compensation, state-by-state hiring table and rules, unit economics (safe and target, $15k and $25k), election strategy, marketing plan, four scenarios with 24-month tables, retention through service, KPIs / controls / roadmap, glossary and FAQ, sources |
 | `Funding-Tier-Operating-Playbook.pdf` | Operating Playbook, Exhibit D (10 pp, internal): roles, operating rhythm, 90-day Shield-first launch, sales floor and closer pay (offshore KPI bonus), marketing test protocol and the 25% / 50% mix rule, monthly close / waterfall / decision rules, compliance operations, scaling ladder and risk register, definitions |
+| `Funding-Tier-Goals-One-Pager.pdf` | One page for Paul's daily 10-minute check-in: four big goals in order, the smaller goals under each, where Paul can help, and the four check-in questions (`build_goals.py`) |
 | `superseded-Funding-Tier-Partnership-Proposal-Paul-v2.pdf` | The Nov 20 update memo, superseded (kept for the record) |
 | `*.html` | Rendered sources (Letter landscape, fixed 8.5in pages) |
 
@@ -17,7 +18,7 @@ Source of record for the Paul Dillenback partnership package and the internal op
 npx tsx docs/investor/launch-scenarios.ts    # four scenarios, election cases, sliding scale → launch-scenarios.json
 npx tsx docs/investor/election-curves.ts     # perpetual vs buyout curves → election-curves.json
 npx tsx docs/investor/deal-economics.ts      # per-program, per-debt expected payouts → deal-economics.json
-cd docs/investor && python3 build_proposal.py && python3 build_termsheet.py && python3 build_bizplan.py && python3 build_playbook.py
+cd docs/investor && python3 build_proposal.py && python3 build_termsheet.py && python3 build_bizplan.py && python3 build_playbook.py && python3 build_goals.py
 node docs/investor/render_pkg.cjs            # Playwright → PDFs in /home/claude/ftdocs, reports any page that overflows
 ```
 
