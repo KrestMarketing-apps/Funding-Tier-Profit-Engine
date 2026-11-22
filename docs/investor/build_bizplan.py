@@ -47,7 +47,7 @@ P.append(page('Business Plan · 2', 'The Company And Its System',
    'Recruiting pipeline for closers, BPOs and vendors'], 'b sm') +
  st('Data Engines Already Wired') + ul([
    '<b>TransUnion credit-data purchase gateway</b> — prescreened lists for mail-piece marketing at $25,000+ of revolving debt',
-   '<b>Array</b> — integration available, not yet built: pings a credit report for a pass / fail on a range or specific credit parameters (not a full pull); can reduce the credit-pull costs charged by the backend providers; carries a minimum-use commitment that is budgeted as overhead'], 'b sm') + '</div></div>' +
+   '<b>Array</b> — integration available, not yet built: pings a credit report for a pass / fail on a range or specific credit parameters (not a full pull); can reduce the credit-pull costs charged by the backend providers; 12-month service order from November 1, 2026: the greater of usage or a minimum of $0 through February 2027, $500 March–April, $750 May–July, $1,000 from August — budgeted as overhead; per transaction when live: credit report + score $1.70–$1.80, authentication $0.30, Offers Engine $0.55–$0.65'], 'b sm') + '</div></div>' +
  st('How The Pieces Fit') +
  '<div class="wf">' + ''.join(f'<div class="nd" style="--c:{c}"><div class="k">{k}</div><div class="t">{t}</div><div class="d">{d}</div></div>' + ('<div class="a">›</div>' if i < 4 else '') for i, (k, t, d, c) in enumerate([
    ('Source', 'Calls arrive', 'Transfers, mail, social, website, AI receptionist — stamped with source and campaign in app.krestmarketing.com', 'var(--teal)'),
@@ -163,7 +163,7 @@ P.append(page('Business Plan · 7', 'Operations',
   ['<b>Pay engine</b>', 'Remittance matching, commission run, clawbacks, expected pay dates, reserve and waterfall'],
   ['<b>Operating model</b>', 'Growth Plan, Scale Planner, Election Planner; 48-month simulation; live for both members'],
   ['<b>Telephony</b>', 'DIDs and tracking numbers per campaign; recordings feed call-QC'],
-  ['<b>Data</b>', 'TransUnion gateway (mail); Array credit-parameter check (available, not yet built)'],
+  ['<b>Data</b>', 'TransUnion gateway (mail); Array credit-parameter check (service order signed, not yet built; minimum $0 → $1,000 / month)'],
  ], 'sm', ['1in', '3in']) +
  st('Backend Servicing Oversight') + ul(['Every partner\'s first-draft and cancellation data is reconciled weekly; a partner whose cancellations run 5 points above the others is reviewed', 'Client complaints route to the partner and are tracked to close — the partner doing its job is part of our retention'], 'b sm') + '</div></div>', doc, 8, T, where='Playbook §2 and §5'))
 

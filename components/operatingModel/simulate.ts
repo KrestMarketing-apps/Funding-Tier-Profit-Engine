@@ -471,6 +471,7 @@ export function runModel(inputs: ModelInputs): ModelResults {
       dealsByBackend,
       roster: rosterMonth,
       marketing,
+      month: m,
     });
     const overhead = costs.total;
     const marketingCost = costs.groups.find((g) => g.id === 'marketing')?.subtotal ?? 0;

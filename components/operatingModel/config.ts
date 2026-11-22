@@ -252,6 +252,16 @@ export const DEFAULT_INPUTS: ModelInputs = {
     const c = sharedCosts();
     // E&O policy purchased Nov 2026 (~$400–$500 / year).
     c.fixedCosts = [...c.fixedCosts, { id: 'fixed-eo', label: 'E&O Insurance', amount: 40 }];
+    // Array service order (signed 9/22/2026, 12-month term from 11/01/2026): the greater of the
+    // monthly usage minimum or usage. Until the integration is built, usage is zero and the
+    // minimum is a straight cost. Modelled from a December 2026 launch: $0 through Feb 2027,
+    // $500 Mar–Apr, $750 May–Jul, $1,000 Aug–Oct 2027, assumed to continue at $1,000 on renewal.
+    // Per-transaction when live: credit report + score $1.70–$1.80, authentication $0.30, Offers Engine $0.55–$0.65.
+    c.fixedCosts = [...c.fixedCosts, {
+      id: 'fixed-array', label: 'Array platform minimum (credit-parameter checks)', amount: 0,
+      note: 'Greater of the usage minimum or usage; $0 until Feb 2027, then $500 → $750 → $1,000',
+      schedule: [{ fromMonth: 1, amount: 0 }, { fromMonth: 4, amount: 500 }, { fromMonth: 6, amount: 750 }, { fromMonth: 9, amount: 1000 }],
+    }];
     return c;
   })(),
 

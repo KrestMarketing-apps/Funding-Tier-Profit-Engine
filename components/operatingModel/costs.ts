@@ -125,6 +125,8 @@ export interface CostContext {
   roster: RosterMonthSummary;
   /** Growth marketing spend this month (mail, data, social, creative/tracking). */
   marketing?: MarketingMonthDetail;
+  /** Model month (1-based) — used for scheduled fixed costs. */
+  month?: number;
 }
 
 /**
@@ -138,9 +140,15 @@ export function buildMonthlyCosts(inputs: ModelInputs, ctx: CostContext): Monthl
   const groups: CostBreakdownGroup[] = [];
 
   // 1 — Fixed
-  const fixedLines = c.fixedCosts.map((f) => ({
-    id: f.id, label: f.label, detail: 'Flat monthly', formula: `${money(f.amount)} flat`, amount: f.amount,
-  }));
+  const fixedLines = c.fixedCosts.map((f) => {
+    let amount = f.amount;
+    if (f.schedule && f.schedule.length) {
+      const m = ctx.month ?? 1;
+      const steps = f.schedule.filter((x) => x.fromMonth <= m).sort((a, b) => b.fromMonth - a.fromMonth);
+      if (steps.length) amount = steps[0].amount;
+    }
+    return { id: f.id, label: f.label, detail: f.note ?? (f.schedule ? 'Stepped schedule' : 'Flat monthly'), formula: `${money(amount)}${f.schedule ? ' this month' : ' flat'}`, amount };
+  });
   groups.push({
     id: 'fixed', label: 'Fixed Monthly Costs',
     note: 'Software, office, and team costs — flat regardless of volume',
