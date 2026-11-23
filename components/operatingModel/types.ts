@@ -160,6 +160,13 @@ export interface VolumeInputs {
 export interface RampInputs {
   rampMonths: number;
   horizonMonths: number;
+  /**
+   * Launch ramp for a brand-new team: productivity factor by model month
+   * (e.g. [0.6, 0.85, 1] = 60% in month 1 while the 1–2 week trial, training
+   * and script refinement happen, 85% in month 2, full from month 3).
+   * Overrides rampMonths for the months listed.
+   */
+  launchFactors?: number[];
 }
 
 export type BufferKey = 'buffer1min' | 'buffer2min' | 'buffer5min';

@@ -98,7 +98,7 @@ P.append(page('Investment Proposal · 4', 'The Team: Plan A, Plan B, Plan C',
  '<div class="cols c3">' +
  '<div class="card" style="--c:var(--teal)"><h3>Plan A — Egypt closers via CallBlade</h3><div class="sub">Referred by Shield Services · experienced in Shield enrollments</div>' + ul([
    '<b>$12 / hour</b>, minimum 3 full-time closers (the vendor\'s floor)',
-   '1–2 week paid trial; underperformers replaced from the same source',
+   '1–2 week paid trial; underperformers replaced from the same source; the model assumes 60% of planned deals in month 1 and 85% in month 2 while training and script refinement happen',
    'KPI bonus 3–6% of monthly hourly pay for exceptional performance (page 10 and Exhibit C)',
    f'Seat cost {M(S1S["seatCost"])} / month all-in' + math(f'$12 × 40 hrs × 4.333 wks = $2,080 + 4.5% bonus = {M(S1S["seatCost"])}'),
    'No commission; files they close keep 100% of the payout'], 'b sm') + '</div>' +
@@ -165,7 +165,7 @@ def srow(o, label):
     return [f'<b>{label}</b>', N(o['deals']), M(o['rev']), M(o['labor']), M(o['mkt']), M(o['comm']), M(o['other']), (M(o['net']), 'n g' if o['net'] > 0 else 'n r'), M(o['y1']), M(o['low']), str(o['cashPos'] or '—'), str(o['reserveMet'] or '—')]
 hdr = [('Scenario', ''), ('Deals / mo', 'n'), ('Revenue', 'n'), ('Labor', 'n'), ('Transfers', 'n'), ('US commission', 'n'), ('Other overhead', 'n'), ('Net profit / mo', 'n'), ('Year-1 net', 'n'), ('Lowest bank', 'n'), ('Cash+ month', 'n'), ('Reserve met', 'n')]
 P.append(page('Investment Proposal · 6', 'Four Launch Scenarios',
- 'Two teams, two assumption sets. "Safe" is 15% close, 60% of first payments clear, 15% monthly cancel on perpetual files. "Target" is 16%, 70% and 10%. All carry a 15% second-payment NSF on settlement files and send at least 85% of files to Shield Services for the first 90 days, 80% of them as buyouts. "Possible" adds the positive feedback loop: closers improve 5% a month from month 4 (capped at +40%, a 45-minute enrollment) and tax resolution is sold from month 6.',
+ 'Two teams, two assumption sets. "Safe" is 15% close, 60% of first payments clear, 15% monthly cancel on perpetual files. "Target" is 16%, 70% and 10%. All ramp a new team at 60% / 85% / 100% of planned deals over months 1–3, carry a 15% second-payment NSF on settlement files, and send at least 85% of files to Shield Services for the first 90 days, 80% of them as buyouts. "Possible" adds the positive feedback loop: closers improve 5% a month from month 4 (capped at +40%, a 45-minute enrollment) and tax resolution is sold from month 6.',
  st('Mature Month (Average Of Months 43–48) And First-Year Results', 'owner-operator closes in every scenario · virtual office · $90,000 in the bank on day one') +
  table(hdr, [srow(S1S, 'S1 · Owner + 3 Egypt closers — Safe'), srow(S1T, 'S1 · Owner + 3 Egypt closers — Target'), srow(S1P, 'S1 · Owner + 3 Egypt closers — Possible'), srow(S2S, 'S2 · Owner + 3 US W-2 closers — Safe'), srow(S2T, 'S2 · Owner + 3 US W-2 closers — Target'), srow(S2P, 'S2 · Owner + 3 US W-2 closers — Possible'), srow(R0S, 'Reference · Owner only — Safe'), srow(R1S, 'Reference · Owner + 1 US closer (Plan C) — Safe')], 'xs',
   ['2.5in', '0.6in', '0.8in', '0.7in', '0.75in', '0.85in', '0.85in', '0.9in', '0.85in', '0.8in', '0.6in', '0.6in']) +
@@ -189,12 +189,12 @@ def mrows(o, n=12):
     return [[f'Month {m["mo"]}', N(m['deals']), M(m['rev']), M(m['labor']), M(m['mkt']), M(m['comm']), (M(m['net']), 'n g' if m['net'] >= 0 else 'n r'), M(m['bank']), M(m['res']), P0(m['util'])] for m in o['months'][:n]]
 mh = [('', ''), ('Deals', 'n'), ('Revenue', 'n'), ('Labor', 'n'), ('Transfers', 'n'), ('US comm.', 'n'), ('Net', 'n'), ('Bank', 'n'), ('Reserve target', 'n'), ('Seats busy', 'n')]
 P.append(page('Investment Proposal · 7', 'Month By Month — Recommended Launch (S1, Safe Case)',
- 'Owner + 3 Egypt closers, virtual, transfers only, 85% Shield Services for 90 days with 80% buyouts. Revenue is low in month 1 because partners pay after the client\'s first payment clears; the buyouts bring most of it in by month 2 — the bank is the proof the plan holds.',
+ 'Owner + 3 Egypt closers, virtual, transfers only, 85% Shield Services for 90 days with 80% buyouts. A new team is not perfect on day one: the model runs month 1 at 60% of planned deals and month 2 at 85% (1–2 week trial, training, script refinement), full from month 3. Revenue lags a month because partners pay after the first client payment clears — the bank is the proof the plan holds.',
  '<div class="cols c32">' +
  '<div>' + table(mh, mrows(S1S), 'xs', ['0.7in', '0.5in', '0.75in', '0.65in', '0.7in', '0.65in', '0.75in', '0.8in', '0.8in', '0.6in']) + '</div>' +
  '<div>' + st('Signals On This Path') + ul([
-   f'<b>Month 1:</b> {M(-S1S["months"][0]["net"])} out, nothing in yet. Bank {M(S1S["months"][0]["bank"])}.',
-   f'<b>Month 2:</b> Shield buyout lumps arrive on 80% of month-1 files; the month is profitable and the bank is back above $90,000.',
+   f'<b>Month 1 (ramp, 60%):</b> {N(S1S["months"][0]["deals"])} deals; {M(-S1S["months"][0]["net"])} out, nothing in yet. Bank {M(S1S["months"][0]["bank"])}.',
+   f'<b>Month 2 (ramp, 85%):</b> Shield buyout lumps arrive on 80% of month-1 files; the month is profitable. <b>Month {S1S["cashPos"]}:</b> bank back above $90,000.',
    f'<b>Month 3–4:</b> the mix opens to all four programs after the 90-day Shield-first period (tax resolution sold on the same calls); perpetual share rises as measured cancellation comes in.',
    f'<b>Month {S1S["reserveMet"]}:</b> operating reserve of {M(S1S["months"][S1S["reserveMet"]-1]["res"])} reached (6 months of overhead) — distributions begin and marketing tests may start.',
    f'<b>Month 12:</b> bank {M(S1S["m12bank"])}. Year-1 net {M(S1S["y1"])}.',

@@ -220,7 +220,8 @@ export function runModel(inputs: ModelInputs): ModelResults {
     const rosterMonth = summariseRosterForMonth(employeeCosts, m);
 
     // ── Volume ───────────────────────────────────────────────────────────────
-    const rampFactor = Math.min(1, m / rampMonths);
+    const launchFactors = inputs.ramp.launchFactors ?? [];
+    const rampFactor = m <= launchFactors.length ? Math.max(0, Math.min(1, launchFactors[m - 1])) : Math.min(1, m / rampMonths);
     // Growth marketing: inbound calls take closer time first, then transfers.
     const marketing = resolveMarketingMonth(inputs, m, rosterMonth.closerHours * 60);
     const capacity = computeCapacity(inputs, rosterMonth.closerHours, rosterMonth.openerHours, rampFactor, marketing);
