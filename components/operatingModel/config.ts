@@ -35,9 +35,9 @@ export const BRANDS: Record<BackendKey, BackendBrand> = {
 
 // ── Schedule helpers ─────────────────────────────────────────────────────────
 
-/** Allowed clock window: Mon-Fri 6:00-19:00 PST, Sat 6:00-15:00 PST. */
-export const WINDOW_WEEKDAY = { start: 6, end: 19 };
-export const WINDOW_SATURDAY = { start: 6, end: 15 };
+/** Allowed clock window at launch: Mon-Fri 9:00-18:00 PST, Sat 10:00-15:00 PST (weekdays widen to 6:00-18:00 once coverage allows). */
+export const WINDOW_WEEKDAY = { start: 9, end: 18 };
+export const WINDOW_SATURDAY = { start: 10, end: 15 };
 
 /** Default shift: 9:00am-6:00pm PST, Mon-Fri. Saturday off. */
 export function defaultShifts(opts?: { saturday?: boolean }): WeekShifts {
