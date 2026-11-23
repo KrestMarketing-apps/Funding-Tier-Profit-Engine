@@ -116,9 +116,10 @@ P.append(page('Investment Proposal · 4', 'The Team: Plan A, Plan B, Plan C',
    'HR provider engaged only when this plan is used'], 'b sm') + '</div></div>' +
  '<div class="cols c2">' +
  '<div>' + st('Hours Of Operation') + ul([
-   '<b>Monday–Friday 6:00 AM – 7:00 PM Pacific</b>; <b>Saturday 6:00 AM – 3:00 PM</b> (the clock-in window enforced in the system)',
-   'Closers work 8-hour shifts inside that window; transfers are bought to match the hours staffed',
-   'Egypt closers work the US daytime shift (their evening); schedules are set weekly in app.krestmarketing.com'], 'b sm') + '</div>' +
+   '<b>To start: Monday–Friday 9:00 AM – 6:00 PM Pacific; Saturday 10:00 AM – 3:00 PM</b> (the clock-in window enforced in the system)',
+   '<b>Later: Monday–Friday 6:00 AM – 6:00 PM</b> once there are enough closers to cover the early East-Coast hours',
+   'Closers work 8-hour shifts inside the window; transfers are bought to match the hours staffed',
+   'Launch team is in Egypt or another overseas country on the US day shift; later remote hiring is optimized by US time zone'], 'b sm') + '</div>' +
  '<div>' + st('When A Lead Or Manager Is Added') + ul([
    '<b>One operator can train and monitor up to 3 closers</b> while closing — the launch roster is sized to that limit',
    '<b>At the 4th closer, promote or hire a team lead</b> (US W-2, $22–$26 / hour + a 0.1–0.25% override on team volume); one lead per 5–6 closers',
@@ -194,7 +195,7 @@ P.append(page('Investment Proposal · 7', 'Month By Month — Recommended Launch
  '<div>' + st('Signals On This Path') + ul([
    f'<b>Month 1:</b> {M(-S1S["months"][0]["net"])} out, nothing in yet. Bank {M(S1S["months"][0]["bank"])}.',
    f'<b>Month 2:</b> Shield buyout lumps arrive on 80% of month-1 files; the month is profitable and the bank is back above $90,000.',
-   f'<b>Month 3–4:</b> the mix opens to all three programs after the 90-day Shield-first period; perpetual share rises as measured cancellation comes in.',
+   f'<b>Month 3–4:</b> the mix opens to all four programs after the 90-day Shield-first period (tax resolution sold on the same calls); perpetual share rises as measured cancellation comes in.',
    f'<b>Month {S1S["reserveMet"]}:</b> operating reserve of {M(S1S["months"][S1S["reserveMet"]-1]["res"])} reached (6 months of overhead) — distributions begin and marketing tests may start.',
    f'<b>Month 12:</b> bank {M(S1S["m12bank"])}. Year-1 net {M(S1S["y1"])}.',
    f'<b>Month 24:</b> bank {M(S1S["m24bank"])} before distributions; year-2 net {M(S1S["y2"])}.'], 'b sm') +
@@ -348,11 +349,11 @@ P.append(page('Investment Proposal · 13', 'Risk Factors And How Each Is Mitigat
   ('Client attrition and chargebacks', 'Files that stop paying stop paying us', [
     'Income verification on every file — payment propensity, not just willingness',
     'AI call-QC before the first draft; pressure or confusion goes to review',
-    'Shield-first 90 days (≥85%, 80% buyouts) so closers master one program before three and early cash is locked in',
+    'Shield-first 90 days (≥85%, 80% buyouts) so closers master one program before all four and early cash is locked in',
     'Settlement second-payment NSF (15%) and perpetual cancellations are in every number here',
     'Buyout election on validation files when cancellation runs above the break-even (page 12 of Exhibit B)'], 'var(--amber)'),
   ('Partner concentration', 'Four partners remit our revenue', [
-    'Four programs, three partners for debt plus a tax partner; any one can be replaced without re-platforming',
+    'Four programs across four partners (Level Debt, Shield Services, Elite Legal Practice, Milestone Tax Solutions); any one can be replaced without re-platforming',
     'Remittances reconciled to the deal within 5 days; a late remittance is chased, not absorbed',
     'Changing a partner is a both-member action'], 'var(--blue)'),
   ('Key person', 'Nathan is operator, closer and builder', [
@@ -387,7 +388,7 @@ P.append(page('Investment Proposal · 14', 'Market And SWOT In Brief',
  f'<div class="q" style="--c:var(--green)"><h3>Strengths</h3>{ul(["Integrated system already built and running", "Four programs from one call; partner-paid, no client funds", "TransUnion data gateway built; Array credit-parameter check available", "Low fixed cost: virtual, offshore closers, no office"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--red)"><h3>Weaknesses</h3>{ul(["Single operator at launch; capacity caps at 3 closers until a lead is added", "Revenue arrives 1–2 months behind enrollment", "Retention is assumed, then measured — the safe case is deliberately conservative", "New brand; no mail history yet"], "b sm")}</div>' +
  f'<div class="q" style="--c:var(--blue)"><h3>Opportunities</h3>{ul(["Record consumer debt and rising delinquency", "$25k+ households reachable through TransUnion prescreen mail", "Tax resolution attached to the same call at no acquisition cost", "Build the back end later and keep the whole payout"], "b sm")}</div>' +
- f'<div class="q" style="--c:var(--amber)"><h3>Threats</h3>{ul(["TCPA litigators and state rule changes", "Partner terms can change at renewal", "Transfer vendor quality and price", "<b>Market saturation</b> — many respondents are already in a program and looking for faster settlements or lower payments; a threat to retention and an opportunity for the router, which can place them in a better-fit program"], "b sm")}</div>' +
+ f'<div class="q" style="--c:var(--amber)"><h3>Threats</h3>{ul(["TCPA litigators and state rule changes", "Transfer vendor quality and price", "<b>Market saturation</b> — many respondents are already in a program and looking for faster settlements or lower payments; a threat to retention and an opportunity for the router, which can place them in a better-fit program"], "b sm")}</div>' +
  '</div></div>', doc, 15, T, where='Business Plan §4 (market, sources) and §5 (SWOT)'))
 
 # 15 Closing
