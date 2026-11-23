@@ -150,6 +150,9 @@ export const DEFAULT_INPUTS: ModelInputs = {
   },
   ramp: {
     rampMonths: 1,        // CHANGED: was 12
+    // New overseas team: 1–2 week paid trial, training and script refinement inside the first
+    // 90 days. Month 1 at 60% of planned deals, month 2 at 85%, full from month 3.
+    launchFactors: [0.6, 0.85, 1],
     horizonMonths: 24,    // CHANGED: was 36
   },
 
